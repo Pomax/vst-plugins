@@ -1,0 +1,46 @@
+# Escape closes a preset dialog and does nothing else.
+#
+# Both dialogs commit on a single action. Enter or the Save button for one, a
+# click on a row for the other. So the only way out without committing is
+# Escape, and it has to be a way out that leaves no trace.
+type:one
+
+# Save a preset for real, so the Load button has something to offer.
+click:44,41
+wait:2000
+window:Save preset
+type:escape-test
+type:{ENTER}
+wait:1500
+window:
+
+# Change the document. Loading the preset would put it back to "one", so this
+# is what proves nothing was loaded.
+plugin:400,300
+type: two
+wait:500
+
+# Load preset, then Escape. The list is not touched.
+click:128,41
+wait:2000
+window:Load preset
+type:{ESC}
+wait:1500
+window:
+
+# Save preset with a name typed in, then Escape. No file by that name.
+click:44,41
+wait:2000
+window:Save preset
+type:not-written
+type:{ESC}
+wait:1500
+window:
+
+cleanup:%PRESETS%\escape-test.preset
+cleanup:%PRESETS%\not-written.preset
+
+expect:file exists %PRESETS%\escape-test.preset
+expect:no file at %PRESETS%\not-written.preset
+expect:tabs is 1
+expect:tab 0 is one two

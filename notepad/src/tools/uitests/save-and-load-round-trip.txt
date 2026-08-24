@@ -1,0 +1,46 @@
+# A whole file round trip, through the real buttons and the real dialogs:
+# save, check it landed, delete it, save again under a second name, check that,
+# then open the first one back and check what came in.
+#
+# The regression this guards: the dialogs were opened from inside the frame
+# being drawn, and a native dialog runs its own message loop. The window's
+# frame timer kept firing, egui was asked to lay out a frame while it was
+# already laying one out, and the plugin died. A dead plugin never reaches its
+# shutdown, so this test sees that as no state written at all.
+
+# Save is Save As until the document has a path, so this is the first dialog.
+remove:%CACHE%\round-trip-one.md
+type:# Mix notes
+type:{ENTER}levels are close
+plugin:501,50
+wait:2500
+type:%CACHE%\round-trip-one.md
+type:{ENTER}
+wait:2000
+
+# Now a second tab, and Save As to a different name. The document keeps that
+# one as its path afterwards.
+remove:%CACHE%\round-trip-two.md
+plugin:129,87
+type:# Drum bus
+plugin:567,50
+wait:2500
+type:%CACHE%\round-trip-two.md
+type:{ENTER}
+wait:2000
+
+# Open the first file again. It has one heading, so it comes back as one tab,
+# and it replaces what was open rather than adding to it.
+plugin:443,50
+wait:2500
+type:%CACHE%\round-trip-one.md
+type:{ENTER}
+wait:2000
+
+# The first save wrote only what existed then: one tab.
+expect:file at %CACHE%\round-trip-one.md contains # Mix notes\n\nlevels are close
+# The second wrote both tabs, in order.
+expect:file at %CACHE%\round-trip-two.md contains # Mix notes\n\nlevels are close\n\n# Drum bus
+# And opening the first replaced the two tabs with its own single one.
+expect:tabs is 1
+expect:tab 0 is # Mix notes\n\nlevels are close

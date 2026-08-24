@@ -1,0 +1,16 @@
+# The pointer is an I-beam over the document and an arrow over the chrome.
+#
+# An I-beam is how a window says "there is text here to put a caret in". The
+# document said nothing, so the pointer stayed an arrow over it, which reads as
+# "nothing here to click".
+type:hello world
+
+# Over the text, and over the empty space below it, which is still document.
+cursor:60,155|ibeam
+cursor:400,400|ibeam
+
+# The toolbar is not the document.
+cursor:450,76|arrow
+
+expect:tabs is 1
+expect:tab 0 is hello world

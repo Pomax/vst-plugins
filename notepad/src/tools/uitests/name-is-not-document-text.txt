@@ -1,0 +1,10 @@
+# Typing into the notepad's name changes the name and nothing else.
+#
+# The regression: every keystroke was routed to the document regardless of
+# what had focus, so renaming the notepad also typed into the notes.
+plugin:204,50
+type:{END}{BS 40}Ghostlight
+
+expect:title is Ghostlight
+expect:tabs is 1
+expect:tab 0 is

@@ -1,0 +1,62 @@
+# The mini host's own preset buttons.
+#
+# Save asks for a name and puts the file in the one directory this plugin's
+# presets live in — no browsing. Load lists what is there and loads whatever is
+# clicked, with no confirming. The state itself travels through the plugin's
+# IComponent::getState and setState, the pair a DAW uses for its project file.
+#
+# Type something, save it, type more, load it back: what comes back is what was
+# there at save time.
+type:before the preset
+
+# Save preset, at the left of the host's strip. It opens a window of its own,
+# so the steps that follow say which window they mean. Enter commits the name.
+click:44,41
+wait:2000
+window:Save preset
+shot:%CACHE%\host-presets-save.png
+type:ui-test
+type:{ENTER}
+wait:1500
+window:
+
+# Change the document, so restoring has something to undo.
+plugin:400,300
+type: and after
+wait:500
+
+# Load preset. One click on a row is the whole interaction.
+click:128,41
+wait:2000
+window:Load preset
+shot:%CACHE%\host-presets-list.png
+# By name, not by position: the list also holds whatever presets have been
+# saved by hand, and this one is wherever the alphabet puts it among them.
+# Film everything on screen while the cursor is dragged across the dialog and
+# off it. Nothing is clicked and nothing opens or closes, so the picture should
+# barely change: a row lighting up under the pointer, and no more.
+#
+# That is where flicker shows. A dialog that is not modal leaves the window
+# behind it being activated and deactivated over and over, and both title bars
+# go light and dark with it.
+# Off, not gone. It caught the flicker once and the flicker is fixed; running
+# it costs four seconds of recording on every run to re-prove that. Uncomment
+# these three lines and the expectation at the bottom to film it again.
+#film:%CACHE%\host-presets-behind
+#wiggle:3000
+#endfilm:
+row:%PRESETS%|ui-test
+wait:1500
+window:
+
+# Without this the test passes whenever nothing happens at all: no preset
+# written, nothing typed after it, and the document still reading as it did.
+cleanup:%PRESETS%\ui-test.preset
+
+expect:file exists %PRESETS%\ui-test.preset
+expect:tabs is 1
+expect:tab 0 is before the preset
+# Crossing the dialog lights up a row and a button or two, which is a few dozen
+# distinct frames out of two hundred. A dialog fighting the window behind it for
+# the focus repaints both of them continuously instead, and every frame differs.
+#expect:file at %CACHE%\host-presets-behind.txt has distinct_frames at most 60

@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["src/crates/mini-host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["vst"]
+
+[workspace.dependencies]
+vst3 = "0.3.0"
+
+[profile.release]
+opt-level = 2
+lto = "thin"

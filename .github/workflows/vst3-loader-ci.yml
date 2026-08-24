@@ -1,0 +1,42 @@
+name: VST3 loader CI
+
+on:
+  pull_request:
+    paths:
+      - "vst3-loader/**"
+      - "mini-host/**"
+      - ".github/workflows/vst3-loader-ci.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: vst3-loader-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: vst3-loader
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Build and test
+        run: cargo test

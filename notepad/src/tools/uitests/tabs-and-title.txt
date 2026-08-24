@@ -1,0 +1,20 @@
+# Type in the first tab, rename the notepad, add a tab, type in that one.
+#
+# The regression: after the notepad had been renamed, a tab created afterwards
+# received no keystrokes at all, because the name field had taken the keyboard
+# and nothing gave it back.
+#
+# Coordinates are inside the window: the name sits mid-toolbar, and the tab
+# strip's + button follows the last tab.
+type:# Mix notes
+type:{ENTER}levels are close
+plugin:204,50
+type:{END}{BS 40}Ghostlight
+plugin:129,87
+type:# Drum bus
+type:{ENTER}glue comp 4-1
+
+expect:title is Ghostlight
+expect:tabs is 2
+expect:tab 0 is # Mix notes\n\nlevels are close
+expect:tab 1 is # Drum bus\n\nglue comp 4-1

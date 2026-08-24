@@ -1,0 +1,14 @@
+# Clicking past the end of a line puts the caret at the end of that line.
+#
+# A line is drawn only as wide as what is written on it, but that is not where
+# it ends as far as anyone clicking is concerned: the empty space to the right
+# of a line belongs to that line.
+type:first line
+type:{ENTER}second line
+
+# Far to the right of the first line, which is much shorter than the window.
+click:600,155
+type:!
+
+expect:tabs is 1
+expect:tab 0 is first line!\n\nsecond line

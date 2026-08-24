@@ -1,0 +1,15 @@
+**/.cache
+**/.cargo
+
+.claude
+.idea
+.vscode
+
+.DS_Store
+desktop.ini
+Thumbs.db
+
+*.pdb
+*.swp
+**/*.rs.bk
+*~

@@ -1,0 +1,298 @@
+# vst-notepad
+
+A VST3 markdown notepad. It loads on any track in any DAW, keeps your notes in
+the project file, and converts markdown as you type it — the way Typora does.
+
+Written in Rust. (The plan asked whether Rust could do this before considering
+anything else: it can. The [`vst3`](https://crates.io/crates/vst3) crate ships
+complete VST3 bindings with no C++ SDK dependency, and supports both
+*implementing* COM interfaces — the plugin — and *calling* them — the test host.)
+
+## Layout
+
+| Crate | What it is |
+|---|---|
+| `src/crates/notepad-core` | The editor: a document, WYSIWYG layout, as-you-type conversion, plugin state, file I/O. No UI, no plugin dependencies. The buffer, caret, selection and undo are [`kode-markdown`](https://crates.io/crates/kode-markdown)'s; see [EDITOR_CHOICE.md](EDITOR_CHOICE.md). |
+| `src/crates/notepad-plugin` | The VST3 plugin, plus the egui GUI. |
+| `src/crates/notepad-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../mini-host`. |
+| `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite. |
+| `src/tools` | Screenshot helpers for the real editor window. |
+
+The VST3 host this project tests against is a separate project: `../mini-host`,
+documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
+
+## Building
+
+```bash
+cargo dist
+```
+
+That leaves the installable plugin in `dist/`, and nothing else:
+
+```text
+dist/
+  Notepad.vst3
+```
+
+On Windows and Linux that is the plugin binary; on macOS it is the `.vst3`
+bundle directory, which is the only form a plugin can take there. Either way it
+is what gets copied into the VST3 folder:
+
+- Windows: `C:\Program Files\Common Files\VST3\`
+- macOS: `~/Library/Audio/Plug-Ins/VST3/`
+
+`dist/` is deleted and recreated by every build, so it only ever holds the
+current one.
+
+**A successful build deletes `target/`.** Everything worth keeping has been
+copied to `dist/`; what remains only helps when something went wrong, so it
+survives a *failed* build and not a successful one. The trade is that the next
+build is a cold one.
+
+`cargo dist` is an alias for `cargo run -p xtask -- bundle --release`; plain
+`cargo build` cannot do any of this, because cargo has no post-build hook that
+can see the finished cdylib. `cargo dist-debug` builds the debug profile.
+
+Cross-compiling for macOS uses the same task, though it needs an Apple linker
+and SDK, which a Windows machine does not have — CI does this on a macOS
+runner:
+
+```bash
+cargo run -p xtask -- bundle --release --target aarch64-apple-darwin
+```
+
+## Testing
+
+```bash
+cargo run -p xtask -- test
+```
+
+That builds the plugin, then runs the unit tests and the scenario suite in that
+order, and — since it too is a build — clears `dist/` first and deletes
+`target/` when everything passes. `--keep-target` leaves the build output in
+place for a faster next run. The order is the point: the scenario runner loads the plugin binary at
+runtime rather than linking it, so cargo has no idea the two are related and
+will happily run the suite against a stale `.dll`. (The runner refuses to run
+if it spots one, because that actually happened here — a deliberately broken
+`process` sailed through a green suite.)
+
+The two halves can still be run alone:
+
+```bash
+cargo test --workspace
+cargo build -p notepad-plugin && cargo run -p notepad-testrunner
+```
+
+The scenario runner loads the built plugin binary and drives it through the
+same interfaces a DAW uses — `GetPluginFactory`, `createInstance`,
+`createView`, `IPlugView::onKeyDown`, `IComponent::get/setState`. There is no
+test-only backdoor: a scenario types `* milk`, Enter, `eggs` one keystroke at a
+time and then reads the document back out of the state blob the plugin would
+write into a project file.
+
+To use the built plugin without a DAW — the real thing, loaded through the
+factory and attached to a window:
+
+```bash
+test.bat
+```
+
+```bash
+./test.sh
+```
+
+Both open `../dist/Notepad.vst3` in the mini host, which lives alongside this project in `../mini-host` and must be built there first.
+
+To look at the editor's drawing code alone, without going through VST3 at all:
+
+```bash
+cargo run -p notepad-plugin --example preview
+```
+
+The preview takes an optional theme and an optional markdown file:
+
+```bash
+cargo run -p notepad-plugin --example preview -- light src/tools/screenshot-notes.md
+```
+
+To render the GUI headlessly to PNGs — no window, no human needed:
+
+```bash
+cargo run -p notepad-plugin --features snapshots --example snapshot
+```
+
+The `snapshots` feature is opt-in because the headless renderer pulls in the
+whole wgpu/naga stack: several gigabytes of build output for a plugin that
+ships as 5 MB. `cargo run -p xtask -- test --snapshots` runs the pixel tests
+along with everything else.
+
+That writes `target/snapshots/{light,dark}.png` through a real rasteriser and
+reports the background and text brightness of each. The same machinery backs
+[`tests/theme_rendering.rs`](../../notepad/src/crates/notepad-plugin/tests/theme_rendering.rs),
+which asserts on actual pixels: that light really is light, that the text
+contrasts with it, and that the two themes do not look alike. Those tests exist
+because the light theme once passed every non-visual check while the window
+stayed black — nothing painted the background, so egui's dark-on-light text was
+drawn onto a black clear colour. Only pixels catch that.
+
+The headless renderer proves the *drawing code* is right. To prove the *real
+window* is — the path through baseview and OpenGL, where the background is the
+renderer's clear colour rather than anything egui draws — screenshot it:
+
+```bash
+powershell -ExecutionPolicy Bypass -File src/tools/capture-window.ps1 -Theme light -Out target/window-light.png
+```
+
+```bash
+src/tools/capture-window.sh --theme light --out target/window-light.png
+```
+
+`-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. Both
+tools take `-Notes`/`--notes` to show a particular markdown file, and the
+Windows one takes `-ExeArgs` and `-Title` for capturing something other than the
+preview, such as the mini host.
+
+Both launch the preview, locate the editor window, grab its pixels off the
+screen and close it. On Windows the window is found by title, because the
+process also owns a console window and `MainWindowHandle` names whichever
+appeared first. On macOS the bounds come from System Events, so the terminal
+running it needs Accessibility and Screen Recording permission.
+
+To see which scripts the system fonts cover, before and after text in a new
+script arrives:
+
+```bash
+cargo run -p notepad-plugin --features snapshots --example scripts
+```
+
+The host is also a standalone tool that loads **any** VST3 plugin, not just
+this one:
+
+```bash
+cd ../mini-host && cargo run --bin vst3-host -- ../dist/Notepad.vst3
+```
+
+See [the mini host guide](../mini-host/USING.md) for how to use it and how a
+VST3 plugin is loaded.
+
+## CI
+
+Two workflows, because checking the code and shipping it are different jobs.
+
+`.github/workflows/notepad-ci.yml` runs on every pull request touching this project or the mini host: the full suite including
+the pixel tests, on both `windows-latest` and `macos-14`, plus a
+[zizmor](https://docs.zizmor.sh) audit of the workflows themselves.
+
+`.github/workflows/notepad-build.yml` runs on pushes to `main` that change the code.
+Markdown, `docs/`, `.github/`, `LICENSE` and `.gitignore` are ignored, so
+editing the workflows does not cut a release. It builds and zips both
+platforms, then publishes them as a GitHub release. Before publishing, each job
+loads the bundle it just built and asks the factory for its classes, so a build
+that produces something no host can open fails there rather than in a DAW. Releases are numbered by how
+many already exist — the first is `1`, the one after release `8` is `9`. There
+is no version number and no semver; this is a product, not a library.
+
+## Keys
+
+| | |
+|---|---|
+| `Ctrl+B` / `Ctrl+I` / `Ctrl+D` | bold / italic / strikethrough (wraps the selection) |
+| `Ctrl+E` | inline code |
+| `Ctrl+K` | turn the selection into a link, caret left in the `()` |
+| `Ctrl+/` | toggle WYSIWYG ↔ raw markdown |
+| `Ctrl+T` | cycle the theme: auto → light → dark |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |
+| `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | Open / Save / Save As |
+| `Tab` / `Shift+Tab` | indent / outdent a list item |
+
+Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
+`- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
+list item ends the list, numbered lists renumber themselves, and an opening
+code fence closes itself.
+
+## Tabs
+
+The tabs are one document seen in parts, not several documents. Saving joins
+every tab in order; opening splits the file again at each top-level `#`, one
+tab per section. Text before the first heading becomes the first tab, and a
+file with no headings at all opens as a single tab, unchanged byte for byte.
+
+A tab is titled by the heading it starts with, or `untitled`. Titles are capped
+at the width of the string `this many words`; anything longer is cut with `...`
+and shown in full on hover. Every tab is that same width, so typing a heading
+never shifts the strip sideways.
+
+Click a tab to switch, drag it to reorder, `+` to add one, middle-click or
+right-click to close. Closing the last tab empties it instead of removing it.
+
+## Colours
+
+Light and dark are two complete sets, in
+[`colours.rs`](../../notepad/src/crates/notepad-core/src/colours.rs), stored in plugin
+state and edited under the toolbar's gear. Neither is derived from the other.
+
+The defaults reproduce what egui's own light and dark visuals produced before
+the schemes existed, so an old project looks the same after loading.
+
+Some of what the editor shows is drawn by egui rather than by this code —
+buttons, fields, checkboxes, the scrollbar, the selection — so the scheme is
+written into `egui::Visuals` in `paint_visuals` before a frame is laid out, and
+read directly from the scheme everywhere the editor paints for itself.
+
+`Rgba` holds unmultiplied channels, matching what a colour picker produces.
+`egui::Color32` is premultiplied, and the two are converted at the boundary.
+
+## Design notes
+
+**Markdown source is the source of truth.** The parser keeps marker spans
+rather than stripping them, tagging each visible or hidden. Hiding them yields
+WYSIWYG; revealing the ones on the caret's line gives Typora's behaviour where
+punctuation appears on the line you are editing. Raw mode just makes every
+marker visible. One code path serves the GUI and the tests, and the text you
+save is exactly the text you typed.
+
+**The plugin is a single-component effect** — one COM object implementing both
+`IComponent` and `IEditController`. The document is edited in the GUI but
+persisted by the processor, and splitting them into two objects would mean
+marshalling the whole note text through parameters or `IMessage` on every
+keystroke.
+
+**State** is JSON: notes, view mode, theme, window size, caret, and file path.
+Anything that fails to parse as JSON is kept as raw note text rather than
+discarded, so a malformed blob loses formatting but never the user's words.
+Unknown fields are ignored and missing ones default, so a project saved before
+a setting existed still opens.
+
+**Theme** is `light`, `dark` or `auto`. `auto` is stored *as* `auto` rather
+than as whatever it resolved to, so a project moved between a light machine and
+a dark one follows each. Resolving it is the GUI's job: `notepad-core` has no
+OS dependency and instead exposes `Theme::is_dark(system_dark)`, which keeps the
+decision table unit-testable without an operating system in the loop. The
+system setting is polled every two seconds rather than every frame, since
+reading it hits the registry on Windows and a desktop portal on Linux.
+
+**Fonts come from the operating system; none are bundled.** egui's default set
+is four typefaces and about 1.4 MB, which is a quarter of the plugin, and every
+platform it runs on already has fonts. The editor starts with the system UI and
+monospace faces — enough for Latin, Greek, Cyrillic, Hebrew and Arabic — and
+when text arrives in a script those cannot draw, the font for it is fetched
+from the system at that moment and added as a fallback. Nothing is captured at
+build time except a list of family names; the lookup happens on the machine
+running the plugin. `examples/scripts.rs` renders the evidence.
+
+## Known limitations
+
+- **The macOS build has never run.** `xtask` emits the correct bundle layout
+  and CI builds it on a macOS runner, but nothing here has compiled or executed
+  it — a Windows machine cannot link a Mach-O binary. The first CI run on
+  `macos-14` is the first real test of it, including the macOS font paths and
+  `capture-window.sh`.
+- **Bold is drawn as a stronger colour, not a bold typeface.** egui ships no
+  bold font family; this is the same approach egui uses for its own emphasis.
+  Embedding a bold font would fix it properly.
+- **No mouse text selection.** Clicking places the caret; selection is
+  keyboard-only (`Shift`+motion, `Ctrl+A`).
+- **Input ownership.** When the host has attached a window, the GUI receives
+  key events natively and `onKeyDown` returns `kResultFalse` — handling both
+  would type every character twice. Without a window, `onKeyDown` is the only
+  input path, which is how the test host drives the plugin.

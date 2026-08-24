@@ -1,0 +1,25 @@
+# The document behaves like a text field, through the real window.
+#
+# Selecting, copying and pasting are the engine's and the platform's, but
+# nothing wires them to the document unless the shortcuts reach it. This is the
+# only test that presses Ctrl for real; the scenarios reach the editor through
+# the plugin's own key entry point and never touch the window's keyboard.
+type:one two three
+
+# Select the lot and copy it, then put the caret at the end and paste it back.
+chord:ctrl+a
+chord:ctrl+c
+type:{END}
+chord:ctrl+v
+wait:500
+
+# Cut takes it away and gives it back somewhere else.
+chord:ctrl+a
+chord:ctrl+x
+wait:500
+type:kept:
+chord:ctrl+v
+wait:500
+
+expect:tabs is 1
+expect:tab 0 is kept:one two threeone two three

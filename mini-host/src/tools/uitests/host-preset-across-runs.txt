@@ -1,0 +1,50 @@
+# A preset restores the plugin in a host that has never seen the document.
+#
+# Saving a preset, closing the host, opening it again and loading that preset
+# is the whole point of a preset. Loading one back into the same process the
+# plugin was already holding the document in proves nothing: the state was
+# never gone.
+#
+# Two tabs, each a heading and a paragraph, and the document also saved to a
+# file of its own on the way. Saving a file is a copy going out; it is not
+# supposed to change the document or what a preset holds of it.
+type:# first
+type:{ENTER}the first paragraph
+plugin:129,87
+type:# second
+type:{ENTER}the second paragraph
+
+remove:%CACHE%\across-runs.md
+plugin:567,50
+wait:2500
+type:%CACHE%\across-runs.md
+type:{ENTER}
+wait:2000
+
+click:44,41
+wait:2000
+window:Save preset
+type:across-runs
+type:{ENTER}
+wait:1500
+window:
+
+# A new host, holding a plugin that starts empty.
+restart:
+wait:1000
+
+click:128,41
+wait:2000
+window:Load preset
+row:%PRESETS%|across-runs
+wait:1500
+window:
+# What the restored document looks like, which is where this went wrong: the
+# state was right while the window showed the frame drawn as it changed.
+shot:%CACHE%\across-runs-restored.png
+
+cleanup:%PRESETS%\across-runs.preset
+
+expect:tabs is 2
+expect:tab 0 is # first\n\nthe first paragraph
+expect:tab 1 is # second\n\nthe second paragraph

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/crates/notepad-core",
+    "src/crates/notepad-plugin",
+    "src/crates/notepad-testrunner",
+    "src/xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["vst-notepad"]
+
+[workspace.dependencies]
+notepad-core = { path = "src/crates/notepad-core" }
+mini-host = { path = "../mini-host/src/crates/mini-host" }
+vst3 = "0.3.0"
+
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+# A panic must not unwind across the FFI boundary into the host, so there is
+# nothing for the unwinding tables to do.
+panic = "abort"
+strip = true
