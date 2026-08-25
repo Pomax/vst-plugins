@@ -1,0 +1,58 @@
+name: Markdown Notes CI
+
+on:
+  pull_request:
+    paths:
+      - "markdown-notes/**"
+      - "mini-host/**"
+      - ".github/workflows/markdown-notes-ci.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: markdown-notes-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: markdown-notes
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Unit tests, scenarios and rendering tests
+        run: cargo run -p xtask -- test --snapshots
+
+  zizmor:
+    name: Workflow audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Audit workflows
+        run: pipx run zizmor --offline --persona=pedantic --min-severity=low .github/workflows

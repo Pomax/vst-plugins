@@ -1,0 +1,68 @@
+# The section strip: making sections, naming the note, and dragging sections
+# into each of the three kinds of place one can be dropped, which are between
+# two sections, in front of the first, and after the last.
+#
+# One run, a picture taken during each drag while the button is still down. The
+# state the plugin writes is written once, on the way out, so the expectations
+# describe where everything ended up: the order after all three drags is
+# `Vocal chain`, `Drum bus`, `Mix notes`, and nothing else produces that order.
+# Fail any one drag and the result is different every time:
+#
+#   the first fails  -> Drum bus, Vocal chain, Mix notes
+#   the second fails -> Mix notes, Drum bus, Vocal chain
+#   the third fails  -> Vocal chain, Mix notes, Drum bus
+#
+# Two things about the keyboard are settled in the first few steps. The first
+# line is typed without clicking anywhere, so it says the window opens with the
+# document ready to type into. Then the note is renamed and another section is
+# made and typed into, which says the name field hands the keyboard back.
+#
+# The name sits mid-toolbar and is its own field: what is typed into it lands
+# nowhere else, which the first section's text at the end says. The + button
+# follows the last section, so it moves right as sections are added.
+type:# Mix notes
+type:{ENTER}levels are close
+plugin:204,50
+type:{END}{BS 40}Ghostlight
+plugin:129,87
+type:# Drum bus
+plugin:239,87
+type:# Vocal chain
+
+# With three sections the centres are 60, 170 and 280, and the last one ends at
+# 334.
+#
+# Between two: the last section carried over the middle one, which puts the mark
+# in the gap between the first two. The button stays down across these steps,
+# which is what makes it a drag rather than two clicks.
+plugin:hold:280,87
+plugin:moveto:170,87
+shot:%CACHE%\section-drag-between.png
+# While it is held, the pointer says so. On Windows that is the four-way arrow,
+# which is what baseview asks for when egui reports a grabbing pointer.
+plugin:cursor:170,87|grabbing
+plugin:letgo:170,87
+# Now: Mix notes, Vocal chain, Drum bus.
+shot:%CACHE%\section-drag-between-landed.png
+
+# In front of the first: the section that just landed in the middle, carried
+# left past the first one's middle.
+plugin:hold:170,87
+plugin:moveto:20,87
+shot:%CACHE%\section-drag-to-front.png
+plugin:letgo:20,87
+# Now: Vocal chain, Mix notes, Drum bus.
+shot:%CACHE%\section-drag-to-front-landed.png
+
+# After the last: the middle section carried out beyond every section there is.
+plugin:hold:170,87
+plugin:moveto:330,87
+shot:%CACHE%\section-drag-to-end.png
+plugin:letgo:330,87
+shot:%CACHE%\section-drag-to-end-landed.png
+
+expect:title is Ghostlight
+expect:sections is 3
+expect:section 0 is # Vocal chain
+expect:section 1 is # Drum bus
+expect:section 2 is # Mix notes\n\nlevels are close

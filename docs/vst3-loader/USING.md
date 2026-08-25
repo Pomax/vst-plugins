@@ -22,17 +22,17 @@ run <path-to-plugin.vst3>
 Point it at this project's plugin:
 
 ```bash
-run dist/Notepad.vst3
+run dist/Markdown Notes.vst3
 ```
 
 ```text
-binary   dist/Notepad.vst3
-vendor   vst-notepad
+binary   dist/Markdown Notes.vst3
+vendor   markdown-notes
 factory  IPluginFactory=true IPluginFactory2=true IPluginFactory3=true
 classes  1
-  *[0] Notepad  (Audio Module Class)
+  *[0] Markdown Notes  (Audio Module Class)
         subCategories="Fx" flags=0x0 cardinality=2147483647 cid=45544F4E415030446D64ED170A1B2C3D
-        via factory3: name="Notepad" category="Audio Module Class" subCategories="Fx"
+        via factory3: name="Markdown Notes" category="Audio Module Class" subCategories="Fx"
 
 instantiating class 0
   shape        single-component effect
@@ -41,7 +41,7 @@ instantiating class 0
   parameters   0
   editor       900x620, resizable: true
   state        103 bytes
-  state text   {"version":2,"notes":"","tabs":[{"notes":"","caret":0}],"active":0,"title":"Project notes",...}
+  state text   {"version":3,"notes":"","title":"Project notes","colours":{...},"mode":"wysiwyg","theme":"auto"}
 ```
 
 The `*` marks the class the host will instantiate by default: the first
@@ -54,10 +54,10 @@ the view object and a plugin does not draw until the host calls
 `IPlugView::attached`. `mini-host` does that:
 
 ```bash
-cargo run --bin mini-host -- ../dist/Notepad.vst3
+cargo run --bin mini-host -- ../dist/Markdown Notes.vst3
 ```
 
-The notepad project's `run.bat` and `run.sh` do exactly that.
+The Markdown Notes project's `run.bat` and `run.sh` do exactly that.
 
 It works for other plugins too, with the same caveat as the rest of this host:
 it implements no `IComponentHandler`, so a plugin that insists on one may
@@ -196,7 +196,7 @@ mini-host = { path = "../mini-host/src/crates/mini-host" }
 use std::path::Path;
 use mini_host::Module;
 
-let module = Module::load(Path::new("dist/Notepad.vst3"))?;
+let module = Module::load(Path::new("dist/Markdown Notes.vst3"))?;
 
 println!("{}", module.vendor());
 for i in 0..module.class_count() {
@@ -218,7 +218,7 @@ let mut plugin = module.create_plugin()?;   // first audio module class
 ### Driving the editor
 
 ```rust
-use notepad_core::{Key, Mods};
+use markdown_notes_core::{Key, Mods};
 
 plugin.open_editor()?;
 
@@ -266,7 +266,7 @@ let resizable = plugin.can_resize()?;
 
 ## Part 4 — writing tests against a plugin
 
-`notepad-testrunner` is the worked example. It describes behaviour as a list of
+`markdown-notes-testrunner` is the worked example. It describes behaviour as a list of
 steps in the vocabulary of someone *using* the editor, then executes them
 against the real binary:
 
@@ -286,7 +286,7 @@ internal handle, so what it asserts on is exactly what the plugin would write
 into a project file. `ReopenProject` saves the state, destroys the instance,
 creates a fresh one and restores — a session boundary inside a test.
 
-To test a *different* plugin this way, keep [`scenario.rs`](../../notepad/src/crates/notepad-testrunner/src/scenario.rs)
+To test a *different* plugin this way, keep [`scenario.rs`](../../markdown-notes/src/crates/markdown-notes-testrunner/src/scenario.rs)
 and replace the assertions: the steps that read a document are the only ones
 specific to this plugin. Keystroke delivery, resizing and state round-tripping
 work against anything.
@@ -301,7 +301,7 @@ This is a test host, not a DAW. It deliberately does not:
   ever rendered. The host checks that a plugin *loads and behaves*, not that it
   sounds right.
 - **Attach a real window.** `createView` is called, but `attached` is not, so
-  no plugin GUI is ever drawn. This is why the notepad plugin routes keyboard
+  no plugin GUI is ever drawn. This is why Markdown Notes routes keyboard
   input through `onKeyDown` when no window exists.
 - **Implement `IComponentHandler`.** A plugin that tries to report a parameter
   change back to the host gets no handler. Nothing crashes; the notification is

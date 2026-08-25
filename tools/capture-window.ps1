@@ -22,7 +22,7 @@ param(
     # executable that does not take those. Separate them with `|`: with
     # `powershell -File`, only one token binds to a parameter.
     [string]$ExeArgs = '',
-    [string]$Title = 'Notepad',
+    [string]$Title = 'Markdown Notes',
     # "x,y" inside the window to click before typing, so the keys go where a
     # user's would.
     [string]$ClickAt = '',
@@ -36,6 +36,9 @@ param(
     #   remove:PATH   delete a file, so a save does not hit "already exists"
     #   resize:W,H    give the window a drawable area of exactly W by H
     #   geometry:PATH write down what the window and the plugin inside it measure
+    #   hold:X,Y      press the button there and keep holding it
+    #   moveto:X,Y    move the pointer there, at the speed a hand moves
+    #   letgo:X,Y     move there and release the button
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
     # than one token to an array parameter, so a sequence comes from here.
@@ -139,6 +142,9 @@ public class Win32Capture {
     const int IDC_ARROW = 32512;
     const int IDC_IBEAM = 32513;
     const int IDC_HAND = 32649;
+    // What a window on Windows shows while something is being dragged, and so
+    // what baseview asks for when egui says the pointer is grabbing.
+    const int IDC_SIZEALL = 32646;
 
     /// The name of the cursor currently on screen, as far as the stock set goes.
     public static string CursorNow() {
@@ -148,6 +154,7 @@ public class Win32Capture {
         if (info.hCursor == LoadCursorW(IntPtr.Zero, IDC_IBEAM)) return "ibeam";
         if (info.hCursor == LoadCursorW(IntPtr.Zero, IDC_ARROW)) return "arrow";
         if (info.hCursor == LoadCursorW(IntPtr.Zero, IDC_HAND)) return "hand";
+        if (info.hCursor == LoadCursorW(IntPtr.Zero, IDC_SIZEALL)) return "grabbing";
         return "other";
     }
 
@@ -198,6 +205,34 @@ public class Win32Capture {
                 fromY + (toY - fromY) * i / steps);
             System.Threading.Thread.Sleep(16);
         }
+    }
+
+    /// Press the button where the pointer is, having glided there first.
+    ///
+    /// Held down until `LetGo`, so a test can look at what the window draws
+    /// while something is being dragged. A drag that presses and releases in
+    /// one call can only ever be judged by what it left behind.
+    public static void TakeHold(int x, int y) {
+        POINT from;
+        GetCursorPos(out from);
+        Glide(from.X, from.Y, x, y, 200);
+        System.Threading.Thread.Sleep(150);
+        mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
+        System.Threading.Thread.Sleep(150);
+    }
+
+    /// Move the pointer to a place, in the time a hand would take.
+    public static void MoveTo(int x, int y) {
+        POINT from;
+        GetCursorPos(out from);
+        Glide(from.X, from.Y, x, y, 400);
+        System.Threading.Thread.Sleep(150);
+    }
+
+    public static void LetGo(int x, int y) {
+        MoveTo(x, y);
+        mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
+        System.Threading.Thread.Sleep(200);
     }
 
     /// Drag a window's bottom right corner, slowly, and let go.
@@ -380,7 +415,7 @@ public class Win32Capture {
 [Win32Capture]::SetProcessDPIAware() | Out-Null
 
 if (-not (Test-Path $Exe)) {
-    throw "$Exe not found - run: cargo build -p notepad-plugin --example preview"
+    throw "$Exe not found - run: cargo build -p markdown-notes-plugin --example preview"
 }
 
 $outDir = Split-Path -Parent $Out
@@ -394,6 +429,13 @@ if ($ExeArgs) {
     $launchArgs = @($Theme)
     if ($Notes) { $launchArgs += $Notes }
 }
+
+# What is actually handed to the program. `Start-Process` joins its list with
+# spaces and quotes nothing, so a path with a space in it arrives as two
+# arguments and the program is launched with a file name that does not exist.
+# The unquoted list is kept as well: the restart step reads the state path out
+# of it.
+$launchLine = ($launchArgs | ForEach-Object { '"{0}"' -f $_ }) -join ' '
 
 function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     Add-Type -AssemblyName System.Drawing
@@ -454,7 +496,7 @@ $ROW_TOP = 3
 $ROW_HEIGHT = 21
 $BAR_WIDTH = 16
 
-$proc = Start-Process -FilePath $Exe -ArgumentList $launchArgs -PassThru
+$proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
 
 try {
     # Wait for the editor window to exist.
@@ -465,9 +507,9 @@ try {
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
     }
     if ($hwnd -eq [IntPtr]::Zero) {
-        # No window titled "Notepad" turned up; take the largest one and say so.
+        # No window with that title turned up; take the largest one and say so.
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $false)
-        Write-Warning 'no window titled "Notepad" found; falling back to the largest one'
+        Write-Warning "no window titled ""$Title"" found; falling back to the largest one"
     }
     if ($hwnd -eq [IntPtr]::Zero) { throw 'the preview window never appeared' }
     [Win32Capture]::ShowWindow($hwnd, 5) | Out-Null   # SW_SHOW
@@ -529,6 +571,29 @@ try {
                         $rect.Left + [int]$parts[2], $rect.Top + [int]$parts[3])
                     Start-Sleep -Milliseconds 400
                 }
+                'hold' {
+                    # `hold:X,Y` presses and keeps holding, so the steps after
+                    # it happen mid-drag.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read hold: $value" }
+                    [Win32Capture]::TakeHold(
+                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                }
+                'moveto' {
+                    # `moveto:X,Y` moves the pointer there, button or no button.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read moveto: $value" }
+                    [Win32Capture]::MoveTo(
+                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                }
+                'letgo' {
+                    # `letgo:X,Y` moves there and releases the button.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read letgo: $value" }
+                    [Win32Capture]::LetGo(
+                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    Start-Sleep -Milliseconds 400
+                }
                 'cursor' {
                     # `cursor:X,Y|ibeam` parks the pointer and checks what the
                     # window asked the cursor to be there.
@@ -581,7 +646,7 @@ try {
                                 -Force -ErrorAction SilentlyContinue
                         }
                     }
-                    $proc = Start-Process -FilePath $Exe -ArgumentList $launchArgs -PassThru
+                    $proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
                     $hwnd = [IntPtr]::Zero
                     $deadline = [DateTime]::UtcNow.AddSeconds(30)
                     while ($hwnd -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline) {

@@ -3,13 +3,16 @@
 # Both dialogs commit on a single action. Enter or the Save button for one, a
 # click on a row for the other. So the only way out without committing is
 # Escape, and it has to be a way out that leaves no trace.
+remove:%PRESETS%\escape-test.preset
+remove:%PRESETS%\not-written.preset
 type:one
 
-# Save a preset for real, so the Load button has something to offer.
+# Save a preset for real, so the Load button has something to offer. The name
+# field opens with the last name saved or loaded in it, so it is cleared first.
 click:44,41
 wait:2000
 window:Save preset
-type:escape-test
+type:{END}{BS 40}escape-test
 type:{ENTER}
 wait:1500
 window:
@@ -32,7 +35,7 @@ window:
 click:44,41
 wait:2000
 window:Save preset
-type:not-written
+type:{END}{BS 40}not-written
 type:{ESC}
 wait:1500
 window:
@@ -42,5 +45,5 @@ cleanup:%PRESETS%\not-written.preset
 
 expect:file exists %PRESETS%\escape-test.preset
 expect:no file at %PRESETS%\not-written.preset
-expect:tabs is 1
-expect:tab 0 is one two
+expect:sections is 1
+expect:section 0 is one two

@@ -997,23 +997,23 @@ mod tests {
     #[test]
     fn a_plain_file_is_the_binary() {
         let dir = TempDir::new("file");
-        let file = dir.file("Notepad.vst3");
+        let file = dir.file("Markdown Notes.vst3");
         assert_eq!(resolve_binary(&file).unwrap(), file);
     }
 
     #[test]
     fn a_macos_bundle_resolves_to_the_binary_inside() {
         let dir = TempDir::new("macos");
-        let inner = dir.file("Notepad.vst3/Contents/MacOS/Notepad");
-        let bundle = dir.0.join("Notepad.vst3");
+        let inner = dir.file("Markdown Notes.vst3/Contents/MacOS/Markdown Notes");
+        let bundle = dir.0.join("Markdown Notes.vst3");
         assert_eq!(resolve_binary(&bundle).unwrap(), inner);
     }
 
     #[test]
     fn a_windows_bundle_resolves_to_the_binary_inside() {
         let dir = TempDir::new("win");
-        let inner = dir.file("Notepad.vst3/Contents/x86_64-win/Notepad.vst3");
-        let bundle = dir.0.join("Notepad.vst3");
+        let inner = dir.file("Markdown Notes.vst3/Contents/x86_64-win/Markdown Notes.vst3");
+        let bundle = dir.0.join("Markdown Notes.vst3");
         assert_eq!(resolve_binary(&bundle).unwrap(), inner);
     }
 
@@ -1021,16 +1021,16 @@ mod tests {
     fn a_bundle_built_for_another_architecture_still_resolves() {
         // Not this machine's directory, and not one of the named fallbacks.
         let dir = TempDir::new("other");
-        let inner = dir.file("Notepad.vst3/Contents/riscv64-linux/Notepad.so");
-        let bundle = dir.0.join("Notepad.vst3");
+        let inner = dir.file("Markdown Notes.vst3/Contents/riscv64-linux/Markdown Notes.so");
+        let bundle = dir.0.join("Markdown Notes.vst3");
         assert_eq!(resolve_binary(&bundle).unwrap(), inner);
     }
 
     #[test]
     fn a_directory_with_no_binary_is_an_error() {
         let dir = TempDir::new("empty");
-        std::fs::create_dir_all(dir.0.join("Notepad.vst3/Contents")).unwrap();
-        let bundle = dir.0.join("Notepad.vst3");
+        std::fs::create_dir_all(dir.0.join("Markdown Notes.vst3/Contents")).unwrap();
+        let bundle = dir.0.join("Markdown Notes.vst3");
         assert!(matches!(
             resolve_binary(&bundle),
             Err(HostError::NoBinary(_))

@@ -218,8 +218,8 @@ mod tests {
 
     #[test]
     fn a_path_alone_is_enough() {
-        let args = parse(&["Notepad.vst3"]).unwrap();
-        assert_eq!(args.path, PathBuf::from("Notepad.vst3"));
+        let args = parse(&["Markdown Notes.vst3"]).unwrap();
+        assert_eq!(args.path, PathBuf::from("Markdown Notes.vst3"));
         assert!(args.editor, "the editor is created unless refused");
         assert!(!args.list);
         assert_eq!(args.class, None);
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn every_flag_is_read() {
         let args = parse(&[
-            "Notepad.vst3",
+            "Markdown Notes.vst3",
             "--class",
             "1",
             "--list",
@@ -250,25 +250,25 @@ mod tests {
 
     #[test]
     fn a_class_that_is_not_a_number_is_ignored_rather_than_fatal() {
-        let args = parse(&["Notepad.vst3", "--class", "second"]).unwrap();
+        let args = parse(&["Markdown Notes.vst3", "--class", "second"]).unwrap();
         assert_eq!(args.class, None);
     }
 
     #[test]
     fn an_unknown_flag_is_ignored() {
-        let args = parse(&["Notepad.vst3", "--verbose"]).unwrap();
-        assert_eq!(args.path, PathBuf::from("Notepad.vst3"));
+        let args = parse(&["Markdown Notes.vst3", "--verbose"]).unwrap();
+        assert_eq!(args.path, PathBuf::from("Markdown Notes.vst3"));
     }
 
     #[test]
     fn text_to_type_may_contain_spaces_and_dashes() {
-        let args = parse(&["Notepad.vst3", "--type", "- a list item"]).unwrap();
+        let args = parse(&["Markdown Notes.vst3", "--type", "- a list item"]).unwrap();
         assert_eq!(args.type_text.as_deref(), Some("- a list item"));
     }
 
     #[test]
     fn a_flag_missing_its_value_leaves_it_unset() {
-        let args = parse(&["Notepad.vst3", "--state"]).unwrap();
+        let args = parse(&["Markdown Notes.vst3", "--state"]).unwrap();
         assert_eq!(args.state, None);
     }
 }

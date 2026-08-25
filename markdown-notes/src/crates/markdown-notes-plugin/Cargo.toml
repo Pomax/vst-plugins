@@ -1,0 +1,74 @@
+[package]
+name = "markdown-notes-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Markdown Notes: a VST3 plugin that keeps your notes in the project"
+
+[lib]
+name = "markdown_notes_plugin"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+markdown-notes-core.workspace = true
+vst3.workspace = true
+serde_json = "1"
+# Native Open/Save dialogs, so file operations look like the host's own.
+rfd = "0.15"
+egui-baseview = { version = "0.6.0", default-features = false, features = ["opengl"] }
+# default-features off drops the embedded font set (~1.4 MB); the fonts come
+# from the operating system instead, see gui::install_system_fonts.
+egui = { version = "0.35", default-features = false }
+baseview = "0.2.2"
+raw-window-handle = "0.6"
+dark-light = "2.0.0"
+
+# Headless pixel rendering. Optional because it drags in the whole wgpu/naga
+# stack — gigabytes of build output for a plugin that ships as 5 MB — and
+# nothing but the snapshot tooling needs it.
+egui_kittest = { version = "0.35.0", features = ["wgpu"], optional = true }
+image = { version = "0.25.10", optional = true }
+font-kit = "0.14.3"
+
+[dev-dependencies]
+# The roles the headless tests query by. Already in the tree under
+# egui_kittest; named here so a test can say which role it means.
+accesskit = "0.24"
+
+[features]
+# Enables the headless renderer:
+#   cargo test -p markdown-notes-plugin --features snapshots
+#   cargo run  -p markdown-notes-plugin --features snapshots --example snapshot
+snapshots = ["dep:egui_kittest", "dep:image"]
+
+[[test]]
+name = "theme_rendering"
+required-features = ["snapshots"]
+
+[[test]]
+name = "caret_rendering"
+required-features = ["snapshots"]
+
+[[test]]
+name = "block_spacing"
+required-features = ["snapshots"]
+
+[[test]]
+name = "section_dragging"
+required-features = ["snapshots"]
+
+[[test]]
+name = "title_field"
+required-features = ["snapshots"]
+
+[[example]]
+name = "snapshot"
+required-features = ["snapshots"]
+
+[[example]]
+name = "scripts"
+required-features = ["snapshots"]
+
+[[example]]
+name = "preview"

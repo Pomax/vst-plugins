@@ -52,5 +52,5 @@ expect:file at %CACHE%\host-resize-dragged.txt contains host=880x600
 # below it at all.
 expect:file at %CACHE%\host-resize-dragged.txt contains inset=0,26,0,0
 # And the plugin is still alive and still taking keys after all of that.
-expect:tabs is 1
-expect:tab 0 is something to keep
+expect:sections is 1
+expect:section 0 is something to keep

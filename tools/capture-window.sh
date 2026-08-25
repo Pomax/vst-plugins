@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ ! -x "$exe" ]; then
-    echo "$exe not found - run: cargo build -p notepad-plugin --example preview" >&2
+    echo "$exe not found - run: cargo build -p markdown-notes-plugin --example preview" >&2
     exit 1
 fi
 

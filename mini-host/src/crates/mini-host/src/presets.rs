@@ -34,7 +34,7 @@ pub fn root() -> PathBuf {
 /// Where this plugin's presets go: a directory named after its own file.
 ///
 /// A bundle is named for the bundle, not the binary buried inside it, so
-/// `Notepad.vst3/Contents/x86_64-win/Notepad.vst3` and a bare `Notepad.vst3`
+/// `Markdown Notes.vst3/Contents/x86_64-win/Markdown Notes.vst3` and a bare `Markdown Notes.vst3`
 /// share one directory.
 pub fn directory_for(plugin: &Path) -> PathBuf {
     root().join(plugin_name(plugin))
@@ -124,17 +124,17 @@ mod tests {
             plugin_name(Path::new("C:/plugins/vst-cake-loader.dll")),
             "vst-cake-loader"
         );
-        assert_eq!(plugin_name(Path::new("/plugins/Notepad.vst3")), "Notepad");
+        assert_eq!(plugin_name(Path::new("/plugins/Markdown Notes.vst3")), "Markdown Notes");
     }
 
     #[test]
     fn a_bundle_and_the_binary_inside_it_share_a_directory() {
-        let bundle = Path::new("/plugins/Notepad.vst3");
-        let inside = Path::new("/plugins/Notepad.vst3/Contents/x86_64-win/Notepad.vst3");
+        let bundle = Path::new("/plugins/Markdown Notes.vst3");
+        let inside = Path::new("/plugins/Markdown Notes.vst3/Contents/x86_64-win/Markdown Notes.vst3");
         assert_eq!(plugin_name(bundle), plugin_name(inside));
 
-        let mac = Path::new("/plugins/Notepad.vst3/Contents/MacOS/Notepad");
-        assert_eq!(plugin_name(mac), "Notepad");
+        let mac = Path::new("/plugins/Markdown Notes.vst3/Contents/MacOS/Markdown Notes");
+        assert_eq!(plugin_name(mac), "Markdown Notes");
     }
 
     #[test]
@@ -144,8 +144,8 @@ mod tests {
 
     #[test]
     fn presets_sit_next_to_the_executable() {
-        let dir = directory_for(Path::new("Notepad.vst3"));
-        assert!(dir.ends_with(Path::new("presets/Notepad")), "{dir:?}");
+        let dir = directory_for(Path::new("Markdown Notes.vst3"));
+        assert!(dir.ends_with(Path::new("presets/Markdown Notes")), "{dir:?}");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 REM Run every project's tests. Stops at the first failure.
 setlocal
 
-for %%p in (mini-host vst3-loader notepad) do (
+for %%p in (mini-host vst3-loader markdown-notes) do (
     echo === %%p ===
     pushd "%%p"
     call ".\test.bat" %*

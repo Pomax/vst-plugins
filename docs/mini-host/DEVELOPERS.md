@@ -39,11 +39,11 @@ build.bat
 Then point the windowed host at a plugin:
 
 ```bash
-run.bat ..\dist\Notepad.vst3
+run.bat ..\dist\Markdown Notes.vst3
 ```
 
 ```bash
-./run.sh ../dist/Notepad.vst3
+./run.sh ../dist/Markdown Notes.vst3
 ```
 
 `run` builds nothing. It uses `../dist/mini-host`, falling back to
@@ -52,7 +52,7 @@ run.bat ..\dist\Notepad.vst3
 To inspect a plugin instead of opening it:
 
 ```bash
-cargo run --bin vst3-host -- ../dist/Notepad.vst3
+cargo run --bin vst3-host -- ../dist/Markdown Notes.vst3
 ```
 
 Tests:

@@ -381,7 +381,7 @@ fn draw_picking(ui: &mut egui::Ui, panel: &mut Panel, state: &mut State) {
     }
 }
 
-/// The host's own colour: the same blue the notepad plugin highlights with.
+/// The host's own colour: the same blue Markdown Notes highlights with.
 ///
 /// It marks everything here as the host rather than the plugin, which matters
 /// when the two are stacked in one window.
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_name_becomes_a_file_in_the_preset_directory() {
-        let dir = Path::new("/presets/Notepad");
+        let dir = Path::new("/presets/Markdown Notes");
         assert_eq!(
             path_for(dir, "mix 3"),
             Some(dir.join("mix 3.preset"))
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn a_name_cannot_climb_out_of_the_directory() {
-        let dir = Path::new("/presets/Notepad");
+        let dir = Path::new("/presets/Markdown Notes");
         let escaped = path_for(dir, "../../etc/passwd").unwrap();
         assert_eq!(escaped, dir.join("etcpasswd.preset"));
         assert!(escaped.starts_with(dir));
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn a_name_of_nothing_is_refused() {
-        let dir = Path::new("/presets/Notepad");
+        let dir = Path::new("/presets/Markdown Notes");
         assert_eq!(path_for(dir, "   "), None);
         assert_eq!(path_for(dir, "..."), None);
         assert_eq!(path_for(dir, "/"), None);

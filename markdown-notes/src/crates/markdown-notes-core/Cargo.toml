@@ -1,0 +1,13 @@
+[package]
+name = "markdown-notes-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Markdown editor model with Typora-style as-you-type conversion. Pure logic, no UI or plugin dependencies."
+
+[dependencies]
+kode-core = "0.5.4"
+kode-markdown = "0.5.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
