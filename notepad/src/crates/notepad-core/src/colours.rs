@@ -43,7 +43,6 @@ impl Rgba {
 /// theirs; the toolbar and the tab strip share a fill.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Colours {
-    // ---- window and chrome ----
     pub window_background: Rgba,
     /// Behind the toolbar and the tab strip both.
     pub bar_fill: Rgba,
@@ -62,7 +61,6 @@ pub struct Colours {
     pub field_placeholder: Rgba,
     pub error_text: Rgba,
 
-    // ---- document ----
     pub body_text: Rgba,
     /// Every heading level.
     pub heading_text: Rgba,

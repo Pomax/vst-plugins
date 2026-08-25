@@ -22,11 +22,6 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use baseview::dpi::LogicalSize;
-use baseview::{
-    Event, EventStatus, Window, WindowContext, WindowEvent, WindowHandler, WindowOpenOptions,
-    WindowScalePolicy, WindowSize,
-};
 use mini_host::{presets, Module, Plugin};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -94,34 +89,38 @@ struct Host {
     plugin: Plugin,
     /// Written when the window closes, for a scripted test to read.
     state_out: Option<PathBuf>,
-    /// The window's own handle, for reading back where it ended up.
+    /// The host window's own handle, which the plugin's window is a child of.
     handle: *mut c_void,
-    /// Last position seen, written out when the window closes. Reading it at
-    /// close time is too late on Windows: the window is already gone.
-    position: std::cell::Cell<Option<(i32, i32)>>,
     /// Which class was instantiated, so a preset cannot be loaded into a
     /// different plugin than the one that wrote it.
     cid: [u8; 16],
-    /// Shared with the strip and its dialogs.
-    shared: chrome::Shared,
-    /// The strip across the top. Held only to keep it open: dropping the
-    /// handle closes the window.
-    _toolbar: Option<baseview::WindowHandle>,
-    /// The plugin's window is moved down once, after it exists.
-    inset: std::cell::Cell<bool>,
-    /// The dialog window, while one is open.
-    dialog: std::cell::RefCell<Option<chrome::Dialog>>,
+    /// The name shown in the strip when there is nothing else to say.
+    name: String,
+    /// What the strip and its dialogs are working on.
+    state: chrome::State,
+    /// The dialog's own scratch, while one is open.
+    panel: Option<chrome::Panel>,
+    /// Where the open dialog was put, worked out once when it opens: asking for
+    /// the same place every frame is what lets it be dragged somewhere else.
+    dialog_at: Option<egui::Pos2>,
+    /// Whether that place has been corrected for the size of the window's own
+    /// frame, which is only known once the window is there.
+    dialog_placed: bool,
+    /// The size the plugin's window was last given, so it is only moved when
+    /// something has changed.
+    editor: Option<(i32, i32)>,
+    /// The plugin is handed the keyboard once, after its window exists.
+    focused: bool,
+    /// Whether the plugin has been told the window is going away.
+    closed: bool,
 }
 
 impl Host {
-    /// Carry out whatever a preset dialog decided, on the thread that owns the
-    /// plugin. `getState` and `setState` are the calls a DAW makes to write and
-    /// read its project file, and this is the same pair.
-    fn apply_pending(&self) {
-        let (save_to, load_from) = match self.shared.lock() {
-            Ok(mut shared) => (shared.save_to.take(), shared.load_from.take()),
-            Err(_) => return,
-        };
+    /// Carry out whatever a preset dialog decided. `getState` and `setState`
+    /// are the calls a DAW makes to write and read its project file, and this
+    /// is the same pair.
+    fn apply_pending(&mut self) {
+        let (save_to, load_from) = (self.state.save_to.take(), self.state.load_from.take());
 
         let mut said = None;
         if let Some(path) = save_to {
@@ -146,38 +145,150 @@ impl Host {
             });
         }
 
-        if let (Some(said), Ok(mut shared)) = (said, self.shared.lock()) {
-            shared.message = Some(said);
+        if let Some(said) = said {
+            self.state.message = Some(said);
         }
     }
 
-    /// Open the dialog the strip asked for, and take it away again once it has
-    /// been answered or its window has been closed.
-    fn follow_dialog_requests(&self) {
-        let want = match self.shared.lock() {
-            Ok(shared) => shared.want,
-            Err(_) => return,
-        };
-        let mut dialog = self.dialog.borrow_mut();
-
-        // Closing the window from its title bar answers nothing, and leaves
-        // the request standing unless it is withdrawn here.
-        if dialog.as_ref().is_some_and(|open| !open.is_open()) {
-            *dialog = None;
-            if let Ok(mut shared) = self.shared.lock() {
-                shared.want = chrome::Want::Nothing;
+    /// Show the dialog the strip asked for, in a window of its own.
+    ///
+    /// A viewport is a real window: it has a title bar, it can be dragged
+    /// anywhere, and it lives for exactly as long as this keeps asking for it.
+    /// While one is up the host's window stops taking input, which is what
+    /// makes the dialog modal.
+    fn follow_dialog_requests(&mut self, ctx: &egui::Context) {
+        let Some((title, (width, height))) = chrome::dialog_window(self.state.want) else {
+            if self.panel.take().is_some() {
+                self.dialog_at = None;
+                self.dialog_placed = false;
+                place::set_enabled(self.handle, true);
             }
             return;
+        };
+
+        if self.panel.is_none() {
+            self.panel = Some(chrome::Panel::new(&self.state));
+            self.dialog_at = centred_over(ctx, width as f32, height as f32);
+            self.dialog_placed = false;
+            place::set_enabled(self.handle, false);
+        }
+        let host = ctx.input(|i| i.viewport().outer_rect);
+
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title(title)
+            .with_inner_size([width as f32, height as f32])
+            .with_resizable(false)
+            .with_minimize_button(false)
+            .with_maximize_button(false);
+        if let Some(at) = self.dialog_at {
+            builder = builder.with_position(at);
         }
 
-        match want {
-            chrome::Want::Nothing => *dialog = None,
-            want if dialog.is_none() => {
-                *dialog =
-                    chrome::open_dialog(want, std::sync::Arc::clone(&self.shared), self.handle);
-            }
-            _ => {}
+        // Borrowed apart, so the closure can have these without borrowing all
+        // of the host.
+        let Host { state, panel, dialog_at, dialog_placed, .. } = self;
+        let Some(panel) = panel.as_mut() else { return };
+
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("mini-host-dialog"),
+            builder,
+            |ui, _class| {
+                egui::CentralPanel::no_frame()
+                    .frame(egui::Frame::new().fill(chrome::HIGHLIGHT))
+                    .show(ui, |ui| chrome::draw_dialog(ui, panel, state));
+                // The title bar's close button answers nothing.
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
+                    state.want = chrome::Want::Nothing;
+                }
+
+                // A position is where the window's frame goes, and what should
+                // land in the middle is the room inside the frame: a title bar
+                // at the top and a border around the rest, which is the
+                // platform's business and is only known once the window is
+                // there. So the centring is put right here, once. After that
+                // the window stays where it is, including wherever it has been
+                // dragged to.
+                if !*dialog_placed {
+                    let mine = ui.ctx().input(|i| i.viewport().outer_rect);
+                    if let (Some(host), Some(mine)) = (host, mine) {
+                        let (inner_w, inner_h) = (width as f32, height as f32);
+                        let border = (mine.width() - inner_w) / 2.0;
+                        let title = mine.height() - inner_h - border;
+                        *dialog_at = Some(egui::pos2(
+                            host.center().x - inner_w / 2.0 - border,
+                            host.center().y - inner_h / 2.0 - title,
+                        ));
+                        *dialog_placed = true;
+                    }
+                }
+            },
+        );
+    }
+
+    /// Tell the plugin what size it is now.
+    ///
+    /// Where its window goes is not decided here: it follows the host's window
+    /// from inside the resize itself, which `place::track_editor` arranges once
+    /// and for all. This is the plugin being told what happened, so it can lay
+    /// its editor out and keep the size with the project. Being a frame late
+    /// with that is fine; being a frame late with the window is not.
+    fn tell_plugin_the_size(&mut self, ctx: &egui::Context) {
+        let Some(rect) = ctx.input(|i| i.viewport().inner_rect) else {
+            return;
+        };
+        let size = (rect.width() as i32, rect.height() as i32);
+        if self.editor == Some(size) {
+            return;
         }
+        self.editor = Some(size);
+        let _ = self.plugin.resize(size.0, size.1 - chrome::HEIGHT);
+        if !self.focused {
+            // The editor exists by now, so this is where the host hands it the
+            // keyboard, once, the way a DAW does.
+            place::focus_editor(self.handle);
+            self.focused = true;
+        }
+    }
+
+    /// Hand back the plugin's state and let it go. Called once, whichever way
+    /// the window closes.
+    fn finish(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        if let Some(path) = &self.state_out {
+            match self.plugin.get_state() {
+                Ok(bytes) => {
+                    let _ = std::fs::write(path, bytes);
+                }
+                Err(e) => eprintln!("could not read the plugin's state: {e}"),
+            }
+        }
+        let _ = self.plugin.detach();
+    }
+}
+
+impl eframe::App for Host {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::Panel::top("strip")
+            .exact_size(chrome::HEIGHT as f32)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(chrome::HIGHLIGHT))
+            .show(ui, |ui| chrome::draw_bar(ui, &mut self.state, &self.name));
+
+        let ctx = ui.ctx().clone();
+        self.tell_plugin_the_size(&ctx);
+        self.follow_dialog_requests(&ctx);
+        self.apply_pending();
+
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.finish();
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.finish();
     }
 }
 
@@ -188,51 +299,21 @@ fn name_of(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-impl WindowHandler for Host {
-    fn on_frame(&self) {
-        if let Some(position) = place::get(self.handle) {
-            self.position.set(Some(position));
-        }
-        if !self.inset.get() {
-            place::inset_editor(self.handle, chrome::HEIGHT);
-            // The editor exists by now, so this is where the host hands it the
-            // keyboard — once, the way a DAW does.
-            place::focus_editor(self.handle);
-            self.inset.set(true);
-        }
-        self.follow_dialog_requests();
-        self.apply_pending();
-    }
-
-    fn resized(&self, size: WindowSize) {
-        let logical: LogicalSize<f64> = size.into();
-        let _ = self.plugin.resize(logical.width as i32, logical.height as i32);
-    }
-
-    fn on_event(&self, event: Event) -> EventStatus {
-        match event {
-            Event::Window(WindowEvent::WillClose) => {
-                if let Some(position) = self.position.get() {
-                    place::save(position);
-                }
-                if let Some(path) = &self.state_out {
-                    match self.plugin.get_state() {
-                        Ok(bytes) => {
-                            let _ = std::fs::write(path, bytes);
-                        }
-                        Err(e) => eprintln!("could not read the plugin's state: {e}"),
-                    }
-                }
-                let _ = self.plugin.detach();
-                EventStatus::Captured
-            }
-            _ => EventStatus::Ignored,
-        }
-    }
+/// Where a dialog of this size sits to be centred on the host's window.
+///
+/// A window of its own opens wherever the platform decides, which is not over
+/// the window that asked for it. A dialog belongs to what it is asking about,
+/// so it opens on top of it.
+fn centred_over(ctx: &egui::Context, width: f32, height: f32) -> Option<egui::Pos2> {
+    let host = ctx.input(|i| i.viewport().outer_rect)?;
+    Some(egui::pos2(
+        host.center().x - width / 2.0,
+        host.center().y - height / 2.0,
+    ))
 }
 
-/// The native handle behind a baseview window.
-fn native_handle(window: &WindowContext) -> Option<*mut c_void> {
+/// The native handle behind the application's window.
+fn native_handle<W: HasWindowHandle>(window: &W) -> Option<*mut c_void> {
     match window.window_handle().ok()?.as_raw() {
         RawWindowHandle::Win32(h) => Some(h.hwnd.get() as *mut c_void),
         RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
@@ -272,11 +353,6 @@ fn main() -> ExitCode {
     println!("vendor: {}", module.vendor());
     println!("editor: {width}x{height}");
 
-    let options = WindowOpenOptions::new()
-        .with_title("Mini VST Host")
-        .with_size(LogicalSize::new(width as f64, (height + chrome::HEIGHT) as f64))
-        .with_scale_policy(WindowScalePolicy::SystemScaleFactor);
-
     let cid = module
         .first_audio_class()
         .and_then(|index| module.class_info2(index))
@@ -284,48 +360,58 @@ fn main() -> ExitCode {
         .unwrap_or([0u8; 16]);
     let plugin_path = path.clone();
 
-    Window::open_blocking(options, move |window| {
-        let handle = native_handle(&window);
-        let shared = chrome::Shared::default();
-        if let Ok(mut state) = shared.lock() {
-            state.directory = presets::directory_for(&plugin_path);
-        }
-        // The strip is opened after the plugin, so it sits above the editor
-        // rather than behind it, and the editor is moved down to make room.
-        let mut toolbar = None;
-        match handle {
-            // Safety: the window outlives the attachment — it is closed by
-            // baseview only after this handler is dropped.
-            Some(parent) => {
-                if let Err(e) = unsafe { plugin.attach(parent) } {
-                    eprintln!("could not attach the editor: {e}");
-                }
-                place::inset_editor(parent, chrome::HEIGHT);
-                toolbar = Some(chrome::open_bar(
-                    &window,
-                    presets::plugin_name(&plugin_path),
-                    std::sync::Arc::clone(&shared),
-                    width,
-                ));
-                icon::set(parent);
-                if let Some((x, y)) = place::load() {
-                    place::set(parent, x, y);
-                }
-            }
-            None => eprintln!("this window has no handle the plugin can use"),
-        }
-        Host {
-            plugin,
-            state_out: args.state.clone(),
-            handle: handle.unwrap_or(std::ptr::null_mut()),
-            position: std::cell::Cell::new(None),
-            cid,
-            shared,
-            _toolbar: toolbar,
-            inset: std::cell::Cell::new(false),
-            dialog: std::cell::RefCell::new(None),
-        }
-    });
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Mini VST Host")
+            .with_inner_size([width as f32, (height + chrome::HEIGHT) as f32])
+            .with_icon(icon::image()),
+        // Where the window was left is the application's to remember, and
+        // eframe already does it.
+        persist_window: true,
+        ..Default::default()
+    };
 
+    let run = eframe::run_native(
+        "mini-host",
+        options,
+        Box::new(move |cc| {
+            let handle = native_handle(cc);
+            match handle {
+                // Safety: the window outlives the attachment. The plugin is
+                // detached when the window closes, before eframe drops it.
+                Some(parent) => {
+                    if let Err(e) = unsafe { plugin.attach(parent) } {
+                        eprintln!("could not attach the editor: {e}");
+                    }
+                    // Put it under the strip, and keep it there for every
+                    // resize from here on without anything having to watch.
+                    place::inset_editor(parent, chrome::HEIGHT);
+                    place::track_editor(parent, chrome::HEIGHT);
+                }
+                None => eprintln!("this window has no handle the plugin can use"),
+            }
+            let mut state = chrome::State::default();
+            state.directory = presets::directory_for(&plugin_path);
+            Ok(Box::new(Host {
+                plugin,
+                state_out: args.state.clone(),
+                handle: handle.unwrap_or(std::ptr::null_mut()),
+                cid,
+                name: presets::plugin_name(&plugin_path),
+                state,
+                panel: None,
+                dialog_at: None,
+                dialog_placed: false,
+                editor: None,
+                focused: false,
+                closed: false,
+            }))
+        }),
+    );
+
+    if let Err(e) = run {
+        eprintln!("could not open a window: {e}");
+        return ExitCode::FAILURE;
+    }
     ExitCode::SUCCESS
 }

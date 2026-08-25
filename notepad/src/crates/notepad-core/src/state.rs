@@ -146,6 +146,10 @@ mod tests {
     /// This is what a preset holds: the same bytes `IComponent::getState`
     /// hands a DAW. A tab arriving empty, or holding another tab's text, is
     /// the document coming back wrong.
+    ///
+    /// The tabs come back because the document does, not because they were
+    /// kept: nothing about them is written down, which is why the one in front
+    /// is the first and not whichever was in front when it was saved.
     #[test]
     fn round_trips_every_tab() {
         let mut e = Editor::new();
@@ -198,24 +202,6 @@ mod tests {
             );
         }
     }
-
-    /// Tabs come back because the document does, not because they were kept.
-    #[test]
-    fn tabs_come_back_from_the_document() {
-        let mut e = Editor::with_text("# One\n\nfirst");
-        e.new_tab();
-        e.set_text("# Two\n\nsecond");
-        e.set_caret(5);
-
-        let mut restored = Editor::new();
-        restored.load_state_bytes(&e.state_bytes());
-
-        assert_eq!(restored.tab_count(), 2);
-        assert_eq!(restored.tab_text(0), "# One\n\nfirst");
-        assert_eq!(restored.tab_text(1), "# Two\n\nsecond");
-        assert_eq!(restored.active_tab(), 0);
-    }
-
 
     #[test]
     fn the_saved_notes_hold_the_whole_document() {

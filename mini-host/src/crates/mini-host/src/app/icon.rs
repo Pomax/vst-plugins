@@ -1,14 +1,24 @@
 //! The window's icon.
 //!
 //! Drawn in memory rather than shipped as a file, so there is no resource to
-//! embed and nothing to keep in step with the build.
+//! embed and nothing to keep in step with the build. Handed to eframe with the
+//! rest of the window's description, which is where an application says what
+//! its window looks like.
 
-use std::ffi::c_void;
-
-/// Icon side, in pixels. Windows scales this for the taskbar and title bar.
+/// Icon side, in pixels. The platform scales this for the taskbar and title
+/// bar.
 const SIDE: usize = 32;
 
-/// An empty frame with something seated in it, in BGRA.
+/// The icon, as eframe wants it.
+pub fn image() -> std::sync::Arc<egui::IconData> {
+    std::sync::Arc::new(egui::IconData {
+        rgba: pixels(),
+        width: SIDE as u32,
+        height: SIDE as u32,
+    })
+}
+
+/// An empty frame with something seated in it, in RGBA.
 ///
 /// A host is a case that holds whichever plugin is loaded, so that is what it
 /// shows: the outer frame is the host, the block inside is the plugin. The
@@ -17,7 +27,7 @@ const SIDE: usize = 32;
 fn pixels() -> Vec<u8> {
     let case = [235u8, 235, 235, 255];
     let edge = [70u8, 70, 70, 255];
-    let slot = [70u8, 130, 200, 255];
+    let slot = [200u8, 130, 70, 255];
     let clear = [0u8, 0, 0, 0];
 
     let mut out = Vec::with_capacity(SIDE * SIDE * 4);
@@ -43,46 +53,15 @@ fn pixels() -> Vec<u8> {
     out
 }
 
-#[cfg(target_os = "windows")]
-pub fn set(handle: *mut c_void) {
-    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CreateIcon, SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON,
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let bits = pixels();
-    // Every pixel's transparency comes from its alpha, so the mask is all zero.
-    let mask = vec![0u8; SIDE * SIDE / 8];
-
-    let icon = unsafe {
-        CreateIcon(
-            None,
-            SIDE as i32,
-            SIDE as i32,
-            1,
-            32,
-            mask.as_ptr(),
-            bits.as_ptr(),
-        )
-    };
-    let Ok(icon) = icon else { return };
-
-    let hwnd = HWND(handle);
-    for which in [ICON_SMALL, ICON_BIG] {
-        unsafe {
-            SendMessageW(
-                hwnd,
-                WM_SETICON,
-                Some(WPARAM(which as usize)),
-                Some(LPARAM(icon.0 as isize)),
-            );
-        }
+    /// Four bytes a pixel, and something drawn in them.
+    #[test]
+    fn the_icon_is_a_full_square_of_pixels() {
+        let bits = pixels();
+        assert_eq!(bits.len(), SIDE * SIDE * 4);
+        assert!(bits.chunks(4).any(|p| p[3] == 255), "every pixel is clear");
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn set(_handle: *mut c_void) {
-    // macOS takes an application icon from the bundle, which a bare binary
-    // built by cargo does not have.
-    let _ = pixels();
 }

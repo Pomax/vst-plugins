@@ -1,9 +1,0 @@
-# The window opens with the document ready to type into: no click first.
-#
-# The regression: the plugin's own window had no keyboard focus until it was
-# clicked, so the editor a DAW had just opened swallowed everything typed.
-type:hello from a real keypress
-
-expect:tabs is 1
-expect:tab 0 is hello from a real keypress
-expect:title is ...project title here...

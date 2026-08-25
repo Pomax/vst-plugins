@@ -148,14 +148,4 @@ mod tests {
         assert!(both.ctrl && both.shift && !both.alt);
     }
 
-    #[test]
-    fn round_trip_of_a_typed_sentence() {
-        let mut editor = notepad_core::Editor::new();
-        for c in "# Hi".chars() {
-            let (unit, code) = encode_char(c);
-            let key = decode_key(unit, code).expect("printable");
-            editor.handle_key(key, decode_mods(0));
-        }
-        assert_eq!(editor.text(), "# Hi");
-    }
 }

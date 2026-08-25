@@ -186,13 +186,20 @@ pub const DEFAULT_HEIGHT: i32 = 620;
 /// The editor state. Owns the document and everything persisted as plugin state.
 ///
 /// The document itself, its selection and its undo history are
-/// [`kode_markdown::MarkdownEditor`]'s: buffer, cursor motion by character,
-/// word and line, selection, undo and the markdown input rules all come from
-/// there rather than being written here. Each tab is one of them, and the one
-/// in front is `tabs[active]`. The whole document is in the vec, with no live
-/// copy beside it.
+/// [`kode_core::Editor`]'s: buffer, cursor motion by character, word and line,
+/// selection and undo all come from there rather than being written here, and
+/// the markdown rewrites from [`kode_markdown`], which works on the same type.
+/// Each tab is one of them, and the one in front is `tabs[active]`. The whole
+/// document is in the vec, with no live copy beside it.
+///
+/// Not `kode_markdown::MarkdownEditor`: that is the same editor with a
+/// tree-sitter parse kept beside it, and nothing here reads the tree. The
+/// markdown commands and input rules all work off the buffer, and what the
+/// renderer needs — where each marker starts and ends, which lines a fence
+/// covers — is [`block::parse_document`]. Carrying the parse costs a grammar
+/// in the binary and a reparse of the document on every keystroke.
 pub struct Editor {
-    tabs: Vec<kode_markdown::MarkdownEditor>,
+    tabs: Vec<kode_core::Editor>,
     active: usize,
     pub mode: ViewMode,
     pub theme: Theme,
@@ -215,7 +222,7 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Editor {
         Editor {
-            tabs: vec![kode_markdown::MarkdownEditor::empty()],
+            tabs: vec![kode_core::Editor::empty()],
             active: 0,
             mode: ViewMode::Wysiwyg,
             theme: Theme::Auto,
@@ -231,19 +238,18 @@ impl Editor {
     pub fn with_text(text: impl Into<String>) -> Editor {
         let mut e = Editor::new();
         let text = text.into();
-        e.tabs[0] = kode_markdown::MarkdownEditor::new(&text);
+        e.tabs[0] = kode_core::Editor::new(&text);
         e.tabs[0].move_to_end();
         e
     }
 
-    // ---- tabs ------------------------------------------------------------
 
     /// The tab in front.
-    fn live(&self) -> &kode_markdown::MarkdownEditor {
+    fn live(&self) -> &kode_core::Editor {
         &self.tabs[self.active]
     }
 
-    fn live_mut(&mut self) -> &mut kode_markdown::MarkdownEditor {
+    fn live_mut(&mut self) -> &mut kode_core::Editor {
         &mut self.tabs[self.active]
     }
 
@@ -284,7 +290,7 @@ impl Editor {
 
     /// Add an empty tab after the last one and switch to it.
     pub fn new_tab(&mut self) -> usize {
-        self.tabs.push(kode_markdown::MarkdownEditor::empty());
+        self.tabs.push(kode_core::Editor::empty());
         self.active = self.tabs.len() - 1;
         self.dirty = true;
         self.active
@@ -298,7 +304,7 @@ impl Editor {
         }
         self.dirty = true;
         if self.tabs.len() == 1 {
-            self.tabs[0] = kode_markdown::MarkdownEditor::empty();
+            self.tabs[0] = kode_core::Editor::empty();
             return;
         }
         self.tabs.remove(index);
@@ -354,18 +360,17 @@ impl Editor {
         self.tabs = tabs::split_document(text)
             .into_iter()
             .map(|part| {
-                let mut tab = kode_markdown::MarkdownEditor::new(&part);
+                let mut tab = kode_core::Editor::new(&part);
                 tab.move_to_end();
                 tab
             })
             .collect();
         if self.tabs.is_empty() {
-            self.tabs.push(kode_markdown::MarkdownEditor::empty());
+            self.tabs.push(kode_core::Editor::empty());
         }
         self.active = 0;
     }
 
-    // ---- accessors -------------------------------------------------------
 
     pub fn text(&self) -> String {
         self.live().text()
@@ -422,7 +427,7 @@ impl Editor {
         let new = new.into();
         let caret = self.caret().min(new.len());
         let caret = text::clamp_boundary(&new, caret);
-        let tab = kode_markdown::MarkdownEditor::new(&new);
+        let tab = kode_core::Editor::new(&new);
         self.tabs[self.active] = tab;
         self.set_caret(caret);
     }
@@ -495,7 +500,6 @@ impl Editor {
             .join("\n")
     }
 
-    // ---- undo ------------------------------------------------------------
 
     /// Drop undo history, after loading a document, so the user cannot
     /// undo their way back into the previous file's contents.
@@ -504,7 +508,7 @@ impl Editor {
     pub fn clear_history(&mut self) {
         let text = self.text();
         let at = self.live().cursor();
-        self.tabs[self.active] = kode_markdown::MarkdownEditor::new(&text);
+        self.tabs[self.active] = kode_core::Editor::new(&text);
         // A fresh editor starts at the top; the caret was not what was being
         // cleared.
         self.live_mut().set_cursor(at);
@@ -522,7 +526,6 @@ impl Editor {
         self.live().version() != before
     }
 
-    // ---- primitive edits -------------------------------------------------
 
     fn replace_range(&mut self, range: Range<usize>, with: &str) {
         let (start, end) = (self.pos_of(range.start), self.pos_of(range.end));
@@ -547,7 +550,6 @@ impl Editor {
         self.dirty = true;
     }
 
-    // ---- key handling ----------------------------------------------------
 
     /// Route a key press.
     ///
@@ -576,19 +578,13 @@ impl Editor {
                 if self.close_fence() {
                     // An opened fence gets its closing line, and the caret is
                     // left on the empty line between the two.
-                } else {
-                    let inner = self.tabs[self.active].editor_mut();
-                    if kode_markdown::InputRules::handle_enter(inner) {
-                        self.live_mut().sync_tree();
-                    } else {
-                        self.end_block();
-                    }
+                } else if !kode_markdown::InputRules::handle_enter(self.live_mut()) {
+                    self.end_block();
                 }
             }
             Key::Backspace => {
-                let inner = self.tabs[self.active].editor_mut();
-                if kode_markdown::InputRules::handle_backspace_at_prefix(inner) {
-                    self.live_mut().sync_tree();
+                if kode_markdown::InputRules::handle_backspace_at_prefix(self.live_mut()) {
+                    // The rule took it: a marker was removed, not a character.
                 } else if mods.ctrl {
                     self.live_mut().delete_word_back();
                 } else {
@@ -603,14 +599,13 @@ impl Editor {
                 }
             }
             Key::Tab => {
-                let inner = self.tabs[self.active].editor_mut();
                 let handled = if mods.shift {
-                    kode_markdown::InputRules::handle_shift_tab(inner)
+                    kode_markdown::InputRules::handle_shift_tab(self.live_mut())
                 } else {
-                    kode_markdown::InputRules::handle_tab(inner)
+                    kode_markdown::InputRules::handle_tab(self.live_mut())
                 };
                 if handled {
-                    self.live_mut().sync_tree();
+                    // The rule took it: a list item moved a level.
                 } else if mods.shift {
                     self.live_mut().outdent();
                 } else {
@@ -688,9 +683,7 @@ impl Editor {
                 KeyResult::edited()
             }
             'k' => {
-                let inner = self.tabs[self.active].editor_mut();
-                kode_markdown::MarkdownCommands::insert_link(inner, "");
-                self.live_mut().sync_tree();
+                kode_markdown::MarkdownCommands::insert_link(self.live_mut(), "");
                 // Between the brackets, which is where the URL goes and where
                 // the caret is left waiting for it.
                 self.live_mut().move_left();
@@ -870,8 +863,7 @@ impl Editor {
 
     /// Run one of the markdown commands over the tab in front.
     fn markdown_command(&mut self, run: fn(&mut kode_core::Editor)) {
-        run(self.tabs[self.active].editor_mut());
-        self.live_mut().sync_tree();
+        run(self.live_mut());
     }
 
     /// Toggle the task checkbox on `line`, adding one if the item lacks it.
@@ -966,8 +958,7 @@ mod typing_tests {
     }
 
     /// A fence counts as code the moment it is typed, before anything closes
-    /// it. The tab's tree-sitter tree cannot say so — an unclosed fence parses
-    /// as an error node — which is why these rules use our own parse.
+    /// it, which is when the rules that ask need to know.
     #[test]
     fn an_unclosed_fence_is_a_code_block() {
         let mut e = Editor::new();
@@ -975,11 +966,6 @@ mod typing_tests {
             e.handle_key(Key::Char(c), Mods::NONE);
         }
         assert!(e.in_code(), "the caret is on `{}`", e.text());
-        assert_eq!(
-            e.live().tree().sexp().as_deref(),
-            Some("(document (ERROR (fenced_code_block_delimiter)))"),
-            "tree-sitter now parses an unclosed fence: these rules can use it"
-        );
     }
 
     #[test]
@@ -1237,24 +1223,11 @@ mod tab_tests {
         let mut e = Editor::new();
         e.set_document_text("# One\n\nfirst\n\n# Two\n\nsecond\n\n# Three\n");
         assert_eq!(e.tab_count(), 3);
+        assert_eq!(e.tab_text(0), "# One\n\nfirst");
+        assert_eq!(e.tab_text(1), "# Two\n\nsecond");
         assert_eq!(e.tab_title(0), "One");
         assert_eq!(e.tab_title(1), "Two");
         assert_eq!(e.tab_title(2), "Three");
         assert_eq!(e.active_tab(), 0);
-    }
-
-    #[test]
-    fn tabs_survive_a_save_and_load_of_the_document() {
-        let mut e = Editor::with_text("# One\n\nfirst");
-        e.new_tab();
-        e.set_text("# Two\n\nsecond");
-
-        let document = e.document_text();
-        let mut reopened = Editor::new();
-        reopened.set_document_text(&document);
-
-        assert_eq!(reopened.tab_count(), 2);
-        assert_eq!(reopened.tab_text(0), "# One\n\nfirst");
-        assert_eq!(reopened.tab_text(1), "# Two\n\nsecond");
     }
 }

@@ -12,5 +12,14 @@ authors = ["vst"]
 vst3 = "0.3.0"
 
 [profile.release]
-opt-level = 2
-lto = "thin"
+# Optimised for size rather than speed. This is a wrapper that opens a window
+# and puts a plugin in it; what has to be fast is the plugin, and that is built
+# separately.
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+# The host calls into a plugin and the plugin calls back into it. A panic must
+# not unwind across that boundary, and there is nothing here that would catch
+# one anyway.
+panic = "abort"
+strip = true

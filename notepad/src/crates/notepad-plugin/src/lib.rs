@@ -50,10 +50,6 @@ const SDK_VERSION: &str = "VST 3.7.0";
 /// every factory version, or a host can end up listing the plugin as both.
 const SUB_CATEGORY: &str = "Fx";
 
-// ---------------------------------------------------------------------------
-// String helpers (VST3 uses fixed-size C and UTF-16 buffers)
-// ---------------------------------------------------------------------------
-
 fn copy_cstring(src: &str, dst: &mut [c_char]) {
     let c_string = CString::new(src).unwrap_or_default();
     let bytes = c_string.as_bytes_with_nul();
@@ -88,10 +84,6 @@ unsafe fn fid_eq(a: FIDString, b: FIDString) -> bool {
     }
     std::ffi::CStr::from_ptr(a) == std::ffi::CStr::from_ptr(b)
 }
-
-// ---------------------------------------------------------------------------
-// IBStream helpers
-// ---------------------------------------------------------------------------
 
 /// Drain an `IBStream` to a byte vector.
 ///
@@ -143,10 +135,6 @@ unsafe fn write_stream(stream: *mut IBStream, bytes: &[u8]) -> bool {
     }
     true
 }
-
-// ---------------------------------------------------------------------------
-// The plugin
-// ---------------------------------------------------------------------------
 
 pub struct Notepad {
     editor: Shared,
@@ -534,10 +522,6 @@ impl IEditControllerTrait for Notepad {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The editor view
-// ---------------------------------------------------------------------------
-
 /// The plugin's editor window.
 ///
 /// Keyboard input is delivered by the host through `onKeyDown`; the view
@@ -745,10 +729,6 @@ impl IPlugViewTrait for NotepadView {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
 struct Factory;
 
 impl Class for Factory {
@@ -908,10 +888,6 @@ impl IPluginFactory3Trait for Factory {
         kResultOk
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module entry points
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
 #[no_mangle]

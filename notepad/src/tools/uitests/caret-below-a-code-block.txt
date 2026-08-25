@@ -1,8 +1,12 @@
-# Where the caret is drawn once a code block is above it.
+# A code block typed through the real keyboard, and where the caret goes once
+# there is one above it.
 #
 # The fence lines take no row of their own unless the caret is on one, so the
 # rows the document draws are fewer than the lines it holds. The caret has to
 # land on the row of the line it is actually on.
+#
+# Typing the fence marker and pressing Enter is also what closes the fence, so
+# what the document ends up holding says whether that still works.
 type:# secondary
 type:{ENTER}testing as well
 # Enter after the fence marker closes it and leaves the caret inside.

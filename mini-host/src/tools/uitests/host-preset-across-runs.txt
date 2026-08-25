@@ -36,6 +36,20 @@ wait:1000
 click:128,41
 wait:2000
 window:Load preset
+shot:%CACHE%\host-presets-list.png
+# One click on a row is the whole interaction, and it goes by name: the list
+# also holds whatever presets have been saved by hand, so this one is wherever
+# the alphabet puts it among them.
+#
+# Where flicker shows, if it ever comes back. A dialog that is not modal leaves
+# the window behind it being activated and deactivated over and over, and both
+# title bars go light and dark with it. Filming it costs four seconds of
+# recording on every run to re-prove something already fixed, so it is off:
+# uncomment these three lines and the expectation at the bottom to film the
+# pointer being dragged across the dialog and off it.
+#film:%CACHE%\host-presets-behind
+#wiggle:3000
+#endfilm:
 row:%PRESETS%|across-runs
 wait:1500
 window:
@@ -45,6 +59,14 @@ shot:%CACHE%\across-runs-restored.png
 
 cleanup:%PRESETS%\across-runs.preset
 
+# The preset is a file of its own, in the directory this plugin's presets live
+# in. Without this the test would pass on a preset that was never written, so
+# long as the document happened to come back looking right.
+expect:file exists %PRESETS%\across-runs.preset
 expect:tabs is 2
 expect:tab 0 is # first\n\nthe first paragraph
 expect:tab 1 is # second\n\nthe second paragraph
+# Crossing the dialog lights up a row and a button or two, which is a few dozen
+# distinct frames out of two hundred. A dialog fighting the window behind it for
+# the focus repaints both of them continuously instead, and every frame differs.
+#expect:file at %CACHE%\host-presets-behind.txt has distinct_frames at most 60

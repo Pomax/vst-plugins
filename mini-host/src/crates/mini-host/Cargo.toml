@@ -17,18 +17,27 @@ path = "src/main.rs"
 [dependencies]
 vst3.workspace = true
 libloading = "0.8"
-baseview = "0.2.2"
 raw-window-handle = "0.6"
-# The host's own strip above the plugin: the preset buttons live there.
+# This is an application, so it uses the application shell: eframe owns the
+# window, its title bar and its dialogs, and remembers where the window was
+# through `persist_window`. A plugin's editor is the other case, and that is
+# what baseview is for; it is the plugin that uses it.
+#
 # `default_fonts` because this is a tool, not a plugin: it is not worth going
 # to the operating system for a font to draw two buttons with.
+eframe = { version = "0.35", default-features = false, features = [
+    "glow",
+    "persistence",
+    "default_fonts",
+    "wayland",
+    "x11",
+] }
 egui = { version = "0.35", features = ["default_fonts"] }
-egui-baseview = { version = "0.6.0", default-features = false, features = ["opengl"] }
 # The native Open dialog, for when no plugin is named on the command line.
 rfd = "0.15"
 
-# baseview has no window-position API, so placing the window is done through
-# the platform directly. The icon is set the same way.
+# A plugin's editor is a window of its own that the host puts inside its own
+# window, and moving and focusing someone else's window is the platform's job.
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62.2"
 features = [
@@ -37,6 +46,9 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
+    # Window subclassing, so the plugin's window can be moved from inside the
+    # host's resize rather than a frame later.
+    "Win32_UI_Shell",
 ]
 
 [target.'cfg(target_os = "macos")'.dependencies.objc2]

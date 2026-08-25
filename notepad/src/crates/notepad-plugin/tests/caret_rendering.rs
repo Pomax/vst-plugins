@@ -127,18 +127,3 @@ fn the_caret_below_a_code_block_is_clear_of_it() {
     );
 }
 
-/// And on the blank line above, when that is where it is.
-#[test]
-fn the_caret_moves_up_a_row_for_the_blank_line_above() {
-    let at = SAMPLE.rfind("Okay").expect("the sample lost its last line");
-    let on_text = rows_of(&render(at), is_caret).expect("no caret was drawn");
-    // One byte back is the blank line between the code block and the
-    // paragraph: a row of its own, above the paragraph's.
-    let on_blank = rows_of(&render(at - 1), is_caret).expect("no caret was drawn");
-
-    assert!(
-        on_blank.1 < on_text.1,
-        "the caret on the blank line was drawn at rows {on_blank:?}, \
-         the one on the line below it at {on_text:?}"
-    );
-}

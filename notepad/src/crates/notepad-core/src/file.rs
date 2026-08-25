@@ -210,6 +210,8 @@ mod tests {
         let mut e = Editor::new();
         e.open_path(&path).unwrap();
         assert_eq!(e.tab_count(), 2);
+        assert_eq!(e.tab_text(0), "# One\n\nfirst");
+        assert_eq!(e.tab_text(1), "# Two\n\nsecond");
         assert_eq!(e.tab_title(0), "One");
         assert_eq!(e.tab_title(1), "Two");
         assert_eq!(e.active_tab(), 0);
@@ -230,23 +232,6 @@ mod tests {
         e.open_path(&path).unwrap();
         assert_eq!(e.tab_count(), 1, "the old tabs are gone, not appended to");
         assert_eq!(e.tab_title(0), "Only");
-    }
-
-    #[test]
-    fn tabs_survive_being_saved_and_opened_again() {
-        let dir = temp_dir();
-        let path = dir.join("round-trip.md");
-
-        let mut e = Editor::with_text("# Mix notes\n\nlevels are close");
-        e.new_tab();
-        e.set_text("# Drum bus\n\nglue comp");
-        e.save_as(&path).unwrap();
-
-        let mut reopened = Editor::new();
-        reopened.open_path(&path).unwrap();
-        assert_eq!(reopened.tab_count(), 2);
-        assert_eq!(reopened.tab_text(0), "# Mix notes\n\nlevels are close");
-        assert_eq!(reopened.tab_text(1), "# Drum bus\n\nglue comp");
     }
 
     #[test]

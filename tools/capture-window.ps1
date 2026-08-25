@@ -34,6 +34,8 @@ param(
     #   type:TEXT     send TEXT as key presses
     #   wait:MS       pause
     #   remove:PATH   delete a file, so a save does not hit "already exists"
+    #   resize:W,H    give the window a drawable area of exactly W by H
+    #   geometry:PATH write down what the window and the plugin inside it measure
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
     # than one token to an array parameter, so a sequence comes from here.
@@ -62,6 +64,7 @@ public class Win32Capture {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, System.IntPtr i);
     [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.IntPtr i);
@@ -181,6 +184,37 @@ public class Win32Capture {
     /// The pointer moves in steps rather than jumping, because a UI works out
     /// what is being selected from where the pointer goes, not from where it
     /// ends up.
+    /// Move the pointer there the way a hand does: across, not by teleporting.
+    ///
+    /// A window being dragged sees where the pointer is, over and over. Put it
+    /// somewhere in one jump and the window is asked to go from one size
+    /// straight to another, which is nothing like what happens when a person
+    /// drags a corner and is no test of whether the drawing keeps up.
+    public static void Glide(int fromX, int fromY, int toX, int toY, int overMs) {
+        int steps = System.Math.Max(1, overMs / 16);
+        for (int i = 1; i <= steps; i++) {
+            SetCursorPos(
+                fromX + (toX - fromX) * i / steps,
+                fromY + (toY - fromY) * i / steps);
+            System.Threading.Thread.Sleep(16);
+        }
+    }
+
+    /// Drag a window's bottom right corner, slowly, and let go.
+    public static void DragCorner(int x, int y, int dx, int dy, int overMs) {
+        POINT from;
+        GetCursorPos(out from);
+        // From wherever the pointer is now, not from thin air.
+        Glide(from.X, from.Y, x, y, 250);
+        System.Threading.Thread.Sleep(100);
+        mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
+        System.Threading.Thread.Sleep(100);
+        Glide(x, y, x + dx, y + dy, overMs);
+        System.Threading.Thread.Sleep(100);
+        mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
+        System.Threading.Thread.Sleep(200);
+    }
+
     public static void Drag(int fromX, int fromY, int toX, int toY) {
         SetCursorPos(fromX, fromY);
         System.Threading.Thread.Sleep(120);
@@ -231,6 +265,15 @@ public class Win32Capture {
         return r;
     }
 
+    /// The window rect the window manager knows, invisible resize border and
+    /// all. That border is where a corner can be grabbed, and it is outside the
+    /// painted bounds, so a drag has to aim at this rect and not at those.
+    public static RECT OuterRect(IntPtr hWnd) {
+        RECT r;
+        GetWindowRect(hWnd, out r);
+        return r;
+    }
+
     /// Painted bounds, falling back to the outer rect where DWM has no answer.
     public static RECT VisibleRect(IntPtr hWnd) {
         RECT r;
@@ -238,6 +281,60 @@ public class Win32Capture {
         if (hr == 0 && r.Right > r.Left && r.Bottom > r.Top) return r;
         GetWindowRect(hWnd, out r);
         return r;
+    }
+
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(
+        IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern bool AdjustWindowRectEx(
+        ref RECT r, uint style, bool menu, uint exStyle);
+    [DllImport("user32.dll")] public static extern int GetWindowLongW(IntPtr hWnd, int index);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+
+    /// Give a window a drawable area of exactly this size.
+    ///
+    /// The size a window is set to counts its frame, and what a test cares
+    /// about is the room inside: how big the frame is depends on the theme.
+    public static void SetClientSize(IntPtr hWnd, int width, int height) {
+        RECT want; want.Left = 0; want.Top = 0; want.Right = width; want.Bottom = height;
+        uint style = (uint)GetWindowLongW(hWnd, -16);    // GWL_STYLE
+        uint exStyle = (uint)GetWindowLongW(hWnd, -20);  // GWL_EXSTYLE
+        AdjustWindowRectEx(ref want, style, false, exStyle);
+        SetWindowPos(hWnd, IntPtr.Zero, 0, 0,
+            want.Right - want.Left, want.Bottom - want.Top,
+            0x0002 | 0x0004 | 0x0010);  // NOMOVE | NOZORDER | NOACTIVATE
+    }
+
+    /// The plugin's own window inside the host's: the biggest child there is.
+    ///
+    /// A plugin may own more than one window, and which is first in Z-order is
+    /// not something to rely on, so the one that fills the frame wins.
+    public static IntPtr EditorWindow(IntPtr parent) {
+        IntPtr best = IntPtr.Zero;
+        long biggest = -1;
+        IntPtr child = GetWindow(parent, 5);  // GW_CHILD
+        while (child != IntPtr.Zero) {
+            RECT r;
+            if (GetWindowRect(child, out r)) {
+                long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+                if (area > biggest) { biggest = area; best = child; }
+            }
+            child = GetWindow(child, 2);  // GW_HWNDNEXT
+        }
+        return best;
+    }
+
+    /// Where the plugin's window sits inside the host's drawable area.
+    public static RECT EditorInHost(IntPtr parent) {
+        IntPtr editor = EditorWindow(parent);
+        RECT r; GetWindowRect(editor, out r);
+        POINT origin; origin.X = 0; origin.Y = 0;
+        ClientToScreen(parent, ref origin);
+        RECT inside;
+        inside.Left = r.Left - origin.X;
+        inside.Top = r.Top - origin.Y;
+        inside.Right = r.Right - origin.X;
+        inside.Bottom = r.Bottom - origin.Y;
+        return inside;
     }
 
     public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
@@ -588,6 +685,53 @@ try {
                         $rect.Left, $rect.Top,
                         ($rect.Right - $rect.Left), ($rect.Bottom - $rect.Top))
                 }
+                'resize' {
+                    # `resize:W,H` gives the window under test a drawable area
+                    # of exactly that size, the way dragging its corner would.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read resize: $value" }
+                    [Win32Capture]::SetClientSize($hwnd, [int]$parts[0], [int]$parts[1])
+                    Start-Sleep -Milliseconds 700
+                    $rect = [Win32Capture]::VisibleRect($hwnd)
+                    $hostRect = $rect
+                    Write-Host ("resize: $($parts[0])x$($parts[1])")
+                }
+                'dragedge' {
+                    # `dragedge:DX,DY,MS` takes hold of the window's bottom
+                    # right corner and drags it by DX,DY over MS milliseconds,
+                    # which is the only way to see what a resize looks like
+                    # while it happens rather than after it.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 3) { throw "cannot read dragedge: $value" }
+                    $area = [Win32Capture]::OuterRect($hwnd)
+                    [Win32Capture]::DragCorner(
+                        $area.Right - 3, $area.Bottom - 3,
+                        [int]$parts[0], [int]$parts[1], [int]$parts[2])
+                    Start-Sleep -Milliseconds 500
+                    $rect = [Win32Capture]::VisibleRect($hwnd)
+                    $hostRect = $rect
+                    Write-Host ("dragedge: {0},{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
+                }
+                'geometry' {
+                    # `geometry:PATH` writes down what the window under test and
+                    # the plugin's window inside it actually measure, so a test
+                    # can assert on it rather than on a picture of it.
+                    $client = [Win32Capture]::ClientRect($hwnd)
+                    $editor = [Win32Capture]::EditorInHost($hwnd)
+                    $w = $client.Right - $client.Left
+                    $h = $client.Bottom - $client.Top
+                    # How much of the window the plugin does not cover, on each
+                    # side. A test after a drag cannot know what size the window
+                    # ended up, but it can say the plugin still fills it.
+                    $text = (
+                        "host={0}x{1}`neditor={2},{3},{4}x{5}`ninset={2},{3},{6},{7}`n" -f
+                        $w, $h,
+                        $editor.Left, $editor.Top,
+                        ($editor.Right - $editor.Left), ($editor.Bottom - $editor.Top),
+                        ($w - $editor.Right), ($h - $editor.Bottom))
+                    [System.IO.File]::WriteAllText($value, $text)
+                    Write-Host "geometry: $($text -replace "`n", ' ')"
+                }
                 'remove' {
                     if (Test-Path -LiteralPath $value) {
                         Remove-Item -LiteralPath $value -Force
@@ -606,8 +750,12 @@ try {
                     # and a recording that starts after the fact misses it.
                     if ($film) { throw 'already filming' }
                     $ffmpeg = Get-Ffmpeg
-                    $filmTo = $value
-                    $filmVideo = "$value.mkv"
+                    # `film:PATH|W,H` records a region of that size instead of
+                    # the window's own. A window that is about to grow needs it:
+                    # the region is fixed for the whole recording, so anything
+                    # the window grows into is otherwise never filmed.
+                    $filmTo, $filmSize = $value -split '\|', 2
+                    $filmVideo = "$filmTo.mkv"
                     Remove-Item -LiteralPath $filmVideo -Force -ErrorAction SilentlyContinue
                     # Always the window under test, whatever the steps are
                     # addressing: anything it opens is on top of it, so one
@@ -617,6 +765,12 @@ try {
                     $area = [Win32Capture]::VisibleRect($hwnd)
                     $fw = $area.Right - $area.Left
                     $fh = $area.Bottom - $area.Top
+                    if ($filmSize) {
+                        $wh = $filmSize -split ','
+                        if ($wh.Count -ne 2) { throw "cannot read film size: $filmSize" }
+                        $fw = [int]$wh[0]
+                        $fh = [int]$wh[1]
+                    }
                     $psi = New-Object System.Diagnostics.ProcessStartInfo
                     $psi.FileName = $ffmpeg
                     $psi.Arguments = (

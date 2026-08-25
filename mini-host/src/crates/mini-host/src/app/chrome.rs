@@ -8,15 +8,12 @@
 //!
 //! The dialogs are windows of their own: a real frame with a title bar, which
 //! can be dragged anywhere on the desktop while the host carries on drawing
-//! behind it. `place::open_frame` makes the frame and the dialog's egui view
-//! is parented into it.
+//! behind it. Each is an egui viewport, which is a window of the desktop's,
+//! opened and closed by asking for it rather than by making one.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use mini_host::presets;
-
-use crate::place;
 
 /// How much room the strip takes off the top of the window: one row of
 /// buttons and nothing more.
@@ -31,7 +28,8 @@ pub enum Want {
     Pick,
 }
 
-/// Shared between the strip, the dialogs and the thread that owns the plugin.
+/// What the strip and its dialogs are working on. One thread owns all of it,
+/// the same one that owns the plugin.
 #[derive(Default)]
 pub struct State {
     /// What the strip has asked for but has not been given yet.
@@ -46,8 +44,6 @@ pub struct State {
     /// Where this plugin's presets live.
     pub directory: PathBuf,
 }
-
-pub type Shared = Arc<Mutex<State>>;
 
 /// The presets on disk, by name, in alphabetical order.
 pub fn list(directory: &Path) -> Vec<(String, PathBuf)> {
@@ -87,96 +83,46 @@ pub fn path_for(directory: &Path, typed: &str) -> Option<PathBuf> {
     Some(directory.join(format!("{name}.{}", presets::EXTENSION)))
 }
 
-// ---- the strip -----------------------------------------------------------
-
-struct Bar {
-    shared: Shared,
-    plugin: String,
-}
-
-/// Open the strip across the top of `parent`.
-pub fn open_bar<P: raw_window_handle::HasWindowHandle>(
-    parent: &P,
-    plugin: String,
-    shared: Shared,
-    width: i32,
-) -> baseview::WindowHandle {
-    egui_baseview::EguiWindow::open_parented(
-        parent,
-        window_settings("Mini VST Host strip", width, HEIGHT),
-        Bar { shared, plugin },
-        |_c: &egui::Context, _o: &mut egui_baseview::ExtraOutputCommands, _s: &mut Bar| {},
-        |_o: &egui::FullOutput, _v: &egui::ViewportOutput, _s: &mut Bar| {},
-        |ui, cmds, bar| draw_bar(ui, cmds, bar),
-    )
-}
-
-fn draw_bar(ui: &mut egui::Ui, cmds: &mut egui_baseview::ExtraOutputCommands, bar: &mut Bar) {
-    let (message, directory) = match bar.shared.lock() {
-        Ok(state) => (state.message.clone(), state.directory.clone()),
-        Err(_) => return,
-    };
-    paint_background(ui, cmds);
-    let saved = list(&directory);
+/// Draw the strip across the top of the host's window.
+pub fn draw_bar(ui: &mut egui::Ui, state: &mut State, plugin: &str) {
+    paint_background(ui);
+    let saved = list(&state.directory);
 
     ui.horizontal_centered(|ui| {
         ui.add_space(4.0);
         if ui.button("Save preset").clicked() {
-            ask(&bar.shared, Want::Name);
+            state.want = Want::Name;
         }
         // Nothing to load means nothing to pick from, so the button is dead
         // rather than opening an empty list.
         let load = ui.add_enabled(!saved.is_empty(), egui::Button::new("Load preset"));
         if load.clicked() {
-            ask(&bar.shared, Want::Pick);
+            state.want = Want::Pick;
         }
         if saved.is_empty() {
             load.on_hover_text("no presets saved for this plugin yet");
         }
         ui.separator();
-        ui.label(message.unwrap_or_else(|| bar.plugin.clone()));
+        ui.label(state.message.clone().unwrap_or_else(|| plugin.to_string()));
     });
 }
 
-fn ask(shared: &Shared, want: Want) {
-    if let Ok(mut state) = shared.lock() {
-        state.want = want;
+/// How big each dialog's window is, inside its title bar.
+pub const NAME_SIZE: (i32, i32) = (330, 34);
+pub const PICK_SIZE: (i32, i32) = (250, 240);
+
+/// The title and size of the window a dialog wants.
+pub fn dialog_window(want: Want) -> Option<(&'static str, (i32, i32))> {
+    match want {
+        Want::Name => Some(("Save preset", NAME_SIZE)),
+        Want::Pick => Some(("Load preset", PICK_SIZE)),
+        Want::Nothing => None,
     }
 }
 
-// ---- the dialogs ---------------------------------------------------------
-
-/// How big each dialog's frame is, inside its title bar.
-const NAME_SIZE: (i32, i32) = (330, 34);
-const PICK_SIZE: (i32, i32) = (250, 240);
-
-/// A dialog: a window of the desktop's own, and the view drawing inside it.
-///
-/// The view is listed first so that it is dropped first: it borrows the frame
-/// it was opened into.
-pub struct Dialog {
-    view: baseview::WindowHandle,
-    frame: place::Frame,
-}
-
-impl Dialog {
-    /// False once the title bar's close button has been used.
-    pub fn is_open(&self) -> bool {
-        self.frame.is_open()
-    }
-}
-
-impl Drop for Dialog {
-    fn drop(&mut self) {
-        self.view.close();
-    }
-}
-
-/// What one dialog window is drawing.
-struct Panel {
-    shared: Shared,
-    want: Want,
-    directory: PathBuf,
+/// What a dialog is doing while it is open, which is nothing the host needs to
+/// know: what is typed into the field, and how far down the list has scrolled.
+pub struct Panel {
     /// What is being typed into the name field.
     name: String,
     /// Whether the field has been given egui's focus. It does not happen by
@@ -186,43 +132,19 @@ struct Panel {
     scrolled: f32,
 }
 
-/// Open the dialog `want` asks for, over the host's window.
-pub fn open_dialog(want: Want, shared: Shared, owner: *mut std::ffi::c_void) -> Option<Dialog> {
-    let (title, (width, height)) = match want {
-        Want::Name => ("Save preset", NAME_SIZE),
-        Want::Pick => ("Load preset", PICK_SIZE),
-        Want::Nothing => return None,
-    };
-
-    let (name, directory) = match shared.lock() {
-        Ok(state) => (state.last_name.clone(), state.directory.clone()),
-        Err(_) => return None,
-    };
-
-    let frame = place::open_frame(title, width, height, owner)?;
-    let panel = Panel {
-        shared,
-        want,
-        directory,
-        name,
-        field_focused: false,
-        scrolled: 0.0,
-    };
-    let view = egui_baseview::EguiWindow::open_parented(
-        &frame,
-        window_settings(title, width, height),
-        panel,
-        |_c: &egui::Context, _o: &mut egui_baseview::ExtraOutputCommands, _s: &mut Panel| {},
-        |_o: &egui::FullOutput, _v: &egui::ViewportOutput, _s: &mut Panel| {},
-        |ui, cmds, panel| draw_dialog(ui, cmds, panel),
-    );
-    frame.fit_contents();
-
-    Some(Dialog { view, frame })
+impl Panel {
+    /// A dialog starting from the last preset saved or loaded.
+    pub fn new(state: &State) -> Panel {
+        Panel {
+            name: state.last_name.clone(),
+            field_focused: false,
+            scrolled: 0.0,
+        }
+    }
 }
 
-fn draw_dialog(ui: &mut egui::Ui, cmds: &mut egui_baseview::ExtraOutputCommands, panel: &mut Panel) {
-    paint_background(ui, cmds);
+pub fn draw_dialog(ui: &mut egui::Ui, panel: &mut Panel, state: &mut State) {
+    paint_background(ui);
 
     // Escape asks for nothing and gets nothing: the window goes and neither
     // `save_to` nor `load_from` is set, so the host has nothing to act on.
@@ -231,19 +153,19 @@ fn draw_dialog(ui: &mut egui::Ui, cmds: &mut egui_baseview::ExtraOutputCommands,
     // a key left in the queue is acted on again by the text field, which
     // answers Escape by giving up its focus.
     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        ask(&panel.shared, Want::Nothing);
+        state.want = Want::Nothing;
         return;
     }
 
-    match panel.want {
-        Want::Name => draw_naming(ui, panel),
-        Want::Pick => draw_picking(ui, panel),
+    match state.want {
+        Want::Name => draw_naming(ui, panel, state),
+        Want::Pick => draw_picking(ui, panel, state),
         Want::Nothing => {}
     }
 }
 
 /// The name field and its Save button. Enter commits, as does the button.
-fn draw_naming(ui: &mut egui::Ui, panel: &mut Panel) {
+fn draw_naming(ui: &mut egui::Ui, panel: &mut Panel, state: &mut State) {
     let mut save = false;
     ui.horizontal_centered(|ui| {
         // The row is centred vertically and the button leaves a gap at the
@@ -267,12 +189,10 @@ fn draw_naming(ui: &mut egui::Ui, panel: &mut Panel) {
     });
 
     if save {
-        if let Ok(mut shared) = panel.shared.lock() {
-            // No asking whether to overwrite: this is a mini host.
-            shared.save_to = path_for(&panel.directory, &panel.name);
-            shared.last_name = panel.name.trim().to_string();
-            shared.want = Want::Nothing;
-        }
+        // No asking whether to overwrite: this is a mini host.
+        state.save_to = path_for(&state.directory, &panel.name);
+        state.last_name = panel.name.trim().to_string();
+        state.want = Want::Nothing;
     }
 }
 
@@ -381,10 +301,10 @@ fn scrollbar(ui: &mut egui::Ui, rect: egui::Rect, content: f32, view: f32, at: f
     at.clamp(0.0, range)
 }
 
-fn draw_picking(ui: &mut egui::Ui, panel: &mut Panel) {
+fn draw_picking(ui: &mut egui::Ui, panel: &mut Panel, state: &mut State) {
     let mut chosen: Option<(String, PathBuf)> = None;
 
-    let rows = list(&panel.directory);
+    let rows = list(&state.directory);
 
     // Sunk into the window on a page of its own, so it reads as a list to
     // scroll rather than as loose text: white ground, a border, and the same
@@ -455,41 +375,21 @@ fn draw_picking(ui: &mut egui::Ui, panel: &mut Panel) {
         });
 
     if let Some((name, path)) = chosen {
-        if let Ok(mut shared) = panel.shared.lock() {
-            shared.load_from = Some(path);
-            shared.last_name = name;
-            shared.want = Want::Nothing;
-        }
+        state.load_from = Some(path);
+        state.last_name = name;
+        state.want = Want::Nothing;
     }
-}
-
-// ---- shared bits ---------------------------------------------------------
-
-fn window_settings(title: &str, width: i32, height: i32) -> egui_baseview::EguiWindowSettings {
-    egui_baseview::EguiWindowSettings::new()
-        .with_tile(title)
-        .with_size(baseview::dpi::Size::Logical(baseview::dpi::LogicalSize {
-            width: width as f64,
-            height: height as f64,
-        }))
-        .with_scale_policy(baseview::WindowScalePolicy::SystemScaleFactor)
 }
 
 /// The host's own colour: the same blue the notepad plugin highlights with.
 ///
 /// It marks everything here as the host rather than the plugin, which matters
 /// when the two are stacked in one window.
-const HIGHLIGHT: egui::Color32 = egui::Color32::from_rgb(0, 155, 255);
+pub const HIGHLIGHT: egui::Color32 = egui::Color32::from_rgb(0, 155, 255);
 
-/// `run_ui` hands over a bare root with no panel behind it, so each of these
-/// windows paints its own background and clears to the same colour.
-fn paint_background(ui: &mut egui::Ui, cmds: &mut egui_baseview::ExtraOutputCommands) {
-    // A frame is only drawn when something changes, and the surface keeps
-    // whatever was on it in between, which showed as the chrome flickering
-    // away whenever the pointer moved off it.
-    ui.ctx().request_repaint();
-
-    cmds.clear_color(egui::Rgba::from(HIGHLIGHT));
+/// Fill whatever this is drawing in with the host's colour, and make the
+/// widgets on top of it readable.
+fn paint_background(ui: &mut egui::Ui) {
     ui.painter().rect_filled(ui.max_rect(), 0.0, HIGHLIGHT);
 
     // Widgets have to read against it, so they are given a face of their own

@@ -1,75 +1,118 @@
-//! Reading and setting the window's position on screen, and opening the
-//! separate windows the host's dialogs live in.
+//! The plugin's window, inside the host's.
 //!
-//! baseview sizes a window but has no say in where it lands, so this goes to
-//! the platform: `SetWindowPos` on Windows, `NSWindow::setFrameOrigin` on
-//! macOS. The saved position lives in the build cache, next to everything else
-//! this tool produces.
+//! A plugin editor is a window the plugin makes and the host is handed. Where
+//! it sits, how big it is and whether it has the keyboard are the host's to
+//! say, and saying so means talking to the platform: `SetWindowPos` and
+//! `SetFocus` on Windows, `NSView::setFrame` and `makeFirstResponder` on macOS.
 //!
-//! baseview can open a window inside another one, or one that blocks the
-//! thread until it closes. A dialog is neither: it is a window of its own,
-//! with a title bar, that can be moved about while the host keeps drawing. So
-//! the frame is made here, through the platform, and the dialog's egui view is
-//! parented into it.
+//! The host's own window is not here. That is eframe's, along with its title
+//! bar, its position between runs and the windows its dialogs open in.
 
 use std::ffi::c_void;
-use std::path::PathBuf;
-
-/// Where the position is remembered between runs.
-fn store() -> PathBuf {
-    PathBuf::from(".cache").join("mini-host-window.txt")
-}
-
-pub fn load() -> Option<(i32, i32)> {
-    let text = std::fs::read_to_string(store()).ok()?;
-    let (x, y) = text.trim().split_once(',')?;
-    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-}
-
-pub fn save(position: (i32, i32)) {
-    let path = store();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, format!("{},{}", position.0, position.1));
-}
 
 #[cfg(target_os = "windows")]
 mod platform {
     use super::c_void;
-    use windows::core::{w, HSTRING, PCWSTR};
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, SetFocus};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
+    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows::Win32::Graphics::Gdi::{RedrawWindow, RDW_INVALIDATE, RDW_UPDATENOW};
     use windows::Win32::UI::WindowsAndMessaging::{
-        AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindow,
-        GetWindowRect, IsWindow, LoadCursorW, RegisterClassW, SetWindowPos, CW_USEDEFAULT,
-        GW_CHILD, GW_HWNDNEXT, IDC_ARROW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WINDOW_EX_STYLE,
-        WNDCLASSW, WS_CAPTION, WS_SYSMENU, WS_VISIBLE,
+        GetClientRect, GetWindow, GetWindowLongPtrW, GetWindowRect, SendMessageW,
+        SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GW_CHILD, GW_HWNDNEXT, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_SIZE, WM_TIMER,
+        WM_WINDOWPOSCHANGED, WS_CLIPCHILDREN,
     };
 
-    /// The top-level window owning `handle`, which is the one that moves.
+    /// The host's window, which the plugin's is a child of.
     fn top_level(handle: *mut c_void) -> HWND {
         HWND(handle)
     }
 
-    pub fn get(handle: *mut c_void) -> Option<(i32, i32)> {
-        let mut rect = RECT::default();
-        unsafe { GetWindowRect(top_level(handle), &mut rect).ok()? };
-        Some((rect.left, rect.top))
+    /// Whether the host's window takes input.
+    ///
+    /// A dialog is a window of its own, and turning this off for as long as one
+    /// is open is what makes it modal: the host and everything inside it stop
+    /// taking input, so the focus has nowhere else to go.
+    pub fn set_enabled(handle: *mut c_void, enabled: bool) {
+        unsafe {
+            let _ = EnableWindow(top_level(handle), enabled);
+        }
     }
 
-    pub fn set(handle: *mut c_void, x: i32, y: i32) {
+    /// Which message carries the size the window has just been given, and what
+    /// the strip above the plugin takes off the top. The subclass has one piece
+    /// of data to carry, so the height rides in it.
+    const TRACK_ID: usize = 1;
+
+    /// Keep the plugin's window filling the host's as the host is dragged.
+    ///
+    /// Windows resizes the host's window as the pointer moves and repaints it
+    /// straight away. Anything that puts the plugin's window right afterwards,
+    /// on the next frame of a drawing loop, is a frame late every frame: the
+    /// host paints the new shape while the plugin still has the old one, which
+    /// is the flicker and the bare strip along the edge.
+    ///
+    /// So the plugin's window is moved from inside the resize itself, in the
+    /// message that says the host's window changed. By the time anything is
+    /// painted, both windows are the right size. `WS_CLIPCHILDREN` keeps the
+    /// host out of the area the plugin owns, so there is nothing to paint over
+    /// it even for an instant.
+    pub fn track_editor(handle: *mut c_void, top: i32) {
         unsafe {
+            let parent = top_level(handle);
+            let style = GetWindowLongPtrW(parent, GWL_STYLE) as u32;
+            SetWindowLongPtrW(parent, GWL_STYLE, (style | WS_CLIPCHILDREN.0) as isize);
             let _ = SetWindowPos(
-                top_level(handle),
+                parent,
                 None,
-                x,
-                y,
                 0,
                 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
+            let _ = SetWindowSubclass(parent, Some(track_proc), TRACK_ID, top as usize);
+        }
+    }
+
+    unsafe extern "system" fn track_proc(
+        hwnd: HWND,
+        message: u32,
+        w: WPARAM,
+        l: LPARAM,
+        _id: usize,
+        top: usize,
+    ) -> LRESULT {
+        if message == WM_WINDOWPOSCHANGED || message == WM_SIZE {
+            inset_editor(hwnd.0, top as i32);
+            unsafe { draw_now(hwnd) };
+        }
+        unsafe { DefSubclassProc(hwnd, message, w, l) }
+    }
+
+    /// Ask the plugin to paint, now, before this resize is over.
+    ///
+    /// A window that has just been made bigger has an area it has never drawn
+    /// in, and until something paints there it shows whatever the graphics card
+    /// left behind, which is black. `RDW_UPDATENOW` is how a window is asked
+    /// for that paint without waiting: it delivers `WM_PAINT` and returns once
+    /// the window has answered it.
+    ///
+    /// The nudge afterwards is for a plugin that draws on a timer rather than
+    /// on `WM_PAINT`, which is what baseview does and so what this project's
+    /// own plugin does: its frame timer is id 4242, and Windows only delivers a
+    /// timer message when nothing else is waiting. Nothing is ever waiting less
+    /// than during a drag, so the frame it would draw never comes. A timer
+    /// message it does not recognise costs any other plugin nothing.
+    unsafe fn draw_now(parent: HWND) {
+        unsafe {
+            let Some(child) = editor_window(parent) else {
+                return;
+            };
+            let _ = RedrawWindow(Some(child), None, None, RDW_INVALIDATE | RDW_UPDATENOW);
+            const BASEVIEW_FRAME_TIMER: usize = 4242;
+            SendMessageW(child, WM_TIMER, Some(WPARAM(BASEVIEW_FRAME_TIMER)), None);
         }
     }
 
@@ -131,178 +174,37 @@ mod platform {
         best.map(|(window, _)| window)
     }
 
-    /// A window of its own: title bar, close button, and draggable.
-    ///
-    /// It is owned by the host's window, so it stays in front of it and goes
-    /// away with it, but it is not a child: it has its own frame and can be
-    /// moved anywhere on the desktop. Messages reach it through the host's own
-    /// loop, because a Win32 message loop serves every window on its thread.
-    ///
-    /// While it is up, the owner is disabled. That is what makes it modal: the
-    /// owner and every window inside it stop taking input, so the focus has
-    /// nowhere else to go and nothing can take it back.
-    pub struct Frame {
-        hwnd: HWND,
-        owner: HWND,
-    }
-
-    /// The class the dialog frames are made from. The default handling is all
-    /// the behaviour needed: the egui view inside does everything else, and
-    /// `WM_CLOSE` falls through to destroying the window.
-    const CLASS: PCWSTR = w!("MiniHostDialogFrame");
-
-    unsafe extern "system" fn frame_proc(
-        hwnd: HWND,
-        message: u32,
-        w: WPARAM,
-        l: LPARAM,
-    ) -> LRESULT {
-        unsafe { DefWindowProcW(hwnd, message, w, l) }
-    }
-
-    fn register(instance: HINSTANCE) {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            let class = WNDCLASSW {
-                lpfnWndProc: Some(frame_proc),
-                hInstance: instance,
-                lpszClassName: CLASS,
-                hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
-                ..Default::default()
-            };
-            unsafe { RegisterClassW(&class) };
-        });
-    }
-
-    pub fn open_frame(title: &str, width: i32, height: i32, owner: *mut c_void) -> Option<Frame> {
-        unsafe {
-            let instance: HINSTANCE = GetModuleHandleW(None).ok()?.into();
-            register(instance);
-
-            // A fixed size: there is nothing in either dialog worth resizing,
-            // and no resizing means no plumbing to keep the view in step.
-            let style = WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-            let mut rect = RECT { left: 0, top: 0, right: width, bottom: height };
-            let _ = AdjustWindowRect(&mut rect, style, false);
-            let outer = (rect.right - rect.left, rect.bottom - rect.top);
-            let (x, y) = centred_over(owner, outer.0, outer.1);
-
-            let hwnd = CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                CLASS,
-                &HSTRING::from(title),
-                style,
-                x,
-                y,
-                outer.0,
-                outer.1,
-                Some(HWND(owner)),
-                None,
-                Some(instance),
-                None,
-            )
-            .ok()?;
-            let owner = HWND(owner);
-            let _ = EnableWindow(owner, false);
-            let _ = SetActiveWindow(hwnd);
-            Some(Frame { hwnd, owner })
-        }
-    }
-
-    /// Where a window of this size sits to be centred on the host's.
-    fn centred_over(owner: *mut c_void, width: i32, height: i32) -> (i32, i32) {
-        unsafe {
-            let mut rect = RECT::default();
-            if GetWindowRect(HWND(owner), &mut rect).is_err() {
-                return (CW_USEDEFAULT, CW_USEDEFAULT);
-            }
-            (
-                rect.left + (rect.right - rect.left - width) / 2,
-                rect.top + (rect.bottom - rect.top - height) / 2,
-            )
-        }
-    }
-
-    impl Frame {
-        /// The handle the dialog's view is parented into.
-        pub fn handle(&self) -> *mut c_void {
-            self.hwnd.0
-        }
-
-        /// False once the title bar's close button has been used.
-        pub fn is_open(&self) -> bool {
-            unsafe { IsWindow(Some(self.hwnd)).as_bool() }
-        }
-
-        /// Size the view inside to the whole of the frame, and give it the
-        /// keyboard.
-        ///
-        /// Both are the window manager's business and are done once, here.
-        /// Activating a window puts the keyboard on the frame, and the view
-        /// drawing inside it is a window of its own, so the frame passes it
-        /// on. Nothing above this needs to know or ask.
-        pub fn fit_contents(&self) {
-            unsafe {
-                let Ok(child) = GetWindow(self.hwnd, GW_CHILD) else {
-                    return;
-                };
-                let mut client = RECT::default();
-                if GetClientRect(self.hwnd, &mut client).is_err() {
-                    return;
-                }
-                let _ = SetWindowPos(
-                    child,
-                    None,
-                    0,
-                    0,
-                    client.right - client.left,
-                    client.bottom - client.top,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
-                );
-                let _ = SetFocus(Some(child));
-            }
-        }
-    }
-
-    impl Drop for Frame {
-        fn drop(&mut self) {
-            unsafe {
-                // The owner takes input again before the dialog goes, so the
-                // focus lands back on it rather than on whatever is behind.
-                let _ = EnableWindow(self.owner, true);
-                let _ = SetActiveWindow(self.owner);
-                let _ = DestroyWindow(self.hwnd);
-            }
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]
 mod platform {
     use super::c_void;
-    use objc2::rc::Retained;
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{
-        NSBackingStoreType, NSView, NSWindow, NSWindowOrderingMode, NSWindowStyleMask,
-    };
-    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-    /// The window the view sits in. A view that is not in one yet has none.
-    fn window(handle: *mut c_void) -> Option<Retained<NSWindow>> {
-        let view: &NSView = unsafe { &*(handle as *const NSView) };
-        unsafe { view.window() }
-    }
+    /// Whether the host's window takes input.
+    ///
+    /// AppKit has no equivalent of disabling a window, and a dialog opened as
+    /// its own window is already the one AppKit makes key, so there is nothing
+    /// to do here.
+    pub fn set_enabled(_handle: *mut c_void, _enabled: bool) {}
 
-    pub fn get(handle: *mut c_void) -> Option<(i32, i32)> {
-        let window = window(handle)?;
-        let frame = window.frame();
-        Some((frame.origin.x as i32, frame.origin.y as i32))
-    }
-
-    pub fn set(handle: *mut c_void, x: i32, y: i32) {
-        if let Some(window) = window(handle) {
-            unsafe { window.setFrameOrigin(NSPoint::new(x as f64, y as f64)) };
-        }
+    /// Keep the plugin's view filling the host's as the host is dragged.
+    ///
+    /// AppKit will do it: a view told it may stretch is resized with the view
+    /// it is in, inside the resize rather than after it, so the two are never
+    /// out of step and there is nothing to redraw late.
+    pub fn track_editor(handle: *mut c_void, _top: i32) {
+        let host: &NSView = unsafe { &*(handle as *const NSView) };
+        host.setAutoresizesSubviews(true);
+        let subviews = unsafe { host.subviews() };
+        let Some(editor) = subviews.iter().next() else {
+            return;
+        };
+        editor.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
     }
 
     /// Push the plugin's own view down, leaving `top` points for the host's
@@ -338,170 +240,19 @@ mod platform {
         }
     }
 
-    /// A window of its own: title bar, close button, and draggable.
-    ///
-    /// AppKit's run loop is already going, with the host's window running in
-    /// it, so this is an ordinary `NSWindow` ordered to the front, not a
-    /// second application.
-    ///
-    /// While it is up it is a child of the host's window: it stays above it,
-    /// moves with it, and is the window AppKit makes key. `runModal` would
-    /// give a stronger guarantee, but it spins a run loop of its own, and this
-    /// is opened from inside a frame the existing one is drawing.
-    pub struct Frame {
-        window: Retained<NSWindow>,
-        owner: Option<Retained<NSWindow>>,
-    }
-
-    pub fn open_frame(title: &str, width: i32, height: i32, owner: *mut c_void) -> Option<Frame> {
-        let mtm = MainThreadMarker::new()?;
-        let content = NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(width as f64, height as f64),
-        );
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                content,
-                NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        window.setTitle(&NSString::from_str(title));
-        window.setReleasedWhenClosed(false);
-
-        // Centred on the host's window, or on the screen if it has none yet.
-        let host: &NSView = unsafe { &*(owner as *const NSView) };
-        let owner = unsafe { host.window() };
-        match &owner {
-            Some(over) => {
-                let frame = over.frame();
-                window.setFrameOrigin(NSPoint::new(
-                    frame.origin.x + (frame.size.width - width as f64) / 2.0,
-                    frame.origin.y + (frame.size.height - height as f64) / 2.0,
-                ));
-                over.addChildWindow_ordered(&window, NSWindowOrderingMode::Above);
-            }
-            None => window.center(),
-        }
-        window.makeKeyAndOrderFront(None);
-        Some(Frame { window, owner })
-    }
-
-    impl Frame {
-        /// The view the dialog's own view is parented into.
-        pub fn handle(&self) -> *mut c_void {
-            match self.window.contentView() {
-                Some(view) => Retained::as_ptr(&view) as *mut c_void,
-                None => std::ptr::null_mut(),
-            }
-        }
-
-        /// False once the title bar's close button has been used.
-        pub fn is_open(&self) -> bool {
-            self.window.isVisible()
-        }
-
-        /// Size the view inside to the whole of the frame, and give it the
-        /// keyboard. Both are the window's business and are done once, here.
-        pub fn fit_contents(&self) {
-            let Some(content) = self.window.contentView() else {
-                return;
-            };
-            let bounds = content.bounds();
-            let subviews = unsafe { content.subviews() };
-            let Some(view) = subviews.iter().next() else {
-                return;
-            };
-            unsafe { view.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), bounds.size)) };
-            self.window.makeFirstResponder(Some(&view));
-        }
-    }
-
-    impl Drop for Frame {
-        fn drop(&mut self) {
-            if let Some(owner) = &self.owner {
-                owner.removeChildWindow(&self.window);
-                owner.makeKeyAndOrderFront(None);
-            }
-            self.window.close();
-        }
-    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::c_void;
 
-    pub fn get(_handle: *mut c_void) -> Option<(i32, i32)> {
-        None
-    }
+    pub fn set_enabled(_handle: *mut c_void, _enabled: bool) {}
 
-    pub fn set(_handle: *mut c_void, _x: i32, _y: i32) {}
+    pub fn track_editor(_handle: *mut c_void, _top: i32) {}
 
     pub fn inset_editor(_handle: *mut c_void, _top: i32) {}
 
     pub fn focus_editor(_handle: *mut c_void) {}
-
-    pub struct Frame;
-
-    pub fn open_frame(
-        _title: &str,
-        _width: i32,
-        _height: i32,
-        _owner: *mut c_void,
-    ) -> Option<Frame> {
-        None
-    }
-
-    impl Frame {
-        pub fn handle(&self) -> *mut c_void {
-            std::ptr::null_mut()
-        }
-
-        pub fn is_open(&self) -> bool {
-            false
-        }
-
-        pub fn fit_contents(&self) {}
-    }
 }
 
-pub use platform::{focus_editor, get, inset_editor, open_frame, set, Frame};
-
-/// So a dialog's egui view can be opened inside the frame.
-impl raw_window_handle::HasWindowHandle for Frame {
-    fn window_handle(
-        &self,
-    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        let handle = self.handle();
-        if handle.is_null() {
-            return Err(raw_window_handle::HandleError::Unavailable);
-        }
-
-        #[cfg(target_os = "windows")]
-        let raw = {
-            let hwnd = std::num::NonZeroIsize::new(handle as isize)
-                .ok_or(raw_window_handle::HandleError::Unavailable)?;
-            raw_window_handle::RawWindowHandle::Win32(raw_window_handle::Win32WindowHandle::new(
-                hwnd,
-            ))
-        };
-        #[cfg(target_os = "macos")]
-        let raw = {
-            let view = std::ptr::NonNull::new(handle)
-                .ok_or(raw_window_handle::HandleError::Unavailable)?;
-            raw_window_handle::RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
-                view,
-            ))
-        };
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        let raw: raw_window_handle::RawWindowHandle =
-            return Err(raw_window_handle::HandleError::NotSupported);
-
-        // Safety: the frame outlives the view opened into it. The view is
-        // dropped first, in `Dialog`'s field order.
-        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) })
-    }
-}
+pub use platform::{focus_editor, inset_editor, set_enabled, track_editor};

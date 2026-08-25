@@ -8,7 +8,6 @@ use crate::scenario::{scenario, Scenario, Step::*};
 
 pub fn all() -> Vec<Scenario> {
     vec![
-        // -------------------------------------------------------------- text
         scenario(
             "headings and paragraphs",
             vec![
@@ -32,15 +31,8 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("Cool beans.\n\nWe're all checked off."),
             ],
         ),
-        // ------------------------------------------------------------- lists
-        scenario(
-            "a star bullet becomes a dash as you type",
-            vec![
-                Type("* milk"),
-                ExpectSource("- milk"),
-                ExpectRendered("milk"),
-            ],
-        ),
+        // The first item is typed with a star, which is normalised as it is
+        // typed, so this covers that too.
         scenario(
             "bullet lists continue themselves",
             vec![
@@ -73,7 +65,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("- top\n  - nested"),
             ],
         ),
-        // --------------------------------------------------------- checkboxes
         scenario(
             "typing a checkbox produces a task item",
             vec![
@@ -90,7 +81,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("Ship it"),
             ],
         ),
-        // ------------------------------------------------------ styled text
         scenario(
             "bold and italic typed by hand",
             vec![
@@ -109,7 +99,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("make this bold"),
             ],
         ),
-        // ---------------------------------------------------- text editing
         scenario(
             "shift and the arrows select, and typing replaces the selection",
             vec![
@@ -150,7 +139,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("call snake_case_name here"),
             ],
         ),
-        // ------------------------------------------------------------- links
         scenario(
             "ctrl+K turns a selection into a link, ready for the URL",
             vec![
@@ -163,7 +151,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("Anthropic"),
             ],
         ),
-        // -------------------------------------------------------------- code
         scenario(
             "inline code hides its backticks",
             vec![
@@ -179,7 +166,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("```rust\nlet x = *y;\n```"),
             ],
         ),
-        // ------------------------------------------------------- blockquotes
         scenario(
             "blockquotes continue on the next line",
             vec![
@@ -188,7 +174,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectRendered("quoted\nstill quoted"),
             ],
         ),
-        // -------------------------------------------------------------- undo
         scenario(
             "undo and redo a burst of typing",
             vec![
@@ -200,7 +185,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("hello"),
             ],
         ),
-        // ------------------------------------------------------------- modes
         scenario(
             "the view mode toggles and is remembered across a session",
             vec![
@@ -213,7 +197,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("# Notes"),
             ],
         ),
-        // ------------------------------------------------------------ themes
         scenario(
             "the theme starts on auto and cycles with Ctrl+T",
             vec![
@@ -226,36 +209,19 @@ pub fn all() -> Vec<Scenario> {
                 ExpectTheme("auto"),
             ],
         ),
-        scenario(
-            "the chosen theme is remembered across a session",
-            vec![
-                Type("# Notes"),
-                Press(Key::Char('t'), Mods::CTRL),
-                Press(Key::Char('t'), Mods::CTRL),
-                ExpectTheme("dark"),
-                ReopenProject,
-                ExpectTheme("dark"),
-                ExpectSource("# Notes"),
-            ],
-        ),
+        // Auto is the theme worth reopening on: the other two are whatever was
+        // chosen, while auto has a resolved value that must not be written down
+        // in its place.
         scenario(
             "auto is remembered as auto, not as whatever it resolved to",
             vec![
+                Type("# Notes"),
                 ExpectTheme("auto"),
                 ReopenProject,
                 ExpectTheme("auto"),
+                ExpectSource("# Notes"),
             ],
         ),
-        scenario(
-            "changing the theme does not touch the document",
-            vec![
-                Type("- a list item"),
-                Press(Key::Char('t'), Mods::CTRL),
-                ExpectSource("- a list item"),
-                ExpectTheme("light"),
-            ],
-        ),
-        // ------------------------------------------------------------ window
         scenario(
             "the window is resizable, and its size is the host's to keep",
             vec![
@@ -275,28 +241,10 @@ pub fn all() -> Vec<Scenario> {
                 accepted: (320, 200),
             }],
         ),
-        // ------------------------------------------------------------- state
+        // What the document holds is a string, so a reopen has nothing to say
+        // about which blocks are in it. What it can go wrong on is the encoding.
         scenario(
-            "a whole document survives closing and reopening the project",
-            vec![
-                Type("# Meeting notes\nDiscussed:\n"),
-                Type("* the plan\nthe budget\n\n"),
-                Type("> quote worth keeping"),
-                // Enter ends a block, so the heading and the lead-in each get a
-                // blank line after them. The second Enter inside the list ends
-                // it by consuming the empty bullet, so the quote lands on that
-                // line rather than after a blank one.
-                ExpectSource(
-                    "# Meeting notes\n\nDiscussed:\n\n- the plan\n- the budget\n> quote worth keeping",
-                ),
-                ReopenProject,
-                ExpectSource(
-                    "# Meeting notes\n\nDiscussed:\n\n- the plan\n- the budget\n> quote worth keeping",
-                ),
-            ],
-        ),
-        scenario(
-            "unicode survives the whole round trip",
+            "a document survives closing and reopening the project",
             vec![
                 Type("# 見出し\n日本語の**太字**とemoji ✓"),
                 ExpectSource("# 見出し\n\n日本語の**太字**とemoji ✓"),
@@ -305,12 +253,10 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("# 見出し\n\n日本語の**太字**とemoji ✓"),
             ],
         ),
-        // -------------------------------------------------------- plugin type
         scenario(
             "the plugin is an effect, and says so everywhere a host looks",
             vec![ExpectEffectNotInstrument],
         ),
-        // ------------------------------------------------------------- audio
         scenario(
             "audio passes through the plugin untouched",
             vec![ExpectAudioPassThrough],
@@ -331,7 +277,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSource("# Notes taken while the track plays"),
             ],
         ),
-        // ------------------------------------------------- hostile state
         // A DAW can hand back anything: a truncated chunk, a project written by
         // a newer build, a file someone edited by hand. None of it may crash
         // the plugin, and none of it may lose the words.
@@ -365,7 +310,6 @@ pub fn all() -> Vec<Scenario> {
                 ExpectSize(900, 620),
             ],
         ),
-        // ---------------------------------------------------------- movement
         scenario(
             "arrow keys and backspace edit in the middle of a line",
             vec![

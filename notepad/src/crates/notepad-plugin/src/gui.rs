@@ -227,10 +227,6 @@ pub fn open_blocking(editor: Shared, width: i32, height: i32) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Frame
-// ---------------------------------------------------------------------------
-
 fn draw(ui: &mut egui::Ui, gui: &mut Gui, commands: &mut ExtraOutputCommands) {
     let background = draw_ui(ui, gui);
     // Also hand the background to the renderer, which clears to it before any
@@ -1384,10 +1380,6 @@ fn push(job: &mut LayoutJob, map: &mut Vec<usize>, text: &str, source_start: usi
     job.append(text, 0.0, fmt);
 }
 
-// ---------------------------------------------------------------------------
-// Styling
-// ---------------------------------------------------------------------------
-
 fn base_format(block: &Block, palette: &Palette) -> TextFormat {
     let size = match block.kind {
         BlockKind::Heading(1) => 28.0,
@@ -1503,10 +1495,6 @@ fn span_format(
     }
     fmt
 }
-
-// ---------------------------------------------------------------------------
-// Input
-// ---------------------------------------------------------------------------
 
 /// Feed egui's key and text events into the editor.
 ///

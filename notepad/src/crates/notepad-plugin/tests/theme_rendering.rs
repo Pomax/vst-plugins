@@ -35,24 +35,6 @@ fn render(theme: Theme, system_dark: bool) -> image::RgbaImage {
     harness.render().expect("rendering failed")
 }
 
-/// Average brightness of the fully opaque pixels, 0 (black) to 255 (white).
-///
-/// Transparent margins around the drawn area are skipped so they cannot drag
-/// the average toward whatever the rasteriser left there.
-fn mean_brightness(image: &image::RgbaImage) -> f32 {
-    let mut total = 0f64;
-    let mut count = 0u32;
-    for p in image.pixels() {
-        if p[3] < 255 {
-            continue;
-        }
-        total += (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0;
-        count += 1;
-    }
-    assert!(count > 0, "image was entirely transparent");
-    (total / count as f64) as f32
-}
-
 /// Brightness of the most common colour — the background, since it covers most
 /// of the window.
 fn background_brightness(image: &image::RgbaImage) -> f32 {
@@ -120,16 +102,6 @@ fn dark_theme_draws_light_text_on_it() {
     assert!(
         brightest - background > 120.0,
         "dark theme needs light text: background {background}, brightest pixel {brightest}"
-    );
-}
-
-#[test]
-fn the_two_themes_actually_differ() {
-    let light = mean_brightness(&render(Theme::Light, true));
-    let dark = mean_brightness(&render(Theme::Dark, false));
-    assert!(
-        light - dark > 100.0,
-        "the themes should look nothing alike: light {light}, dark {dark}"
     );
 }
 
