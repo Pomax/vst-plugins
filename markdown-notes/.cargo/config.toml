@@ -1,0 +1,28 @@
+# `cargo dist` builds the plugin and drops the single installable binary in
+# dist/. Plain `cargo build` cannot do this — cargo has no post-build hook that
+# can see the finished cdylib — so the build task is an xtask.
+# xtask itself is built in release for `cargo dist` so that it is not running
+# out of target/debug at the moment it tries to delete target/debug.
+# Build output goes to .cache/ rather than target/. It is a cache: it survives
+# between runs so a build only recompiles what changed. `cargo run -p xtask --
+# clean` empties it.
+[build]
+target-dir = ".cache"
+
+# The markdown engine brings a tree-sitter grammar with it, and this plugin
+# never parses with it: the renderer has its own parse, and the input rules and
+# markdown commands work off the buffer. The grammar was still in the binary,
+# 350 KB of it, because tree-sitter's generated C marks its entry point for
+# export, and an exported symbol is one the linker may never drop.
+#
+# `TREE_SITTER_HIDE_SYMBOLS` is the grammar's own switch for that. The rest asks
+# the compiler to put each function and each piece of data in a section of its
+# own, so the linker can drop them one by one rather than all or nothing.
+[env]
+"CFLAGS_x86_64-pc-windows-msvc" = "-DTREE_SITTER_HIDE_SYMBOLS -Gy -Gw"
+"CFLAGS_aarch64-apple-darwin" = "-DTREE_SITTER_HIDE_SYMBOLS -ffunction-sections -fdata-sections"
+"CFLAGS_x86_64-apple-darwin" = "-DTREE_SITTER_HIDE_SYMBOLS -ffunction-sections -fdata-sections"
+
+[alias]
+dist = ["run", "--release", "--quiet", "-p", "xtask", "--", "bundle", "--release"]
+dist-debug = ["run", "--quiet", "-p", "xtask", "--", "bundle"]
