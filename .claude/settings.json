@@ -1,0 +1,51 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/rules-reminder.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "PowerShell",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(git)",
+      "Bash(git:*)",
+      "PowerShell(git)",
+      "PowerShell(git:*)",
+      "Write(//C:/Program Files/**)",
+      "Edit(//C:/Program Files/**)",
+      "Write(//C:/Program Files (x86)/**)",
+      "Edit(//C:/Program Files (x86)/**)",
+      "Write(//C:/ProgramData/**)",
+      "Edit(//C:/ProgramData/**)",
+      "Write(//C:/Windows/**)",
+      "Edit(//C:/Windows/**)",
+      "Write(//C:/Users/Mike/Documents/Image-Line/**)",
+      "Edit(//C:/Users/Mike/Documents/Image-Line/**)",
+      "Write(//C:/Users/Mike/AppData/**)",
+      "Edit(//C:/Users/Mike/AppData/**)",
+      "Write(//C:/Users/Mike/.cargo/**)",
+      "Edit(//C:/Users/Mike/.cargo/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": false
+  }
+}

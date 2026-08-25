@@ -1,0 +1,23 @@
+- [Windows redraw during resize](windows-redraw-during-resize.md) — the plugin's window is moved from the resize message and asked to paint at once, or a drag shows black
+- [Ask before running UI tests](ask-before-running-ui-tests.md) — anything that drives the mouse, keyboard or screen needs a yes first, every time
+- [Never run destructive commands unasked](never-run-destructive-commands-unasked.md) — read this before touching files at all: nothing that deletes, overwrites or discards runs unless they asked for that run
+- [Blanket permission means just run it](blanket-permission-means-just-run-it.md) — when they grant command permission, stop asking and start executing
+- [Never use installed plugins as reference](never-use-installed-plugins-as-reference.md) — VST3 docs, SDK and crates only; other people's binaries are off limits
+- [Never touch anything outside the repo](never-touch-anything-outside-the-repo.md) — no writing to DAW config, plugin databases or system folders, ever
+- [No assumed situational awareness](no-assumed-situational-awareness.md) — state what is known; never guess at their time, mood, or what they are doing next
+- [Unexpected file changes are the user's](unexpected-file-changes-are-the-users.md) — if a file changed and I didn't change it, they did; re-read it, never revert it
+- [Never write sectioning comments](never-write-sectioning-comments.md) — no banner dividers in any file; split it up or write nothing
+- [No chat prose in source files](no-chat-prose-in-source-files.md) — comments explain the code, not the conversation; no narrative, history or justification
+- [Never use PowerShell locally](never-use-powershell-locally.md) — sh/bash with POSIX syntax for all local work; CI is not a concern
+- [Root README is the user's](root-readme-is-the-users.md) — never edit README.md at the root; docs/DEVELOPERS.md is mine to maintain
+- [Edit files with the editor](edit-files-with-the-editor.md) — never patch source through python, sed or shell heredocs; escapes get mangled
+- [Edit existing files, never Write them](edit-existing-files-never-write-them.md) — Write is for new files only; a file that exists is always edited
+- [Moves are moves, not copies](moves-are-moves-not-copies.md) — rename and move with mv; copy-then-delete destroyed a source file
+- [Never run a test you do not save](never-run-a-test-you-do-not-save.md) — no one-offs; every check is a named test in the suite, runnable alone
+- [LF line endings everywhere](lf-line-endings-everywhere.md) — every file uses LF, including .bat; never CRLF
+- [Plain language](plain-language.md) — say the thing; no preamble, framing, or throat-clearing
+- [Answer with all of it](answer-with-all-of-it.md) — count the whole set before answering; a partial answer reads as a complete one
+- [Never use em dashes](never-use-em-dashes.md) — not in chat, comments, docs or test files; use a full stop, colon or brackets
+- [Snapshot before editing](snapshot-before-editing.md) — copy every file to the scratchpad before changing it, so any edit can be undone
+- [Never use git without being asked](never-use-git-without-being-asked.md) — no status, log, diff or restore; undo comes from the scratchpad copies
+- [Run only the tests the change affects](run-only-the-tests-the-change-affects.md) — name the suite; UI runs cost the user their desktop
