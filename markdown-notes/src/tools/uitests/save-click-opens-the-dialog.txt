@@ -1,0 +1,18 @@
+# The Save button, clicked for real, and the dialog it must open, on camera.
+#
+# One click on Save, one picture. When the click lands, the
+# picture is of the Save dialog; when it does not, there is no dialog to
+# photograph and the picture is the editor. The app is then force quit: the
+# dialog is native and modal, so the window cannot be asked to close under it,
+# and a killed program writes no state, which is why nothing here asserts on
+# the document.
+#
+# This runs second, after typing: a click that does not land fails every test
+# that presses a button, so a failure here stops the run.
+baseline:
+plugin:501,50
+wait:2500
+shot:%CACHE%\save-click-dialog.png
+kill:
+
+expect:file exists %CACHE%\save-click-dialog.png

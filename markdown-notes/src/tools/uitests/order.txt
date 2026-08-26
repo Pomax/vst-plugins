@@ -1,0 +1,14 @@
+# The order the tests run in, first line first. Names, not filenames: run
+# order is decided here and nowhere else. A test file that is not listed is an
+# error, so nothing can sit in this directory and silently never run.
+#
+# The first two are the baseline: typing and clicking. Everything after them
+# assumes both, which is why they run first and why the run stops when one of
+# them fails.
+typing-goes-into-the-document
+save-click-opens-the-dialog
+open-click-opens-the-dialog
+caret-below-a-code-block
+editing-with-mouse-and-keyboard
+save-and-load-round-trip
+section-strip

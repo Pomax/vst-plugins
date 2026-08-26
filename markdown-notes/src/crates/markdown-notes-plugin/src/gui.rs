@@ -372,28 +372,17 @@ pub fn draw_frame_for_test(ui: &mut egui::Ui, state: &mut TestGui) {
     draw_ui(ui, &mut state.0);
 }
 
-/// Keep the window and the stored size in step, in both directions.
+/// Record the window's size, so it is saved with the project.
 ///
-/// Two things can change the size and they must not fight:
-///
-/// - **The window was resized** (the user dragged an edge, or the host resized
-///   its frame and called `onSize`, which the window then followed). The window
-///   is the truth; record it so it is saved with the project.
-/// - **The stored size changed** while the window did not — the host called
-///   `IPlugView::onSize`, or a project was loaded with a different size. Then
-///   the window has to be told to follow, which `ViewportCommand::InnerSize`
-///   does. Without this the plugin's stored size and its actual window silently
-///   diverge: the frame resizes and the editor inside it does not.
+/// The window is the truth. The host owns the frame, and the editor is drawn
+/// into whatever it is given: a plugin that asks for a size of its own is a
+/// plugin arguing with its host.
 fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
     let size = ui.ctx().viewport_rect().size();
     let window = (size.x.round() as i32, size.y.round() as i32);
     if window.0 <= 0 || window.1 <= 0 {
         return;
     }
-
-    // The window is the host's. The editor follows it and never asks it to
-    // follow the editor: a size is not part of a document, so there is nothing
-    // stored for the window to be put back to.
     if gui.last_seen_size == Some(window) {
         return;
     }

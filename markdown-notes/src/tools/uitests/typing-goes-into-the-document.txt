@@ -1,0 +1,12 @@
+# Typing, before anything else: keystrokes land in the document, on camera.
+#
+# Every test types. When keystrokes do not reach the plugin, every test fails,
+# each with its own confusing symptom, so this runs first, and a failure here
+# stops the run: nothing after it can mean anything.
+baseline:
+type:typed straight into the document
+wait:500
+shot:%CACHE%\typing-goes-into-the-document.png
+
+expect:sections is 1
+expect:section 0 is typed straight into the document

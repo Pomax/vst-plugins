@@ -159,7 +159,7 @@ public class Win32Capture {
     }
 
     /// Hold a modifier, tap a key, let go, as a keyboard does it.
-    public static void Chord(ushort modifier, ushort key) {
+    public static void Shortcut(ushort modifier, ushort key) {
         Send(KeyInput(modifier, false));
         System.Threading.Thread.Sleep(40);
         Send(KeyInput(key, false));
@@ -608,10 +608,10 @@ try {
                         throw "cursor at $where is $shown, expected $($want.Trim())"
                     }
                 }
-                'chord' {
-                    # `chord:ctrl+a` is a modifier held down over one key.
+                'shortcut' {
+                    # `shortcut:ctrl+a` is a modifier held down over one key.
                     $parts = $value.Trim().ToLower() -split '\+'
-                    if ($parts.Count -ne 2) { throw "cannot read chord: $value" }
+                    if ($parts.Count -ne 2) { throw "cannot read shortcut: $value" }
                     $modifier = switch ($parts[0]) {
                         'ctrl'  { 0x11 }
                         'shift' { 0x10 }
@@ -621,8 +621,16 @@ try {
                     $letter = $parts[1]
                     if ($letter.Length -ne 1) { throw "unknown key: $letter" }
                     $key = [uint16][char]($letter.ToUpper())
-                    [Win32Capture]::Chord([uint16]$modifier, $key)
+                    [Win32Capture]::Shortcut([uint16]$modifier, $key)
                     Start-Sleep -Milliseconds 300
+                }
+                'kill' {
+                    # Force quit, for a test that ends with a native modal
+                    # dialog up: nothing can ask the window to close
+                    # underneath one. The program gets no shutdown, so such a
+                    # test asserts on files, not state.
+                    Stop-Process -Id $proc.Id -Force
+                    $proc.WaitForExit(5000) | Out-Null
                 }
                 'restart' {
                     # Close the program and start it again. What a preset has
@@ -802,6 +810,19 @@ try {
                         Remove-Item -LiteralPath $value -Force
                     }
                 }
+                'written' {
+                    # `written:PATH|TEXT` checks a file in code, mid-test,
+                    # right when the step before it claims to have written it.
+                    $p, $want = $value -split '\|', 2
+                    if (-not (Test-Path -LiteralPath $p)) {
+                        throw "$p was not written"
+                    }
+                    $want = $want.Trim().Replace('\n', "`n")
+                    $got = [System.IO.File]::ReadAllText($p)
+                    if (-not $got.Contains($want)) {
+                        throw "$p holds `"$got`", expected it to contain `"$want`""
+                    }
+                }
                 'shot' {
                     # A picture of whichever window the steps are addressing,
                     # for working out why one of them landed nowhere.
@@ -914,20 +935,22 @@ try {
     }
 
     # The picture is always of the window under test, whichever window the
-    # steps were last addressing.
-    $rect = [Win32Capture]::VisibleRect($hwnd)
-    if ($rect.Right -le $rect.Left) { $rect = $hostRect }
-    $width = $rect.Right - $rect.Left
-    $height = $rect.Bottom - $rect.Top
+    # steps were last addressing. A killed program has no window left.
+    if (-not $proc.HasExited) {
+        $rect = [Win32Capture]::VisibleRect($hwnd)
+        if ($rect.Right -le $rect.Left) { $rect = $hostRect }
+        $width = $rect.Right - $rect.Left
+        $height = $rect.Bottom - $rect.Top
 
-    $full = if ([System.IO.Path]::IsPathRooted($Out)) {
-        $Out
-    } else {
-        Join-Path (Get-Location) $Out
+        $full = if ([System.IO.Path]::IsPathRooted($Out)) {
+            $Out
+        } else {
+            Join-Path (Get-Location) $Out
+        }
+        Save-Shot $rect $full
+
+        Write-Output "captured ${width}x${height} -> $Out"
     }
-    Save-Shot $rect $full
-
-    Write-Output "captured ${width}x${height} -> $Out"
 }
 finally {
     if (-not $proc.HasExited) {

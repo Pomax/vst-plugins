@@ -10,6 +10,7 @@
 //! real input into the real window finds those.
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 use markdown_notes_core::PluginState;
@@ -53,6 +54,7 @@ fn suites(root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// The window driver, which belongs to neither project: both suites use it.
+#[cfg(target_os = "windows")]
 fn tools_dir(root: &Path) -> PathBuf {
     root.parent()
         .map(|parent| parent.join("tools"))
@@ -62,6 +64,65 @@ fn tools_dir(root: &Path) -> PathBuf {
 /// Whether a suite holds a test of this name.
 fn has_test(dir: &Path, name: &str) -> bool {
     dir.join(format!("{name}.txt")).exists()
+}
+
+/// Write down where the run is, so an interrupted one can say what ran.
+///
+/// One line per event in `.cache/uitests/progress.txt`: `running:` when a
+/// test starts, `ok:` or `fail:` when it ends. A run that was cut off leaves
+/// its last line as `running:`, which names the test it died in.
+fn note(root: &Path, line: &str) {
+    let dir = root.join(".cache").join("uitests");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("progress.txt");
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.push_str(line);
+    text.push('\n');
+    let _ = std::fs::write(&path, text);
+}
+
+/// The suite's tests, in the order its `order.txt` says they run.
+///
+/// The manifest is the only thing that decides the order: file names do not.
+/// Every test file must be listed and every listed test must exist, so a test
+/// can neither run in a surprise position nor sit unrun in the directory.
+fn ordered_tests(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let manifest = dir.join("order.txt");
+    let text = std::fs::read_to_string(&manifest)
+        .map_err(|e| format!("every suite needs an order.txt: {}: {e}", manifest.display()))?;
+
+    let mut files = Vec::new();
+    for line in text.lines() {
+        let name = line.trim();
+        if name.is_empty() || name.starts_with('#') {
+            continue;
+        }
+        let file = dir.join(format!("{name}.txt"));
+        if !file.exists() {
+            return Err(format!(
+                "{} lists {name}, and there is no {name}.txt beside it",
+                manifest.display()
+            ));
+        }
+        files.push(file);
+    }
+
+    let listed: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_test = path.extension().is_some_and(|e| e == "txt")
+                && path.file_name().is_some_and(|n| n != "order.txt");
+            if is_test && !listed.contains(&path.as_path()) {
+                return Err(format!(
+                    "{} is not listed in {}, so it would never run",
+                    path.display(),
+                    manifest.display()
+                ));
+            }
+        }
+    }
+    Ok(files)
 }
 
 struct Test {
@@ -75,6 +136,10 @@ struct Test {
     /// `remove:` step, because those run before anything is asserted and half
     /// of what these tests assert is that a file is there.
     cleanups: Vec<String>,
+    /// Marked `baseline:` in the file: this test proves something every other
+    /// test assumes, typing or clicking. When it fails, the run stops, because
+    /// nothing after it can mean anything.
+    baseline: bool,
 }
 
 fn read_test(path: &Path) -> Result<Test, String> {
@@ -88,6 +153,7 @@ fn read_test(path: &Path) -> Result<Test, String> {
     let mut steps = Vec::new();
     let mut expects = Vec::new();
     let mut cleanups = Vec::new();
+    let mut baseline = false;
     for line in text.lines() {
         let line = line.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -97,6 +163,8 @@ fn read_test(path: &Path) -> Result<Test, String> {
             cleanups.push(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("expect:") {
             expects.push(rest.trim().to_string());
+        } else if line.trim() == "baseline:" {
+            baseline = true;
         } else {
             steps.push(line.to_string());
         }
@@ -104,7 +172,20 @@ fn read_test(path: &Path) -> Result<Test, String> {
     if expects.is_empty() {
         return Err(format!("{name}: a test with nothing to assert is not a test"));
     }
-    Ok(Test { name, steps, expects, cleanups })
+    Ok(Test { name, steps, expects, cleanups, baseline })
+}
+
+/// A path as a test file writes it, as this platform spells it.
+///
+/// The tests separate directories with a backslash. Anywhere else that names
+/// one file with a backslash in it, so the separators are swapped. Only paths:
+/// the text expectations write `\n` for a newline, and that is not a path.
+fn platform_path(path: &str) -> String {
+    if cfg!(target_os = "windows") {
+        path.to_string()
+    } else {
+        path.replace('\\', "/")
+    }
 }
 
 /// Check one `expect:` line against the state the plugin wrote.
@@ -148,8 +229,8 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
             .ok_or_else(|| format!("section {index} is {got:?}, expected {want:?}"));
     }
     if let Some(path) = expect.strip_prefix("file exists") {
-        let path = path.trim();
-        return Path::new(path)
+        let path = platform_path(path.trim());
+        return Path::new(&path)
             .exists()
             .then_some(())
             .ok_or_else(|| format!("{path} was not written"));
@@ -157,8 +238,8 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
     if let Some(path) = expect.strip_prefix("no file at") {
         // For a step that is supposed to write nothing: cancelling out of a
         // dialog that has a filename typed into it, for one.
-        let path = path.trim();
-        return (!Path::new(path).exists())
+        let path = platform_path(path.trim());
+        return (!Path::new(&path).exists())
             .then_some(())
             .ok_or_else(|| format!("{path} was written, and should not have been"));
     }
@@ -175,8 +256,8 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
                 .trim()
                 .parse()
                 .map_err(|_| format!("not a number: {expect}"))?;
-            let path = path.trim();
-            let text = std::fs::read_to_string(path)
+            let path = platform_path(path.trim());
+            let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("{path} was not written: {e}"))?;
             let got = text
                 .lines()
@@ -197,9 +278,9 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
         let (path, want) = rest
             .split_once(" contains")
             .ok_or_else(|| format!("cannot read: {expect}"))?;
-        let path = path.trim();
+        let path = platform_path(path.trim());
         let want = unescape(want.trim());
-        let got = std::fs::read_to_string(path)
+        let got = std::fs::read_to_string(&path)
             .map_err(|e| format!("{path} was not written: {e}"))?;
         return got
             .contains(&want)
@@ -270,13 +351,20 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
 
     drive(root, host, plugin, &step_file, &state_file, &shot)?;
 
-    let bytes = std::fs::read(&state_file).map_err(|_| {
-        format!(
-            "the plugin wrote no state — the window did not close cleanly. \
-             The screenshot of what was on screen is at {}",
-            shot.display()
-        )
-    })?;
+    // A test that ends with `kill:` chose not to have state: a killed program
+    // writes none, and that test asserts on files instead.
+    let killed = test.steps.iter().any(|step| step.trim() == "kill:");
+    let bytes = match std::fs::read(&state_file) {
+        Ok(bytes) => bytes,
+        Err(_) if killed => Vec::new(),
+        Err(_) => {
+            return Err(format!(
+                "the plugin wrote no state — the window did not close cleanly. \
+                 The screenshot of what was on screen is at {}",
+                shot.display()
+            ))
+        }
+    };
     let state = PluginState::from_bytes(&bytes);
 
     let mut failures = Vec::new();
@@ -292,9 +380,11 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     // Whatever the test made, gone — including when it failed, so a run that
     // went wrong does not decide what the next one sees.
     for path in &test.cleanups {
-        let path = path
-            .replace("%CACHE%", &work.display().to_string())
-            .replace("%PRESETS%", &presets_dir(root).display().to_string());
+        let path = platform_path(
+            &path
+                .replace("%CACHE%", &work.display().to_string())
+                .replace("%PRESETS%", &presets_dir(root).display().to_string()),
+        );
         // A trailing `*` takes everything that starts the same way, for a test
         // that made more files than it is worth naming one by one. Only that
         // form, and only in the last part of the path: nothing else is a
@@ -367,7 +457,19 @@ fn drive(
         .ok_or_else(|| "the window driver failed".to_string())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn drive(
+    root: &Path,
+    host: &Path,
+    plugin: &Path,
+    steps: &Path,
+    state: &Path,
+    shot: &Path,
+) -> Result<(), String> {
+    crate::macos::drive(root, host, plugin, steps, state, shot)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn drive(
     _root: &Path,
     _host: &Path,
@@ -376,9 +478,7 @@ fn drive(
     _state: &Path,
     _shot: &Path,
 ) -> Result<(), String> {
-    Err("the UI tests need a window driver for this platform; \
-         tools/capture-window.sh does not take steps yet"
-        .to_string())
+    Err("the UI tests need a window driver for this platform".to_string())
 }
 
 /// Run every UI test, or the one named.
@@ -391,6 +491,11 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
     let mut failed = Vec::new();
     let suites = suites(root);
 
+    // A fresh working directory for this run: a stale file from an old run
+    // makes a save dialog stop to ask about replacing it, and a stale picture
+    // can satisfy a file-exists expectation the new run never earned.
+    let _ = std::fs::remove_dir_all(root.join(".cache").join("uitests"));
+
     for (suite, dir) in &suites {
         if only.is_some_and(|name| name == suite) {
             // Naming the suite runs all of it.
@@ -398,15 +503,11 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
             continue;
         }
 
-        let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().is_some_and(|e| e == "txt"))
-                .collect(),
-            // A project with no UI tests of its own is not an error.
-            Err(_) => continue,
-        };
-        files.sort();
+        // A project with no UI tests of its own is not an error.
+        if std::fs::read_dir(dir).is_err() {
+            continue;
+        }
+        let files = ordered_tests(dir)?;
         if files.is_empty() {
             continue;
         }
@@ -418,11 +519,23 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
                 continue;
             }
             ran += 1;
+            note(root, &format!("running: {}", test.name));
             match run_one(root, &test, host, plugin) {
-                Ok(()) => println!("  ok    {}", test.name),
+                Ok(()) => {
+                    println!("  ok    {}", test.name);
+                    note(root, &format!("ok:      {}", test.name));
+                }
                 Err(e) => {
                     println!("  FAIL  {}\n      {e}", test.name);
-                    failed.push(test.name);
+                    note(root, &format!("fail:    {}", test.name));
+                    failed.push(test.name.clone());
+                    if test.baseline {
+                        return Err(format!(
+                            "{} is a baseline test: it proves something every \
+                             later test assumes, so nothing after it ran",
+                            test.name
+                        ));
+                    }
                 }
             }
         }

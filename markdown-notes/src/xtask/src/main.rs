@@ -20,6 +20,8 @@
 //! cargo run -p xtask -- bundle [--release] [--target <triple>]
 //! ```
 
+#[cfg(target_os = "macos")]
+mod macos;
 mod uitest;
 
 use std::fs;
@@ -196,9 +198,17 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
         Err(e) => println!("note:   could not write moduleinfo.json: {e}"),
     }
 
+    // 3c. Sign the assembled bundle, not just the binary inside it.
+    if is_macos(&triple) && cfg!(target_os = "macos") {
+        sign(&bundle_root)?;
+    }
+
     // 4. Copy the plugin binary to dist/, so the build result can be picked up
     //    without digging through target/.
     let dist = write_dist(&root, &lib, &bundle_root, &triple)?;
+    if is_macos(&triple) && cfg!(target_os = "macos") {
+        sign(&dist)?;
+    }
     println!("dist:   {}", dist.display());
 
     // 5. Load what is about to ship, the way a host will.
@@ -212,6 +222,27 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
     //    kept: .cache/ is a cache, so the next build only redoes what changed.
 
     Ok(bundle_root)
+}
+
+/// Sign a bundle so its signature covers the whole thing.
+///
+/// The linker ad-hoc signs the binary it produces, which leaves the bundle
+/// around it unsigned: `codesign` reports `Sealed Resources=none` and
+/// `Info.plist=not bound`. A host running under the hardened runtime with
+/// library validation refuses to load a bundle in that state, and the plugin
+/// never appears. Signing the assembled directory seals `Contents` and binds
+/// the `Info.plist` to the signature.
+fn sign(bundle: &Path) -> Result<(), String> {
+    let status = Command::new("codesign")
+        .args(["--force", "--sign", "-", "--timestamp=none"])
+        .arg(bundle)
+        .status()
+        .map_err(|e| format!("running codesign: {e}"))?;
+    if !status.success() {
+        return Err(format!("signing {} failed", bundle.display()));
+    }
+    println!("signed: {}", bundle.display());
+    Ok(())
 }
 
 /// Whether a bundle built for `triple` can be loaded by this process.
@@ -626,6 +657,14 @@ fn test(args: &[String]) -> Result<(), String> {
                 "snapshots",
                 "--test",
                 "theme_rendering",
+                "--test",
+                "caret_rendering",
+                "--test",
+                "block_spacing",
+                "--test",
+                "section_dragging",
+                "--test",
+                "title_field",
             ],
         )?;
     }

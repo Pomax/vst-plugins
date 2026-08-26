@@ -174,6 +174,16 @@ mod platform {
         best.map(|(window, _)| window)
     }
 
+
+    /// Not needed here: a plugin's editor is a window of its own, and the
+    /// window driver measures it from outside the process.
+    pub fn editor_in_host(_handle: *mut c_void) -> Option<(i32, i32, i32, i32)> {
+        None
+    }
+
+    /// Not needed here: the plugin's window is resized by `SetWindowPos`,
+    /// which is the resize, not an announcement of one.
+    pub fn follow_resize(_handle: *mut c_void) {}
 }
 
 #[cfg(target_os = "macos")]
@@ -181,6 +191,30 @@ mod platform {
     use super::c_void;
     use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
     use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    /// The window's own view, from the pointer the window system handed over.
+    ///
+    /// # Safety
+    ///
+    /// `handle` is either null or an `NSView` that outlives the borrow. Every
+    /// caller here got it from the window it is drawing into, so it is one or
+    /// the other; a null one gives `None` rather than a view.
+    unsafe fn view<'a>(handle: *mut c_void) -> Option<&'a NSView> {
+        if handle.is_null() {
+            return None;
+        }
+        Some(unsafe { &*(handle as *const NSView) })
+    }
+
+    /// The plugin's view: the first one the host's view is holding.
+    ///
+    /// # Safety
+    ///
+    /// The same as [`view`]: `handle` is null or a live `NSView`.
+    unsafe fn editor_view(handle: *mut c_void) -> Option<objc2::rc::Retained<NSView>> {
+        let host = unsafe { view(handle) }?;
+        host.subviews().iter().next()
+    }
 
     /// Whether the host's window takes input.
     ///
@@ -195,10 +229,11 @@ mod platform {
     /// it is in, inside the resize rather than after it, so the two are never
     /// out of step and there is nothing to redraw late.
     pub fn track_editor(handle: *mut c_void, _top: i32) {
-        let host: &NSView = unsafe { &*(handle as *const NSView) };
+        let Some(host) = (unsafe { view(handle) }) else {
+            return;
+        };
         host.setAutoresizesSubviews(true);
-        let subviews = unsafe { host.subviews() };
-        let Some(editor) = subviews.iter().next() else {
+        let Some(editor) = (unsafe { editor_view(handle) }) else {
             return;
         };
         editor.setAutoresizingMask(
@@ -211,31 +246,84 @@ mod platform {
     /// strip, and size it to what is left.
     ///
     /// AppKit measures from the bottom left, so the room comes off the top by
-    /// leaving the origin at zero and shortening the view.
+    /// leaving the origin at zero and shortening the view. A flipped view
+    /// measures from the top left instead, and eframe's root view is flipped,
+    /// so there the origin is the strip's own height. Getting this wrong puts
+    /// the editor over the strip and leaves a bare band at the bottom.
     pub fn inset_editor(handle: *mut c_void, top: i32) {
-        let host: &NSView = unsafe { &*(handle as *const NSView) };
-        let bounds = host.bounds();
-        let subviews = unsafe { host.subviews() };
-        let Some(editor) = subviews.iter().next() else {
+        let Some(host) = (unsafe { view(handle) }) else {
             return;
         };
+        let Some(editor) = (unsafe { editor_view(handle) }) else {
+            return;
+        };
+        let bounds = host.bounds();
         let height = (bounds.size.height - top as f64).max(1.0);
+        let y = if host.isFlipped() { top as f64 } else { 0.0 };
         let frame = NSRect::new(
-            NSPoint::new(0.0, 0.0),
+            NSPoint::new(0.0, y),
             NSSize::new(bounds.size.width, height),
         );
-        unsafe { editor.setFrame(frame) };
+        editor.setFrame(frame);
+    }
+
+    /// Where the plugin's view sits inside the host's, measured from the top
+    /// left the way a test reads a window.
+    ///
+    /// AppKit measures from the bottom left, so the top of the view is the
+    /// height of the host less the top of the frame.
+    pub fn editor_in_host(handle: *mut c_void) -> Option<(i32, i32, i32, i32)> {
+        let host = unsafe { view(handle) }?;
+        let editor = unsafe { editor_view(handle) }?;
+        let bounds = host.bounds();
+        let frame = editor.frame();
+        let top = if host.isFlipped() {
+            frame.origin.y
+        } else {
+            bounds.size.height - (frame.origin.y + frame.size.height)
+        };
+        Some((
+            frame.origin.x.round() as i32,
+            top.round() as i32,
+            frame.size.width.round() as i32,
+            frame.size.height.round() as i32,
+        ))
+    }
+
+    /// Make the plugin's view take its new size now, not a frame later.
+    ///
+    /// AppKit stretches the view inside the resize, but the view only learns
+    /// its size in `viewDidChangeBackingProperties`, which AppKit sends for
+    /// scale changes, not frame changes; the view's own resize calls it by
+    /// hand for the same reason. Without this the drawing surface keeps its
+    /// old size while the view stretches, and the picture scales instead of
+    /// relaying out: a resize that looks like zoom.
+    pub fn follow_resize(handle: *mut c_void) {
+        let Some(editor) = (unsafe { editor_view(handle) }) else {
+            return;
+        };
+        // Only a view that answers to the message gets it: the subview is not
+        // always the plugin's own view class, and an unanswered message ends
+        // the process.
+        let selector = objc2::sel!(viewDidChangeBackingProperties:);
+        let answers: bool = unsafe { objc2::msg_send![&*editor, respondsToSelector: selector] };
+        if !answers {
+            return;
+        }
+        let nil: *mut objc2::runtime::AnyObject = std::ptr::null_mut();
+        let _: () = unsafe { objc2::msg_send![&*editor, viewDidChangeBackingProperties: nil] };
     }
 
     /// Give the plugin's editor the keyboard, the way a host hands it to any
     /// window it puts on screen.
     pub fn focus_editor(handle: *mut c_void) {
-        let host: &NSView = unsafe { &*(handle as *const NSView) };
-        let subviews = unsafe { host.subviews() };
-        let Some(editor) = subviews.iter().next() else {
+        let Some(host) = (unsafe { view(handle) }) else {
             return;
         };
-        if let Some(window) = unsafe { host.window() } {
+        let Some(editor) = (unsafe { editor_view(handle) }) else {
+            return;
+        };
+        if let Some(window) = host.window() {
             window.makeFirstResponder(Some(&editor));
         }
     }
@@ -253,6 +341,15 @@ mod platform {
     pub fn inset_editor(_handle: *mut c_void, _top: i32) {}
 
     pub fn focus_editor(_handle: *mut c_void) {}
+
+
+    pub fn editor_in_host(_handle: *mut c_void) -> Option<(i32, i32, i32, i32)> {
+        None
+    }
+
+    pub fn follow_resize(_handle: *mut c_void) {}
 }
 
-pub use platform::{focus_editor, inset_editor, set_enabled, track_editor};
+pub use platform::{
+    editor_in_host, focus_editor, follow_resize, inset_editor, set_enabled, track_editor,
+};

@@ -22,3 +22,4 @@
 - [Never use git without being asked](never-use-git-without-being-asked.md) — no status, log, diff or restore; undo comes from the scratchpad copies
 - [Run only the tests the change affects](run-only-the-tests-the-change-affects.md) — name the suite; UI runs cost the user their desktop
 - [Never tail command output](never-tail-command-output.md) — no `| tail`, ever; read the whole log or the first error is thrown away
+- [Ask instead of assuming intent](ask-instead-of-assuming-intent.md) — a question is not an instruction; ask and wait for the actual answer before acting

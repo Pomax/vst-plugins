@@ -31,14 +31,19 @@ struct Args {
     /// Where to write the plugin's state when the window closes. This is what
     /// a scripted UI test reads back to see what the interaction did.
     state: Option<PathBuf>,
+    /// Where to write what this window and the plugin's window inside it
+    /// measure. The plugin's editor is a child window, and on macOS a child
+    /// window is a subview, which nothing outside this process can measure.
+    geometry: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
-    let mut args = Args { plugin: None, state: None };
+    let mut args = Args { plugin: None, state: None, geometry: None };
     let mut rest = std::env::args().skip(1);
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--state" => args.state = rest.next().map(PathBuf::from),
+            "--geometry" => args.geometry = rest.next().map(PathBuf::from),
             _ => args.plugin = Some(PathBuf::from(arg)),
         }
     }
@@ -89,6 +94,9 @@ struct Host {
     plugin: Plugin,
     /// Written when the window closes, for a scripted test to read.
     state_out: Option<PathBuf>,
+    /// Written every frame, for a scripted test to read what this window and
+    /// the plugin's window inside it measure.
+    geometry_out: Option<PathBuf>,
     /// The host window's own handle, which the plugin's window is a child of.
     handle: *mut c_void,
     /// Which class was instantiated, so a preset cannot be loaded into a
@@ -242,6 +250,9 @@ impl Host {
         }
         self.editor = Some(size);
         let _ = self.plugin.resize(size.0, size.1 - chrome::HEIGHT);
+        // The view has already been stretched by this point; this makes it
+        // take the new size now, in this frame, not whenever it next draws.
+        place::follow_resize(self.handle);
         if !self.focused {
             // The editor exists by now, so this is where the host hands it the
             // keyboard, once, the way a DAW does.
@@ -269,6 +280,50 @@ impl Host {
     }
 }
 
+impl Host {
+    /// Write down where this window is and what it and the plugin's window
+    /// inside it measure.
+    ///
+    /// A test after a drag cannot know what size the window ended up, but it
+    /// can say the plugin still fills it: `inset` is how much of the window
+    /// the plugin does not cover, on each side.
+    ///
+    /// `window` is the whole window, frame and title bar included, where it
+    /// sits on the desktop. Anything outside the process that has to aim at
+    /// this window, a screen recorder among them, needs that and cannot get
+    /// it as reliably from anywhere else.
+    fn report_geometry(&self, ctx: &egui::Context) {
+        let Some(path) = &self.geometry_out else {
+            return;
+        };
+        let Some(rect) = ctx.input(|i| i.viewport().inner_rect) else {
+            return;
+        };
+        let (width, height) = (rect.width().round() as i32, rect.height().round() as i32);
+        let Some((x, y, editor_width, editor_height)) = place::editor_in_host(self.handle) else {
+            return;
+        };
+        let mut text = String::new();
+        if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
+            text.push_str(&format!(
+                "window={},{},{}x{}\n",
+                outer.min.x.round() as i32,
+                outer.min.y.round() as i32,
+                outer.width().round() as i32,
+                outer.height().round() as i32,
+            ));
+        }
+        text.push_str(&format!(
+            "host={width}x{height}\n\
+             editor={x},{y},{editor_width}x{editor_height}\n\
+             inset={x},{y},{},{}\n",
+            width - (x + editor_width),
+            height - (y + editor_height),
+        ));
+        let _ = std::fs::write(path, text);
+    }
+}
+
 impl eframe::App for Host {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::top("strip")
@@ -281,6 +336,7 @@ impl eframe::App for Host {
         self.tell_plugin_the_size(&ctx);
         self.follow_dialog_requests(&ctx);
         self.apply_pending();
+        self.report_geometry(&ctx);
 
         if ctx.input(|i| i.viewport().close_requested()) {
             self.finish();
@@ -376,13 +432,11 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             let handle = native_handle(cc);
+            if let Err(e) = plugin.attach(cc) {
+                eprintln!("could not attach the editor: {e}");
+            }
             match handle {
-                // Safety: the window outlives the attachment. The plugin is
-                // detached when the window closes, before eframe drops it.
                 Some(parent) => {
-                    if let Err(e) = unsafe { plugin.attach(parent) } {
-                        eprintln!("could not attach the editor: {e}");
-                    }
                     // Put it under the strip, and keep it there for every
                     // resize from here on without anything having to watch.
                     place::inset_editor(parent, chrome::HEIGHT);
@@ -395,6 +449,7 @@ fn main() -> ExitCode {
             Ok(Box::new(Host {
                 plugin,
                 state_out: args.state.clone(),
+                geometry_out: args.geometry.clone(),
                 handle: handle.unwrap_or(std::ptr::null_mut()),
                 cid,
                 name: presets::plugin_name(&plugin_path),

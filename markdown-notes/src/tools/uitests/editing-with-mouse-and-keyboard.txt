@@ -10,7 +10,7 @@
 # document said nothing, so the pointer stayed an arrow over it, which reads as
 # "nothing here to click". Over the text, over the empty space below it, which
 # is still document, and over the toolbar, which is not.
-type:hello world
+type:text goes here
 cursor:60,155|ibeam
 cursor:400,400|ibeam
 cursor:450,76|arrow
@@ -19,8 +19,10 @@ cursor:450,76|arrow
 # replaces. The press has to land inside the text: a line is only as wide as
 # what is written on it, and a press beside it belongs to no line at all.
 # The drag runs from two characters in to past the end of the line, so what it
-# selects is everything from there on: "hello world" becomes "heX".
-drag:24,155,90,155
+# selects is everything from there on: "text goes here" becomes "teX". The end
+# of the drag sits far right of the text so it is past the line's end whatever
+# width a platform's font gives it.
+drag:24,155,300,155
 type:X
 shot:%CACHE%\editing-dragged-to-select.png
 
@@ -35,13 +37,13 @@ type:!
 # have to reach the document for any of that to happen. This is the only test
 # that presses Ctrl for real; the scenarios reach the editor through the
 # plugin's own key entry point and never touch the window's keyboard.
-chord:ctrl+a
-chord:ctrl+x
+shortcut:ctrl+a
+shortcut:ctrl+x
 wait:500
 type:kept:
-chord:ctrl+v
+shortcut:ctrl+v
 wait:500
 shot:%CACHE%\editing-pasted.png
 
 expect:sections is 1
-expect:section 0 is kept:heX!\n\nsecond line
+expect:section 0 is kept:teX!\n\nsecond line

@@ -1,6 +1,6 @@
 # A whole file round trip, through the real buttons and the real dialogs:
-# save, check it landed, delete it, save again under a second name, check that,
-# then open the first one back and check what came in.
+# save, check the file in code, delete it, save again under a second name,
+# check that in code, then open it back and check what came in.
 #
 # The regression this guards: the dialogs were opened from inside the frame
 # being drawn, and a native dialog runs its own message loop. The window's
@@ -9,6 +9,9 @@
 # shutdown, so this test sees that as no state written at all.
 
 # Save is Save As until the document has a path, so this is the first dialog.
+# The file it wrote is checked in code the moment the dialog closes, and then
+# deleted in code: the save is proven right here, and nothing later in the run
+# can lean on its leftovers.
 remove:%CACHE%\round-trip-one.md
 type:# Mix notes
 type:{ENTER}levels are close
@@ -17,9 +20,12 @@ wait:2500
 type:%CACHE%\round-trip-one.md
 type:{ENTER}
 wait:2000
+written:%CACHE%\round-trip-one.md|# Mix notes\n\nlevels are close
+remove:%CACHE%\round-trip-one.md
 
-# Now a second section, and Save As to a different name. The document keeps that
-# one as its path afterwards.
+# Now a second section, and Save As to a different name. The document keeps
+# that one as its path afterwards, and the file is checked in code the same
+# way: both sections, in order.
 remove:%CACHE%\round-trip-two.md
 plugin:129,87
 type:# Drum bus
@@ -28,19 +34,25 @@ wait:2500
 type:%CACHE%\round-trip-two.md
 type:{ENTER}
 wait:2000
+written:%CACHE%\round-trip-two.md|# Mix notes\n\nlevels are close\n\n# Drum bus
 
-# Open the first file again. It has one heading, so it comes back as one section,
-# and it replaces what was open rather than adding to it.
+# Change the document, so that opening the file back has something to undo:
+# an open that silently did nothing would leave this mark, and the
+# expectations below refuse it.
+plugin:400,300
+type: and then some
+wait:500
+
+# Open the second file back. It replaces what is open, so the mark is gone and
+# the document is exactly what the file holds.
 plugin:443,50
 wait:2500
-type:%CACHE%\round-trip-one.md
+type:%CACHE%\round-trip-two.md
 type:{ENTER}
 wait:2000
 
-# The first save wrote only what existed then: one section.
-expect:file at %CACHE%\round-trip-one.md contains # Mix notes\n\nlevels are close
-# The second wrote both sections, in order.
-expect:file at %CACHE%\round-trip-two.md contains # Mix notes\n\nlevels are close\n\n# Drum bus
-# And opening the first replaced the two sections with its own single one.
-expect:sections is 1
+cleanup:%CACHE%\round-trip-two.md
+
+expect:sections is 2
 expect:section 0 is # Mix notes\n\nlevels are close
+expect:section 1 is # Drum bus

@@ -25,6 +25,12 @@ raw-window-handle = "0.6"
 #
 # `default_fonts` because this is a tool, not a plugin: it is not worth going
 # to the operating system for a font to draw two buttons with.
+#
+# The glow backend, not wgpu. On macOS wgpu registers an Objective-C class
+# named "RawWindowMetalLayer", and a class name belongs to the process, not to
+# the binary that asks for it. The plugin loaded into this host has its own
+# copy of that code, so a host on wgpu means the same name is registered
+# twice and whichever comes second aborts.
 eframe = { version = "0.35", default-features = false, features = [
     "glow",
     "persistence",

@@ -7,8 +7,27 @@ metadata:
 
 Never start a UI test, a screenshot run, a screen recording, or anything else
 that drives the pointer, the keyboard or a window, without asking first and
-getting a yes. Every time, not once per session: the answer depends on what the
-user is doing at that moment, and they are usually at the machine.
+getting a yes. Ask once per set of runs, not once per session: the answer
+depends on what the user is doing at that moment, and they are usually at the
+machine.
+
+A yes covers the whole set. Once it is given, keep running, fixing and
+rerunning until everything passes, and only then stop. Asking again between
+attempts of the same set is asking twice for the same thing.
+
+Say when a run is starting, every single time, including every rerun inside a
+set that was already agreed to. Permission is not notice: the user is at the
+machine, and a run that begins unannounced takes the pointer out from under
+their hand. A pointer or a keystroke of theirs landing mid-run also makes the
+result meaningless, so a run they did not know about can fail for a reason
+that is not in the code.
+
+Capturing the screen outside a test run is forbidden outright. No probe, no
+"just checking a flag", no capture of any kind from the working shell, ever.
+A capture flashes the whole desktop and lights the recording indicator even
+when it fails, and the user has forbidden it in those words after exactly such
+a probe. A question about how a capture tool behaves goes into the capture
+tool and is answered by the next permitted test run.
 
 This covers `xtask uitest` in any form (one test, a suite, or `test --full`),
 `tools/capture-window.ps1` and its macOS counterpart, and launching the host or

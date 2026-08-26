@@ -1,0 +1,13 @@
+# The Open button, clicked for real, and the dialog it must open, on camera.
+#
+# One click on Open, one picture. When the click lands, the picture is of the
+# Open dialog; when it does not, there is no dialog to photograph and the
+# picture is the editor. The app is then force quit: the dialog is native and
+# modal, so the window cannot be asked to close under it, and a killed program
+# writes no state, which is why nothing here asserts on the document.
+plugin:443,50
+wait:2500
+shot:%CACHE%\open-click-dialog.png
+kill:
+
+expect:file exists %CACHE%\open-click-dialog.png

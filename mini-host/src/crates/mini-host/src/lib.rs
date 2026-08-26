@@ -19,6 +19,7 @@ pub mod stream;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use vst3::{ComPtr, ComWrapper, Interface, Steinberg::Vst::*, Steinberg::*};
 
 pub use keys::{Key, Mods};
@@ -97,7 +98,19 @@ pub enum HostError {
     CreateFailed(i32),
     MissingInterface(&'static str),
     NoView,
+    NoWindow,
     Call(&'static str, i32),
+}
+
+/// The native window behind a window handle, as a plugin's editor expects it:
+/// an `HWND` on Windows, an `NSView` on macOS, an X11 window elsewhere.
+fn native_handle(window: &impl HasWindowHandle) -> Option<*mut c_void> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get() as *mut c_void),
+        RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
+        RawWindowHandle::Xcb(h) => Some(h.window.get() as usize as *mut c_void),
+        _ => None,
+    }
 }
 
 impl std::fmt::Display for HostError {
@@ -112,6 +125,7 @@ impl std::fmt::Display for HostError {
             HostError::CreateFailed(c) => write!(f, "createInstance failed (tresult {c})"),
             HostError::MissingInterface(i) => write!(f, "plugin does not implement {i}"),
             HostError::NoView => write!(f, "createView returned null"),
+            HostError::NoWindow => write!(f, "this window has no handle a plugin can use"),
             HostError::Call(m, c) => write!(f, "{m} failed (tresult {c})"),
         }
     }
@@ -555,13 +569,13 @@ impl Plugin {
 
     /// Give the editor a window to draw in.
     ///
-    /// `parent` is the platform's native handle — an `HWND` on Windows, an
-    /// `NSView` on macOS — and must outlive the attachment.
-    ///
-    /// # Safety
-    /// The pointer must be a live window handle of that type.
-    pub unsafe fn attach(&self, parent: *mut c_void) -> Result<(), HostError> {
+    /// The window is taken as a handle rather than a bare pointer, so what
+    /// arrives is a window of the kind this platform's plugins expect and it
+    /// lives at least as long as this call. That is what the plugin is
+    /// promised, and it is checked here rather than at every caller.
+    pub fn attach(&self, window: &impl HasWindowHandle) -> Result<(), HostError> {
         let view = self.view()?;
+        let parent = native_handle(window).ok_or(HostError::NoWindow)?;
         #[cfg(target_os = "windows")]
         let platform = kPlatformTypeHWND;
         #[cfg(target_os = "macos")]
@@ -569,7 +583,7 @@ impl Plugin {
         #[cfg(target_os = "linux")]
         let platform = kPlatformTypeX11EmbedWindowID;
 
-        let res = view.attached(parent, platform);
+        let res = unsafe { view.attached(parent, platform) };
         if res == kResultOk || res == kResultTrue {
             Ok(())
         } else {
