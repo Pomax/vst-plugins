@@ -492,13 +492,18 @@ fn reported_window(reported: &Path) -> Option<Rect> {
     })
 }
 
-/// The drawable height the host itself reports, from its geometry file.
-fn reported_host_height(reported: &Path) -> Option<i32> {
+/// The drawable size the host itself reports, from its geometry file.
+fn reported_host_size(reported: &Path) -> Option<(i32, i32)> {
     let text = std::fs::read_to_string(reported).ok()?;
     let line = text.lines().find(|line| line.starts_with("host="))?;
     let (_, size) = line.split_once('=')?;
-    let (_, height) = size.split_once('x')?;
-    height.trim().parse().ok()
+    let (width, height) = size.split_once('x')?;
+    Some((width.trim().parse().ok()?, height.trim().parse().ok()?))
+}
+
+/// The drawable height the host itself reports, from its geometry file.
+fn reported_host_height(reported: &Path) -> Option<i32> {
+    reported_host_size(reported).map(|(_, height)| height)
 }
 
 /// Ask a window to close, so the program runs its shutdown.
@@ -797,50 +802,7 @@ fn launch(
     Ok((child, pid, rect))
 }
 
-/// The display a region sits on, for searching that whole screen.
-fn display_of(region: Rect) -> Rect {
-    let centre_x = (region.x + region.width / 2) as f64;
-    let centre_y = (region.y + region.height / 2) as f64;
-    let ids = core_graphics::display::CGDisplay::active_displays().unwrap_or_default();
-    for id in ids {
-        let bounds = core_graphics::display::CGDisplay::new(id).bounds();
-        let inside = centre_x >= bounds.origin.x
-            && centre_x < bounds.origin.x + bounds.size.width
-            && centre_y >= bounds.origin.y
-            && centre_y < bounds.origin.y + bounds.size.height;
-        if inside {
-            return Rect {
-                x: bounds.origin.x as i32,
-                y: bounds.origin.y as i32,
-                width: bounds.size.width as i32,
-                height: bounds.size.height as i32,
-            };
-        }
-    }
-    region
-}
 
-/// End a screen recording the way the keyboard does: command, control and
-/// escape together.
-fn stop_recording() -> Result<(), String> {
-    let flags = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagControl;
-    for (code, down) in [(COMMAND, true), (CONTROL, true)] {
-        let event = CGEvent::new_keyboard_event(source()?, code, down)
-            .map_err(|_| "could not make a key event".to_string())?;
-        event.set_flags(flags);
-        post(event);
-        sleep(Duration::from_millis(40));
-    }
-    tap(ESCAPE, flags)?;
-    for code in [CONTROL, COMMAND] {
-        let event = CGEvent::new_keyboard_event(source()?, code, false)
-            .map_err(|_| "could not make a key event".to_string())?;
-        event.set_flags(CGEventFlags::empty());
-        post(event);
-        sleep(Duration::from_millis(40));
-    }
-    Ok(())
-}
 
 /// How many frames the movie holds.
 ///
@@ -904,6 +866,9 @@ struct Run {
     /// The title of the window the steps are addressing, empty for the one
     /// under test.
     title: String,
+    /// Whether a `kill:` step force quit the host, which is the one way it
+    /// may be gone without that being a failure.
+    killed: bool,
     film: Option<Film>,
 }
 
@@ -928,6 +893,7 @@ impl Run {
             rect,
             holding: false,
             title: String::new(),
+            killed: false,
             film: None,
         })
     }
@@ -954,6 +920,7 @@ impl Run {
         self.rect = rect;
         self.holding = false;
         self.title = String::new();
+        self.killed = false;
         Ok(())
     }
 
@@ -962,15 +929,25 @@ impl Run {
         (self.rect.x + x, self.rect.y + y)
     }
 
+    /// Close the host and hold it to a clean exit.
+    ///
+    /// A crash on the way out is a failure like any other: the checks all
+    /// passing and the program then dying is not a pass.
     fn finish(&mut self) -> Result<(), String> {
-        if self.child.try_wait().map(|s| s.is_some()).unwrap_or(false) {
-            return Ok(());
+        if let Ok(Some(status)) = self.child.try_wait() {
+            if self.killed || status.success() {
+                return Ok(());
+            }
+            return Err(format!("the host quit on its own: {status}"));
         }
         let _ = ask_to_close(self.pid);
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            if self.child.try_wait().map(|s| s.is_some()).unwrap_or(false) {
-                return Ok(());
+            if let Ok(Some(status)) = self.child.try_wait() {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(format!("the host crashed while closing: {status}"));
             }
             sleep(Duration::from_millis(100));
         }
@@ -998,8 +975,6 @@ pub fn drive(
     // A test that failed halfway can leave the recorder rolling, and it keeps
     // rolling until it is told to stop.
     if let Some(film) = run.film.take() {
-        let _ = stop_recording();
-        sleep(Duration::from_millis(800));
         let _ = std::fs::write(&film.stop, "");
         let deadline = Instant::now() + Duration::from_secs(10);
         while !film.done.exists() && Instant::now() < deadline {
@@ -1205,6 +1180,36 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             );
             Ok(())
         }
+        "dragto" => {
+            // `dragto:W,H,MS` drags the window's bottom right corner until
+            // the drawable area is exactly W by H, whatever size the window
+            // started at, so the expectations afterwards can name exact
+            // numbers without a size being set by anything but the mouse.
+            let numbers: Vec<i32> = value
+                .split(',')
+                .filter_map(|part| part.trim().parse().ok())
+                .collect();
+            if numbers.len() != 3 {
+                return Err(format!("cannot read dragto: {value}"));
+            }
+            let (width, height) = reported_host_size(&run.reported)
+                .ok_or("the host has not reported its size")?;
+            let (dx, dy) = (numbers[0] - width, numbers[1] - height);
+            let corner = (run.host.right() - 3, run.host.bottom() - 3);
+            take_hold(corner.0, corner.1)?;
+            glide(
+                point(corner.0, corner.1),
+                point(corner.0 + dx, corner.1 + dy),
+                Duration::from_millis(numbers[2] as u64),
+                true,
+            )?;
+            let_go(corner.0 + dx, corner.1 + dy)?;
+            sleep(Duration::from_millis(500));
+            run.rect = window_rect(run.pid, "")?;
+            run.host = run.rect;
+            println!("dragto: {}x{} over {}ms", numbers[0], numbers[1], numbers[2]);
+            Ok(())
+        }
         "remove" => {
             let path = path_of(value);
             if path.exists() {
@@ -1322,6 +1327,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .kill()
                 .map_err(|e| format!("could not force quit the host: {e}"))?;
             let _ = run.child.wait();
+            run.killed = true;
             Ok(())
         }
         "restart" => run.restart(),
@@ -1362,7 +1368,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 None => (value, None),
             };
             let to = path_of(to);
-            let video = PathBuf::from(format!("{}.mov", to.display()));
+            let video = PathBuf::from(format!("{}.mp4", to.display()));
             let stop = PathBuf::from(format!("{}.stop", to.display()));
             let done = video.with_extension("done");
             let started = video.with_extension("started");
@@ -1388,8 +1394,6 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 height,
             };
 
-            let overlay = video.with_extension("overlay");
-            let _ = std::fs::remove_file(&overlay);
             photograph(
                 &[
                     "film",
@@ -1400,42 +1404,16 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     &video.display().to_string(),
                     &stop.display().to_string(),
                 ],
-                &overlay,
+                &started,
                 &video,
             )?;
-
-            // The recording overlay is up. Draw the selection over exactly
-            // the window's region: its place and size are known, so the
-            // rectangle is dragged corner to corner with those numbers.
-            take_hold(region.x, region.y)?;
-            let_go(region.x + region.width, region.y + region.height)?;
-            sleep(Duration::from_millis(500));
-
-            // The overlay's Record button, found by looking, then pressed.
-            let display = display_of(region);
-            let probe = run
-                .state
-                .parent()
-                .map(|work| work.join("record-button.png"))
-                .ok_or("nowhere to put the overlay picture")?;
-            let Some((x, y)) = find_on_screen(display, "Record", &probe)? else {
-                return Err(format!(
-                    "the overlay's Record button is not on screen; see {}",
-                    probe.display()
-                ));
-            };
-            click(x, y)?;
-            sleep(Duration::from_millis(1000));
             run.film = Some(Film { to, video, stop, done });
             Ok(())
         }
         "endfilm" => {
             let film = run.film.take().ok_or("not filming")?;
-            // The system's stop keystroke ends the recording, the stop file
-            // tells the recorder to save the movie, and the done file says
-            // the movie is on disk.
-            stop_recording()?;
-            sleep(Duration::from_millis(800));
+            // The stop file tells the recorder to finish the movie, and the
+            // done file says it is on disk.
             std::fs::write(&film.stop, "")
                 .map_err(|e| format!("writing {}: {e}", film.stop.display()))?;
             let deadline = Instant::now() + Duration::from_secs(30);

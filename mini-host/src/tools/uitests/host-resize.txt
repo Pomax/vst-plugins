@@ -12,45 +12,35 @@
 # below that: the same width, and the height less 26.
 type:something to keep
 
-remove:%CACHE%\host-resize.txt
-resize:1000,700
+# Resizing is a hand on the corner, moving: nothing here sets a size any
+# other way. Filmed from before the hand takes the corner, over a region big
+# enough for the largest size the window is dragged to, since the region is
+# fixed once recording starts: what the window does while it is happening can
+# then be watched rather than guessed at.
+remove:%CACHE%\host-resize-grown.txt
+remove:%CACHE%\host-resize-shrunk.txt
+film:%CACHE%\host-resize-drag|1000,760
+dragto:880,600,1000
 wait:800
-geometry:%CACHE%\host-resize.txt
-shot:%CACHE%\host-resize-wide.png
-
+geometry:%CACHE%\host-resize-grown.txt
 # Smaller as well as bigger: a window that only ever grows can hide the case
 # where the plugin is left overhanging the frame it is in.
-remove:%CACHE%\host-resize-small.txt
-resize:620,420
+dragto:620,420,1000
 wait:800
-geometry:%CACHE%\host-resize-small.txt
-
-# And the way it actually happens: a hand on the corner, moving. Setting the
-# size in one jump asks the window to go straight from one size to another,
-# which is not the path that was ever broken. This films the drag, so what the
-# window did while it was happening can be watched rather than guessed at.
-remove:%CACHE%\host-resize-drag.txt
-# Filmed over a region big enough for the size the window is dragged to, since
-# the region is fixed once recording starts: the part of the screen the window
-# grows into is exactly the part worth watching.
-film:%CACHE%\host-resize-drag|920,640
-dragedge:260,180,1000
+geometry:%CACHE%\host-resize-shrunk.txt
 endfilm:
-wait:800
-geometry:%CACHE%\host-resize-dragged.txt
 
-expect:file at %CACHE%\host-resize.txt contains host=1000x700
-expect:file at %CACHE%\host-resize.txt contains editor=0,26,1000x674
-expect:file at %CACHE%\host-resize-small.txt contains host=620x420
-expect:file at %CACHE%\host-resize-small.txt contains editor=0,26,620x394
-# The corner was dragged 260 right and 180 down from 620x420, so the window is
-# 880x600 afterwards. Named exactly, because a grab that lands on the wrong
-# pixel and drags nothing leaves the window as it was, and a test that only
-# asked whether the plugin still fits would pass on that.
-expect:file at %CACHE%\host-resize-dragged.txt contains host=880x600
+# The sizes are named exactly, because a grab that lands on the wrong pixel
+# and drags nothing leaves the window as it was, and a test that only asked
+# whether the plugin still fits would pass on that.
+expect:file at %CACHE%\host-resize-grown.txt contains host=880x600
+expect:file at %CACHE%\host-resize-grown.txt contains editor=0,26,880x574
 # And the plugin fills it: nothing above it but the strip, nothing beside or
 # below it at all.
-expect:file at %CACHE%\host-resize-dragged.txt contains inset=0,26,0,0
+expect:file at %CACHE%\host-resize-grown.txt contains inset=0,26,0,0
+expect:file at %CACHE%\host-resize-shrunk.txt contains host=620x420
+expect:file at %CACHE%\host-resize-shrunk.txt contains editor=0,26,620x394
+expect:file at %CACHE%\host-resize-shrunk.txt contains inset=0,26,0,0
 # And the plugin is still alive and still taking keys after all of that.
 expect:sections is 1
 expect:section 0 is something to keep

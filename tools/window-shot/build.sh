@@ -20,4 +20,10 @@ printf 'APPL????' > "$app/Contents/PkgInfo"
 
 codesign --force --sign - "$app"
 
+# Every build is a new signature, and the system's screen recording grant is
+# tied to the old one: a stale entry blocks the new build from even asking.
+# Dropping the entry here means the next run prompts fresh instead of failing
+# against a grant that can never match.
+tccutil reset ScreenCapture com.markdown-notes.window-shot
+
 echo "dist:   $app"

@@ -184,6 +184,7 @@ mod platform {
     /// Not needed here: the plugin's window is resized by `SetWindowPos`,
     /// which is the resize, not an announcement of one.
     pub fn follow_resize(_handle: *mut c_void) {}
+
 }
 
 #[cfg(target_os = "macos")]
@@ -240,6 +241,43 @@ mod platform {
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
+        let_editor_draw_in_drags(host);
+    }
+
+    /// Let the plugin draw while the window is being dragged.
+    ///
+    /// The plugin draws on a run loop timer that lives in the default mode,
+    /// and a live drag runs the loop in event tracking mode, where that
+    /// timer never fires: the picture freezes and is stretched with the
+    /// view. This timer runs in the common modes, which a drag does run, and
+    /// while the window is being resized it gives the default mode one
+    /// non-blocking pass, so the plugin's own timer gets to fire. It has to
+    /// be a timer of its own: run from inside the host's frame, that pass
+    /// re-enters the host's event handling, which is not allowed to happen.
+    fn let_editor_draw_in_drags(host: &NSView) {
+        use objc2::Message;
+        use objc2_core_foundation::{
+            kCFAllocatorDefault, kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop,
+            CFRunLoopTimer,
+        };
+
+        let watched = host.retain();
+        let block = block2::RcBlock::new(move |_: *mut CFRunLoopTimer| {
+            if watched.inLiveResize() {
+                let mode = unsafe { kCFRunLoopDefaultMode };
+                CFRunLoop::run_in_mode(mode, 0.0, false);
+            }
+        });
+        let allocator = unsafe { kCFAllocatorDefault };
+        let timer =
+            unsafe { CFRunLoopTimer::with_handler(allocator, 0.0, 0.015, 0, 0, Some(&block)) };
+        if let (Some(run_loop), Some(timer)) = (CFRunLoop::current(), timer) {
+            let mode = unsafe { kCFRunLoopCommonModes };
+            run_loop.add_timer(Some(&timer), mode);
+            // The timer watches for the life of the window, which is the
+            // life of the process.
+            std::mem::forget(timer);
+        }
     }
 
     /// Push the plugin's own view down, leaving `top` points for the host's

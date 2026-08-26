@@ -4,23 +4,27 @@
 //! command, and it grants it wholesale: whatever holds it can photograph
 //! anything on screen at any time. That is far more than a UI test needs, and
 //! it is not something to hand to a general purpose tool. So this application
-//! holds it instead: it photographs a region, or records one while a test
-//! drags a window's corner, and that is all it can be asked for.
+//! holds it instead: it photographs a region, or films one while a test
+//! drags a window's corner, and that is all it can be asked for. Both are
+//! `screencapture` stills, run from here so the screen is read under this
+//! application's right; a film is stills taken thirty a second, made into a
+//! movie by ffmpeg afterwards.
 //!
 //! ```text
 //! window-shot shot <x> <y> <width> <height> <output.png>
-//! window-shot film <x> <y> <width> <height> <output.mov> <stop-file>
+//! window-shot film <x> <y> <width> <height> <output.mp4> <stop-file>
 //! ```
 //!
-//! A film runs until the stop file appears, and `<output>.done` says it is
-//! finished.
+//! A film says it is rolling by writing `<output>.started`, runs until the
+//! stop file appears, and says the movie is saved with `<output>.done`.
 //!
 //! It is started through the launcher, so nobody reads its output: it reports
 //! by writing files next to what it was asked to produce, `<output>.error`
 //! among them.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -74,7 +78,7 @@ fn main() -> ExitCode {
     let Some(task) = parse() else {
         eprintln!(
             "usage: window-shot shot <x> <y> <width> <height> <output.png>\n       \
-             window-shot film <x> <y> <width> <height> <output.mov> <stop-file>"
+             window-shot film <x> <y> <width> <height> <output.mp4> <stop-file>"
         );
         return ExitCode::FAILURE;
     };
@@ -92,12 +96,8 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     };
 
-    // Only photographing needs the screen recording right here: a film is
-    // QuickTime Player's recording, made under QuickTime's own permission.
-    if matches!(task, Task::Shot { .. }) {
-        if let Err(e) = permission() {
-            return complain(e);
-        }
+    if let Err(e) = permission() {
+        return complain(e);
     }
 
     let result = match task {
@@ -163,80 +163,82 @@ fn shot(x: i32, y: i32, width: i32, height: i32, out: &Path) -> Result<(), Strin
     Ok(())
 }
 
-/// Record the screen until the stop file appears.
+/// Record a region of the screen until the stop file appears.
 ///
-/// QuickTime Player makes the recording: it is the system's recorder and
-/// holds its own permission to read the screen. This program only starts and
-/// stops it, so the right to control QuickTime belongs to this program. The
-/// movie is of the whole screen; the analysis crops the wanted region out of
-/// every frame afterwards, which is why the region arguments go unused here.
+/// There is no video recorder in this: the region is photographed over and
+/// over, aiming at thirty a second and taking what `screencapture` actually
+/// manages, and the stills become a movie afterwards. ffmpeg does that
+/// assembly, which is reading files, the part of it that works everywhere;
+/// its own screen input does not work on this macOS.
 ///
 /// `<out>.started` says the recording is rolling, so the test does not drag
-/// the window before there is anything watching, and `<out>.done` says the
-/// movie is saved.
-fn film(
-    _x: i32,
-    _y: i32,
-    _width: i32,
-    _height: i32,
-    out: &Path,
-    stop: &Path,
-) -> Result<(), String> {
+/// the window before there is anything watching, `<out>.done` says the movie
+/// is saved, and `<out>.log` holds whatever the assembler had to say.
+fn film(x: i32, y: i32, width: i32, height: i32, out: &Path, stop: &Path) -> Result<(), String> {
     let _ = std::fs::remove_file(out);
+    let log = out.with_extension("log");
+    let _ = std::fs::remove_file(&log);
+    let frames = out.with_extension("frames");
+    let _ = std::fs::remove_dir_all(&frames);
+    std::fs::create_dir_all(&frames)
+        .map_err(|e| format!("creating {}: {e}", frames.display()))?;
 
-    // Bring up the recording overlay and stand back. The region and the
-    // Record button are the test driver's to set and press, because it is the
-    // one holding the pointer; the recording is stopped with the system's
-    // stop keystroke, also the driver's. What is left for this program is
-    // saving the movie the recording opens in the player.
-    quicktime("tell application \"QuickTime Player\" to new screen recording")?;
-    sleep(Duration::from_millis(1500));
-    std::fs::write(out.with_extension("overlay"), "")
-        .map_err(|e| format!("writing the overlay mark: {e}"))?;
+    // The first photograph before the rolling mark, so a missing permission
+    // fails the film here rather than half way through a test.
+    shot(x, y, width, height, &frames.join("frame-000000.png"))?;
+    std::fs::write(out.with_extension("started"), "")
+        .map_err(|e| format!("writing the started mark: {e}"))?;
 
-    let too_long = Instant::now() + Duration::from_secs(300);
-    while !stop.exists() && Instant::now() < too_long {
-        sleep(Duration::from_millis(100));
+    let target = Duration::from_millis(33);
+    let began = Instant::now();
+    let mut taken: u64 = 1;
+    while !stop.exists() && began.elapsed() < Duration::from_secs(300) {
+        let tick = Instant::now();
+        shot(x, y, width, height, &frames.join(format!("frame-{taken:06}.png")))?;
+        taken += 1;
+        if let Some(rest) = target.checked_sub(tick.elapsed()) {
+            sleep(rest);
+        }
     }
 
-    // The stopped recording opens as a document, but not instantly.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let saved = quicktime(&format!(
-            "tell application \"QuickTime Player\"
-                save front document in POSIX file \"{}\"
-                close front document saving no
-            end tell",
-            out.display()
+    // The stills play back at the rate they were really taken at, so the
+    // movie lasts as long as the recording did.
+    let seconds = began.elapsed().as_secs_f64().max(0.001);
+    let rate = (taken as f64 / seconds).max(1.0);
+    let complaints = File::create(&log).map_err(|e| format!("creating {}: {e}", log.display()))?;
+    let assembled = Command::new("ffmpeg")
+        .args(["-nostdin", "-loglevel", "error", "-y"])
+        .args(["-framerate", &format!("{rate:.3}")])
+        .args(["-i", &frames.join("frame-%06d.png").display().to_string()])
+        // The encoder wants even sides and its own pixel format, whatever
+        // shape the region was.
+        .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p"])
+        .arg(out)
+        .stderr(Stdio::from(complaints))
+        .status()
+        .map_err(|e| format!("running ffmpeg: {e}"))?;
+    if !assembled.success() || movie_size(out) < 1024 {
+        return Err(format!(
+            "no movie was assembled from {taken} stills; ffmpeg said: {}",
+            said(&log)
         ));
-        if saved.is_ok() && out.exists() {
-            break;
-        }
-        if Instant::now() > deadline {
-            return Err(match saved {
-                Err(e) => e,
-                Ok(()) => "QuickTime never saved the recording".to_string(),
-            });
-        }
-        sleep(Duration::from_millis(500));
     }
+    let _ = std::fs::remove_dir_all(&frames);
     std::fs::write(out.with_extension("done"), "")
         .map_err(|e| format!("writing the done mark: {e}"))?;
     Ok(())
 }
 
-/// Hand QuickTime Player a script and report what it said when it refused.
-fn quicktime(script: &str) -> Result<(), String> {
-    let out = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("running osascript: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "QuickTime would not do it: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
+/// How much movie is on disk, with nothing there counting as none.
+fn movie_size(out: &Path) -> u64 {
+    std::fs::metadata(out).map(|m| m.len()).unwrap_or(0)
 }
+
+/// What the log holds, for an error message.
+fn said(log: &Path) -> String {
+    match std::fs::read_to_string(log) {
+        Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
+        _ => "nothing".to_string(),
+    }
+}
+

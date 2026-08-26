@@ -67,3 +67,12 @@ features = ["NSWindow", "NSView", "NSResponder"]
 [target.'cfg(target_os = "macos")'.dependencies.objc2-foundation]
 version = "0.3.2"
 features = ["std", "NSGeometry"]
+
+# The run loop, for letting the plugin draw during a live resize: its frame
+# timer lives in the default mode, which a drag does not run.
+[target.'cfg(target_os = "macos")'.dependencies.objc2-core-foundation]
+version = "0.3.2"
+features = ["CFRunLoop", "CFDate", "block2"]
+
+[target.'cfg(target_os = "macos")'.dependencies.block2]
+version = "0.6"

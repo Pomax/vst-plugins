@@ -2506,11 +2506,13 @@ dependencies = [
 name = "mini-host"
 version = "0.1.0"
 dependencies = [
+ "block2 0.6.2",
  "eframe",
  "egui",
  "libloading",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "raw-window-handle",
  "rfd",
@@ -2843,6 +2845,7 @@ dependencies = [
  "bitflags 2.13.1",
  "block2 0.6.2",
  "dispatch2",
+ "libc",
  "objc2 0.6.4",
 ]
 

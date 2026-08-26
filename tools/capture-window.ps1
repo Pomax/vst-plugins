@@ -785,6 +785,25 @@ try {
                     $hostRect = $rect
                     Write-Host ("dragedge: {0},{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
                 }
+                'dragto' {
+                    # `dragto:W,H,MS` drags the window's bottom right corner
+                    # until the drawable area is exactly W by H, whatever size
+                    # the window started at, so the expectations afterwards
+                    # can name exact numbers without a size being set by
+                    # anything but the mouse.
+                    $parts = $value -split ','
+                    if ($parts.Count -ne 3) { throw "cannot read dragto: $value" }
+                    $client = [Win32Capture]::ClientRect($hwnd)
+                    $dx = [int]$parts[0] - ($client.Right - $client.Left)
+                    $dy = [int]$parts[1] - ($client.Bottom - $client.Top)
+                    $area = [Win32Capture]::OuterRect($hwnd)
+                    [Win32Capture]::DragCorner(
+                        $area.Right - 3, $area.Bottom - 3, $dx, $dy, [int]$parts[2])
+                    Start-Sleep -Milliseconds 500
+                    $rect = [Win32Capture]::VisibleRect($hwnd)
+                    $hostRect = $rect
+                    Write-Host ("dragto: {0}x{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
+                }
                 'geometry' {
                     # `geometry:PATH` writes down what the window under test and
                     # the plugin's window inside it actually measure, so a test
