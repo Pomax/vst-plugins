@@ -15,7 +15,7 @@
 remove:%CACHE%\round-trip-one.md
 type:# Mix notes
 type:{ENTER}levels are close
-plugin:501,50
+press:Save|501,76
 wait:2500
 type:%CACHE%\round-trip-one.md
 type:{ENTER}
@@ -27,9 +27,9 @@ remove:%CACHE%\round-trip-one.md
 # that one as its path afterwards, and the file is checked in code the same
 # way: both sections, in order.
 remove:%CACHE%\round-trip-two.md
-plugin:129,87
+press:+|129,113
 type:# Drum bus
-plugin:567,50
+press:Save As|567,76
 wait:2500
 type:%CACHE%\round-trip-two.md
 type:{ENTER}
@@ -45,7 +45,7 @@ wait:500
 
 # Open the second file back. It replaces what is open, so the mark is gone and
 # the document is exactly what the file holds.
-plugin:443,50
+press:Open|443,76
 wait:2500
 type:%CACHE%\round-trip-two.md
 type:{ENTER}

@@ -206,7 +206,25 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
     let picture = |step: &str| -> PathBuf {
         work.join(format!("dialog-{stage}-{step}.png"))
     };
-    let _ = shot(area, &picture("opened"));
+
+    // Precondition: a file dialog is actually open. Every open and save
+    // panel has a Cancel button; until that is on screen, every keystroke
+    // below would land in the editor instead of a dialog. So it is looked
+    // for, not assumed, and nothing is typed until it is seen.
+    let opened = picture("opened");
+    let deadline = Instant::now() + Duration::from_secs(6);
+    loop {
+        if find_on_screen(area, "Cancel", &opened)?.is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            return Err(format!(
+                "no file dialog is open, so there is nowhere to type a path; see {}",
+                opened.display()
+            ));
+        }
+        sleep(Duration::from_millis(300));
+    }
 
     let both = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
     for (code, down) in [(COMMAND, true), (SHIFT, true)] {
@@ -636,6 +654,13 @@ fn path_of(value: &str) -> PathBuf {
 /// where a layout constant says it ought to be. Returns the centre of the
 /// text, in screen points, or nothing when it is not on screen.
 fn find_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<(i32, i32)>, String> {
+    Ok(find_box_on_screen(area, text, probe)?.map(|found| {
+        (found.x + found.width / 2, found.y + found.height / 2)
+    }))
+}
+
+/// The box the text occupies on screen inside `area`, found by looking.
+fn find_box_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
     shot(area, probe)?;
     let out = Command::new(finder()?)
         .arg(probe)
@@ -664,9 +689,12 @@ fn find_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<(i32, i
     // The picture is of `area`, so its pixel count over the area's width is
     // the display's scale.
     let scale = numbers[4] / area.width as f64;
-    let x = area.x + ((numbers[0] + numbers[2] / 2.0) / scale) as i32;
-    let y = area.y + ((numbers[1] + numbers[3] / 2.0) / scale) as i32;
-    Ok(Some((x, y)))
+    Ok(Some(Rect {
+        x: area.x + (numbers[0] / scale) as i32,
+        y: area.y + (numbers[1] / scale) as i32,
+        width: (numbers[2] / scale) as i32,
+        height: (numbers[3] / scale) as i32,
+    }))
 }
 
 /// Where the text finder is, built if it is not there yet.
@@ -1152,6 +1180,81 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             run.rect = window_rect(run.pid, "")?;
             run.host = run.rect;
             println!("resize: {width}x{height}");
+            Ok(())
+        }
+        "press" => {
+            // `press:LABEL|X,Y` looks first and clicks second. X,Y is where
+            // the code puts the control, in window coordinates; the region
+            // around that spot is photographed, the label is found in the
+            // picture to confirm or correct the position, the picture is
+            // deleted, and the click goes where the label really is. A label
+            // that is not in its region is a failure, not a blind click.
+            let (label, at) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read press: {value}"))?;
+            let label = label.trim();
+            if label.is_empty() {
+                return Err("press: needs a label".to_string());
+            }
+            let (x, y) = pair(at, "press")?;
+            let window = window_rect(run.pid, &run.title)?;
+            let region = Rect {
+                x: window.x + (x - 110).max(0),
+                y: window.y + (y - 30).max(0),
+                width: 220.min(window.width),
+                height: 60.min(window.height),
+            };
+            let probe = run
+                .state
+                .parent()
+                .map(|work| work.join("press.png"))
+                .ok_or("nowhere to put the look")?;
+            let found = find_on_screen(region, label, &probe);
+            let _ = std::fs::remove_file(&probe);
+            let Some((found_x, found_y)) = found? else {
+                return Err(format!(
+                    "no control labelled {label:?} is near {x},{y}"
+                ));
+            };
+            click(found_x, found_y)?;
+            sleep(Duration::from_millis(500));
+            println!(
+                "press:  {label} at {},{}",
+                found_x - window.x,
+                found_y - window.y
+            );
+            Ok(())
+        }
+        "dragtext" => {
+            // `dragtext:TEXT|X,Y` selects by dragging from where TEXT starts
+            // to X,Y in window coordinates. Where TEXT is comes from looking:
+            // the window is photographed, TEXT is found in the picture, the
+            // picture is deleted, and the press lands on TEXT's first
+            // character. What width a font gives the characters before it
+            // stops mattering.
+            let (text, to) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read dragtext: {value}"))?;
+            let (to_x, to_y) = pair(to, "dragtext")?;
+            let window = window_rect(run.pid, &run.title)?;
+            let probe = run
+                .state
+                .parent()
+                .map(|work| work.join("press.png"))
+                .ok_or("nowhere to put the look")?;
+            let found = find_box_on_screen(window, text.trim(), &probe);
+            let _ = std::fs::remove_file(&probe);
+            let Some(from) = found? else {
+                return Err(format!("{text:?} is not on screen to select from"));
+            };
+            take_hold(from.x + 1, from.y + from.height / 2)?;
+            let_go(window.x + to_x, window.y + to_y)?;
+            sleep(Duration::from_millis(500));
+            println!(
+                "dragtext: from {},{}",
+                from.x + 1 - window.x,
+                from.y + from.height / 2 - window.y
+            );
             Ok(())
         }
         "dragedge" => {

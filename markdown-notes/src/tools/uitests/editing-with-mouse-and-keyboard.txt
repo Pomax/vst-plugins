@@ -18,11 +18,13 @@ cursor:450,76|arrow
 # Dragging through the text selects what it crosses, which typing then
 # replaces. The press has to land inside the text: a line is only as wide as
 # what is written on it, and a press beside it belongs to no line at all.
-# The drag runs from two characters in to past the end of the line, so what it
-# selects is everything from there on: "text goes here" becomes "teX". The end
-# of the drag sits far right of the text so it is past the line's end whatever
-# width a platform's font gives it.
-drag:24,155,300,155
+# The drag runs from where "goes here" starts, found by looking rather than
+# by a pixel count, to past the end of the line, so what it selects is
+# everything from there on: "text goes here" becomes "text X". The end of the
+# drag sits far right of the text so it is past the line's end whatever width
+# a platform's font gives it. A word rather than part of one: text
+# recognition places words, and a mark inside one snaps to its start.
+dragtext:goes here|300,155
 type:X
 shot:%CACHE%\editing-dragged-to-select.png
 
@@ -46,4 +48,4 @@ wait:500
 shot:%CACHE%\editing-pasted.png
 
 expect:sections is 1
-expect:section 0 is kept:teX!\n\nsecond line
+expect:section 0 is kept:text X!\n\nsecond line

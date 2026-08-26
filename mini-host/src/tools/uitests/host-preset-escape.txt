@@ -9,7 +9,7 @@ type:one
 
 # Save a preset for real, so the Load button has something to offer. The name
 # field opens with the last name saved or loaded in it, so it is cleared first.
-click:44,41
+press:Save preset|44,41
 wait:2000
 window:Save preset
 type:{END}{BS 40}escape-test
@@ -24,7 +24,7 @@ type: two
 wait:500
 
 # Load preset, then Escape. The list is not touched.
-click:128,41
+press:Load preset|128,41
 wait:2000
 window:Load preset
 type:{ESC}
@@ -32,7 +32,7 @@ wait:1500
 window:
 
 # Save preset with a name typed in, then Escape. No file by that name.
-click:44,41
+press:Save preset|44,41
 wait:2000
 window:Save preset
 type:{END}{BS 40}not-written

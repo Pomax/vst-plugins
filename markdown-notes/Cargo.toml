@@ -15,7 +15,7 @@ authors = ["markdown-notes"]
 
 [workspace.dependencies]
 markdown-notes-core = { path = "src/crates/markdown-notes-core" }
-mini-host = { path = "../mini-host/src/crates/mini-host" }
+vst3-loader = { path = "../vst3-loader/src/crates/vst3-loader" }
 vst3 = "0.3.0"
 
 [profile.release]

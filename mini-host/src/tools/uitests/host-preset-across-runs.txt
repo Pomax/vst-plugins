@@ -11,12 +11,12 @@
 remove:%PRESETS%\across-runs.preset
 type:# first
 type:{ENTER}the first paragraph
-plugin:129,87
+press:+|129,113
 type:# second
 type:{ENTER}the second paragraph
 
 remove:%CACHE%\across-runs.md
-plugin:567,50
+press:Save As|567,76
 wait:2500
 type:%CACHE%\across-runs.md
 type:{ENTER}
@@ -24,7 +24,7 @@ wait:2000
 
 # The name field opens with the last name saved or loaded in it, so it is
 # cleared before this one is typed.
-click:44,41
+press:Save preset|44,41
 wait:2000
 window:Save preset
 shot:%CACHE%\host-presets-save.png
@@ -37,7 +37,7 @@ window:
 restart:
 wait:1000
 
-click:128,41
+press:Load preset|128,41
 wait:2000
 window:Load preset
 shot:%CACHE%\host-presets-list.png

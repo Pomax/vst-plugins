@@ -17,13 +17,14 @@ mod chrome;
 mod icon;
 #[path = "app/place.rs"]
 mod place;
+mod presets;
 
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mini_host::{presets, Module, Plugin};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use vst3_loader::{Module, Plugin};
 
 /// What the command line asked for.
 struct Args {
@@ -424,6 +425,14 @@ fn main() -> ExitCode {
         // Where the window was left is the application's to remember, and
         // eframe already does it.
         persist_window: true,
+        // Under test, which is what --geometry marks, the memory is a scratch
+        // file beside the test's own files instead of the application's: a
+        // remembered size would start every test at whatever size the last
+        // run left the window, and a test's clicks are written against the
+        // size the plugin asked for. eframe restores a stored window whether
+        // or not it may store one, so the store itself has to be the fresh
+        // thing.
+        persistence_path: args.geometry.as_ref().map(|p| p.with_extension("memory")),
         ..Default::default()
     };
 

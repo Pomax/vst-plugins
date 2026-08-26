@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 authors = ["vst"]
 
 [workspace.dependencies]
-mini-host = { path = "../mini-host/src/crates/mini-host" }
+vst3 = "0.3.0"
 
 [profile.release]
 opt-level = 2

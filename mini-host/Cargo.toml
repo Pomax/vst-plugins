@@ -8,9 +8,6 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["vst"]
 
-[workspace.dependencies]
-vst3 = "0.3.0"
-
 [profile.release]
 # Optimised for size rather than speed. This is a wrapper that opens a window
 # and puts a plugin in it; what has to be fast is the plugin, and that is built

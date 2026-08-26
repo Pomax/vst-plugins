@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mini_host::presets;
+use crate::presets;
 
 /// How much room the strip takes off the top of the window: one row of
 /// buttons and nothing more.

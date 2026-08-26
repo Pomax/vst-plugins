@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mini_host::{resolve_binary, Module};
+use vst3_loader::{resolve_binary, Module};
 
 struct Args {
     path: PathBuf,

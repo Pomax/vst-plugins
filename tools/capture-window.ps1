@@ -38,6 +38,9 @@ param(
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
     #   moveto:X,Y    move the pointer there, at the speed a hand moves
+    #   press:LABEL|X,Y  photograph the region around X,Y, find the labelled
+    #                 control in the picture to confirm or correct the spot,
+    #                 delete the picture, and click where the label really is
     #   letgo:X,Y     move there and release the button
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
@@ -452,6 +455,54 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     $bmp.Dispose()
 }
 
+# Where a labelled control is inside a picture, found by reading it.
+#
+# The system's own text recognition does the reading, and an exact match beats
+# a containing one: asked for "Save" in a window that also shows "Save preset"
+# and "Save As...", the Save button is the answer. Returns the centre as a
+# hashtable with X and Y in picture pixels, or $null when the label is nowhere
+# in the picture.
+function Find-Label([string]$path, [string]$label) {
+    $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+    $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType = WindowsRuntime]
+    $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $await = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+        Where-Object { $_.Name -eq 'GetAwaiter' -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation``1' } |
+        Select-Object -First 1
+
+    $file = $await.MakeGenericMethod([Windows.Storage.StorageFile]).Invoke(
+        $null, @([Windows.Storage.StorageFile]::GetFileFromPathAsync($path))).GetResult()
+    $stream = $await.MakeGenericMethod([Windows.Storage.Streams.IRandomAccessStreamWithContentType]).Invoke(
+        $null, @($file.OpenReadAsync())).GetResult()
+    $decoder = $await.MakeGenericMethod([Windows.Graphics.Imaging.BitmapDecoder]).Invoke(
+        $null, @([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream))).GetResult()
+    $bitmap = $await.MakeGenericMethod([Windows.Graphics.Imaging.SoftwareBitmap]).Invoke(
+        $null, @($decoder.GetSoftwareBitmapAsync())).GetResult()
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+    if (-not $engine) { throw 'Windows has no OCR language installed' }
+    $result = $await.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke(
+        $null, @($engine.RecognizeAsync($bitmap))).GetResult()
+
+    $needle = $label.ToLowerInvariant()
+    $containing = $null
+    foreach ($line in $result.Lines) {
+        $text = (($line.Words | ForEach-Object { $_.Text }) -join ' ')
+        $lowered = $text.ToLowerInvariant()
+        $left = ($line.Words | ForEach-Object { $_.BoundingRect.X } | Measure-Object -Minimum).Minimum
+        $top = ($line.Words | ForEach-Object { $_.BoundingRect.Y } | Measure-Object -Minimum).Minimum
+        $right = ($line.Words | ForEach-Object { $_.BoundingRect.X + $_.BoundingRect.Width } | Measure-Object -Maximum).Maximum
+        $bottom = ($line.Words | ForEach-Object { $_.BoundingRect.Y + $_.BoundingRect.Height } | Measure-Object -Maximum).Maximum
+        $centre = @{
+            X = [int](($left + $right) / 2); Y = [int](($top + $bottom) / 2)
+            Left = [int]$left; Top = [int]$top; Right = [int]$right; Bottom = [int]$bottom
+        }
+        if ($lowered.Trim() -eq $needle) { return $centre }
+        if (-not $containing -and $lowered.Contains($needle)) { $containing = $centre }
+    }
+    return $containing
+}
+
 # Where ffmpeg is. Recording a window is its job, and screenshots cannot do it:
 # a flicker lasting a frame or two is gone between two grabs half a second
 # apart. gdigrab takes every frame the window draws.
@@ -556,11 +607,69 @@ try {
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
                     Start-Sleep -Milliseconds 500
                 }
+                'press' {
+                    # `press:LABEL|X,Y` looks first and clicks second. X,Y is
+                    # where the code puts the control, in window coordinates;
+                    # the region around that spot is photographed, the label
+                    # is found in the picture to confirm or correct the
+                    # position, the picture is deleted, and the click goes
+                    # where the label really is. A label that is not in its
+                    # region is a failure, not a blind click.
+                    $label, $at = $value -split '\|', 2
+                    $label = $label.Trim()
+                    if (-not $label -or -not $at) { throw "cannot read press: $value" }
+                    $parts = $at -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read press: $value" }
+                    $x = [int]$parts[0]
+                    $y = [int]$parts[1]
+                    $region = New-Object Win32Capture+RECT
+                    $region.Left = $rect.Left + [Math]::Max(0, $x - 110)
+                    $region.Top = $rect.Top + [Math]::Max(0, $y - 30)
+                    $region.Right = $region.Left + 220
+                    $region.Bottom = $region.Top + 60
+                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
+                    Save-Shot $region $probe
+                    try {
+                        $found = Find-Label $probe $label
+                    } finally {
+                        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    }
+                    if (-not $found) { throw "no control labelled `"$label`" is near $x,$y" }
+                    [Win32Capture]::Click(
+                        $region.Left + [int]$found.X, $region.Top + [int]$found.Y)
+                    Start-Sleep -Milliseconds 500
+                    Write-Host ("press:  {0}" -f $label)
+                }
                 'type' {
                     [System.Windows.Forms.SendKeys]::SendWait($value)
                     Start-Sleep -Milliseconds 700
                 }
                 'wait' { Start-Sleep -Milliseconds ([int]$value) }
+                'dragtext' {
+                    # `dragtext:TEXT|X,Y` selects by dragging from where TEXT
+                    # starts to X,Y in window coordinates. Where TEXT is comes
+                    # from looking: the window is photographed, TEXT is found
+                    # in the picture, the picture is deleted, and the press
+                    # lands on TEXT's first character.
+                    $text, $to = $value -split '\|', 2
+                    if (-not $text -or -not $to) { throw "cannot read dragtext: $value" }
+                    $parts = $to -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
+                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
+                    Save-Shot $rect $probe
+                    try {
+                        $found = Find-Label $probe $text.Trim()
+                    } finally {
+                        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    }
+                    if (-not $found) { throw "`"$text`" is not on screen to select from" }
+                    [Win32Capture]::Drag(
+                        $rect.Left + [int]$found.Left + 1,
+                        $rect.Top + [int](($found.Top + $found.Bottom) / 2),
+                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    Start-Sleep -Milliseconds 500
+                    Write-Host ("dragtext: {0}" -f $text.Trim())
+                }
                 'drag' {
                     # `drag:X1,Y1,X2,Y2` presses at the first point, releases at
                     # the second, moving across in between.

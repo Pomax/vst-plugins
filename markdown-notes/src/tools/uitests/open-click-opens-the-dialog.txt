@@ -5,7 +5,7 @@
 # picture is the editor. The app is then force quit: the dialog is native and
 # modal, so the window cannot be asked to close under it, and a killed program
 # writes no state, which is why nothing here asserts on the document.
-plugin:443,50
+press:Open|443,76
 wait:2500
 shot:%CACHE%\open-click-dialog.png
 kill:

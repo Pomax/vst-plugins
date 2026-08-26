@@ -10,7 +10,7 @@ mod scenarios;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mini_host::Module;
+use vst3_loader::Module;
 
 /// Filename cargo gives this plugin's binary on this platform.
 ///

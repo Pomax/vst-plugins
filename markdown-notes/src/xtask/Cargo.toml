@@ -12,7 +12,7 @@ publish = false
 markdown-notes-core.workspace = true
 # Used to read the freshly built plugin's own factory metadata when generating
 # moduleinfo.json, so the file can never drift from the binary it describes.
-mini-host.workspace = true
+vst3-loader.workspace = true
 
 # Synthesising clicks and keystrokes, and finding the window to send them to.
 # Windows has `tools/capture-window.ps1` for this; macOS has no equivalent

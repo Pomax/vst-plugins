@@ -6,17 +6,14 @@ license.workspace = true
 authors.workspace = true
 description = "A minimal VST3 host: loads any VST3 plugin and gives its editor a window"
 
-[lib]
-name = "mini_host"
-path = "src/lib.rs"
-
 [[bin]]
 name = "mini-host"
 path = "src/main.rs"
 
 [dependencies]
-vst3.workspace = true
-libloading = "0.8"
+# The loading itself: this is a window around a loaded plugin, and the
+# loading belongs to the loader.
+vst3-loader = { path = "../../../../vst3-loader/src/crates/vst3-loader" }
 raw-window-handle = "0.6"
 # This is an application, so it uses the application shell: eframe owns the
 # window, its title bar and its dialogs, and remembers where the window was

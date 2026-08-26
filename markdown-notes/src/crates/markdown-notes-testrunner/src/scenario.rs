@@ -8,33 +8,33 @@
 //! rather than of internal calls.
 
 use markdown_notes_core::{Editor, Key, Mods, PluginState};
-use mini_host::{HostError, Module, Plugin};
+use vst3_loader::{HostError, Module, Plugin};
 
 /// The editor's idea of a key press, as the host's.
 ///
 /// Two types for the same thing, deliberately: the host drives any plugin and
 /// has no business importing this one's editor model.
-fn host_key(key: Key) -> mini_host::Key {
+fn host_key(key: Key) -> vst3_loader::Key {
     match key {
-        Key::Char(c) => mini_host::Key::Char(c),
-        Key::Enter => mini_host::Key::Enter,
-        Key::Backspace => mini_host::Key::Backspace,
-        Key::Delete => mini_host::Key::Delete,
-        Key::Tab => mini_host::Key::Tab,
-        Key::Left => mini_host::Key::Left,
-        Key::Right => mini_host::Key::Right,
-        Key::Up => mini_host::Key::Up,
-        Key::Down => mini_host::Key::Down,
-        Key::Home => mini_host::Key::Home,
-        Key::End => mini_host::Key::End,
-        Key::PageUp => mini_host::Key::PageUp,
-        Key::PageDown => mini_host::Key::PageDown,
-        Key::Escape => mini_host::Key::Escape,
+        Key::Char(c) => vst3_loader::Key::Char(c),
+        Key::Enter => vst3_loader::Key::Enter,
+        Key::Backspace => vst3_loader::Key::Backspace,
+        Key::Delete => vst3_loader::Key::Delete,
+        Key::Tab => vst3_loader::Key::Tab,
+        Key::Left => vst3_loader::Key::Left,
+        Key::Right => vst3_loader::Key::Right,
+        Key::Up => vst3_loader::Key::Up,
+        Key::Down => vst3_loader::Key::Down,
+        Key::Home => vst3_loader::Key::Home,
+        Key::End => vst3_loader::Key::End,
+        Key::PageUp => vst3_loader::Key::PageUp,
+        Key::PageDown => vst3_loader::Key::PageDown,
+        Key::Escape => vst3_loader::Key::Escape,
     }
 }
 
-fn host_mods(mods: Mods) -> mini_host::Mods {
-    mini_host::Mods { ctrl: mods.ctrl, shift: mods.shift, alt: mods.alt }
+fn host_mods(mods: Mods) -> vst3_loader::Mods {
+    vst3_loader::Mods { ctrl: mods.ctrl, shift: mods.shift, alt: mods.alt }
 }
 
 #[derive(Clone, Debug)]

@@ -12,7 +12,7 @@ type:the document that came back
 
 # One real preset, saved the way any preset is saved. The name field opens with
 # the last name saved or loaded in it, so it is cleared first.
-click:44,41
+press:Save preset|44,41
 wait:2000
 window:Save preset
 type:{END}{BS 40}zz-bulk
@@ -31,7 +31,7 @@ wait:500
 
 # Open the list and take the last row. Getting there means the scrollbar
 # worked: the heads are live and each click moves one row.
-click:128,41
+press:Load preset|128,41
 wait:2000
 window:Load preset
 shot:%CACHE%\host-preset-scrolling-list.png

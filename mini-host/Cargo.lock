@@ -1623,14 +1623,13 @@ dependencies = [
  "block2 0.6.2",
  "eframe",
  "egui",
- "libloading",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "raw-window-handle",
  "rfd",
- "vst3",
+ "vst3-loader",
  "windows",
 ]
 
@@ -3072,6 +3071,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e31e3fe7a6f028ded8c5a9984cf283319e6dc63572c9b71da1d4ee9d71d3b6bf"
 dependencies = [
  "com-scrape-types",
+]
+
+[[package]]
+name = "vst3-loader"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "raw-window-handle",
+ "vst3",
 ]
 
 [[package]]

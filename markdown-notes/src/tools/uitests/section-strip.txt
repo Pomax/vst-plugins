@@ -22,11 +22,11 @@
 # follows the last section, so it moves right as sections are added.
 type:# Mix notes
 type:{ENTER}levels are close
-plugin:204,50
+press:project title|204,76
 type:{END}{BS 40}Ghostlight
-plugin:129,87
+press:+|129,113
 type:# Drum bus
-plugin:239,87
+press:+|239,113
 type:# Vocal chain
 
 # With three sections the centres are 60, 170 and 280, and the last one ends at

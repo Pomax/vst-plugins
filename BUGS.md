@@ -1,0 +1,3 @@
+- MacOS mini host can't open VST3 using the file browse dialog, greyes out the VST3 bundle.
+- a test saves two files ("...-one.md" and "...-two.md") and then does nothign with the first file, so that's a completely meaningless action.
+- that same test then does not check BOTH tabs to confirm they contain the content they should.

@@ -273,7 +273,7 @@ fn runnable_here(triple: &str) -> bool {
 /// `#[no_mangle]` — compiles and links cleanly and then fails in the host. The
 /// only way to know is to load it.
 fn verify_bundle(bundle: &Path) -> Result<(), String> {
-    let module = mini_host::Module::load(bundle)
+    let module = vst3_loader::Module::load(bundle)
         .map_err(|e| format!("{} does not load: {e}", bundle.display()))?;
 
     let count = module.class_count();
@@ -487,7 +487,7 @@ fn directory_size(dir: &Path) -> u64 {
 /// built, rather than written from constants here, so the description cannot
 /// disagree with the thing it describes.
 fn write_module_info(bundle_root: &Path, contents: &Path) -> Result<PathBuf, String> {
-    let module = mini_host::Module::load(bundle_root).map_err(|e| e.to_string())?;
+    let module = vst3_loader::Module::load(bundle_root).map_err(|e| e.to_string())?;
     let factory = module.factory_info();
 
     let mut classes = Vec::new();

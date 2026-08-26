@@ -1,19 +1,21 @@
-//! # mini-host
+//! # vst3-loader
 //!
-//! A minimal VST3 host: enough of one to load a plugin binary, instantiate it,
-//! open its editor, deliver keystrokes and read its state back.
+//! Loads a VST3 plugin the way a DAW does: enough to load the binary,
+//! instantiate a class, open its editor, deliver keystrokes and read its
+//! state back.
 //!
 //! It talks to the plugin exactly the way a DAW does — `GetPluginFactory`,
 //! `IPluginFactory::createInstance`, `IEditController::createView`,
-//! `IPlugView::onKeyDown`, `IComponent::get/setState` — so a test driven
-//! through this host exercises the real plugin boundary, not a shortcut around
-//! it. Nothing in the plugin knows it is being tested.
+//! `IPlugView::onKeyDown`, `IComponent::get/setState` — so anything driven
+//! through this exercises the real plugin boundary, not a shortcut around
+//! it. Nothing in the plugin knows what loaded it.
 //!
 //! It is not specific to any plugin: it loads whatever VST3 binary it is
-//! pointed at.
+//! pointed at. The mini host puts a window around this; the loader tool
+//! prints what it finds; the plugin's test runner drives scenarios through
+//! it.
 
 pub mod keys;
-pub mod presets;
 pub mod stream;
 
 use std::ffi::c_void;
@@ -985,7 +987,7 @@ mod tests {
     impl TempDir {
         fn new(name: &str) -> TempDir {
             let dir = std::env::temp_dir().join(format!(
-                "mini-host-{name}-{}-{:?}",
+                "vst3-loader-{name}-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -1053,7 +1055,7 @@ mod tests {
 
     #[test]
     fn a_path_that_does_not_exist_is_an_error() {
-        let missing = std::env::temp_dir().join("mini-host-does-not-exist.vst3");
+        let missing = std::env::temp_dir().join("vst3-loader-does-not-exist.vst3");
         assert!(matches!(
             resolve_binary(&missing),
             Err(HostError::NoBinary(_))
