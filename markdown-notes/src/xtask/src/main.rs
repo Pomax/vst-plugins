@@ -660,6 +660,8 @@ fn test(args: &[String]) -> Result<(), String> {
                 "--test",
                 "caret_rendering",
                 "--test",
+                "clicking_the_document",
+                "--test",
                 "block_spacing",
                 "--test",
                 "section_dragging",

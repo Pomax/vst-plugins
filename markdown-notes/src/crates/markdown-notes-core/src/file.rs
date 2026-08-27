@@ -22,7 +22,6 @@ impl Editor {
         // Normalise CRLF so caret arithmetic stays byte-exact.
         let contents = contents.replace("\r\n", "\n");
         self.set_document_text(&contents);
-        self.set_caret(0);
         self.file = Some(path.to_path_buf());
         self.dirty = false;
         self.clear_history();
@@ -102,7 +101,9 @@ mod tests {
         assert_eq!(e.text(), "# Hello\n\n- a\n");
         assert_eq!(e.file.as_deref(), Some(path.as_path()));
         assert!(!e.is_dirty());
-        assert_eq!(e.caret(), 0);
+        // At the end of the section, ready to carry on writing.
+        assert!(e.has_caret());
+        assert_eq!(e.caret(), e.text().len());
     }
 
     #[test]

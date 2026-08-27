@@ -1189,7 +1189,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
 
     let doc = editor.render();
     let src = editor.text().to_string();
-    let caret = editor.caret();
+    // None when the caret has been clicked away: there is nothing to draw and
+    // no line to reveal the markers on.
+    let caret = editor.has_caret().then(|| editor.caret());
     let selection = editor.selection();
     let raw = editor.mode == ViewMode::Raw;
     let palette = Palette::from(editor.colours.for_mode(ui.visuals().dark_mode));
@@ -1221,7 +1223,8 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         .blocks
         .iter()
         .filter(|block| {
-            let editing_fence = caret >= block.range.start && caret <= block.range.end;
+            let editing_fence = caret
+                .is_some_and(|at| at >= block.range.start && at <= block.range.end);
             raw || !matches!(block.kind, BlockKind::Fence { .. }) || editing_fence
         })
         .collect();
@@ -1293,21 +1296,37 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         // pointer is level with, and above the first or below the last it is
         // that line: dragging off the end of the text selects to the end,
         // the way dragging off the end of any text area does.
-        let offset_at = |pos: egui::Pos2| -> Option<usize> {
-            let line = drawn
+        // The line the pointer is level with, and nothing when it is level
+        // with none of them: the space below the last line is document, but it
+        // is not a line, and there is nowhere on it to put a caret.
+        let line_at = |pos: egui::Pos2| -> Option<&DrawnLine> {
+            drawn
                 .iter()
                 .find(|line| pos.y >= line.rect.top() && pos.y <= line.rect.bottom())
-                .or_else(|| {
-                    let first = drawn.first()?;
-                    if pos.y < first.rect.top() {
-                        Some(first)
-                    } else {
-                        drawn.last()
-                    }
-                })?;
+        };
+
+        // Which offset a point on a line is at. Past the end of a line is that
+        // line's end and in front of its start is its start, because a line is
+        // only as wide as what is written on it and the space beside it belongs
+        // to it.
+        let offset_on = |line: &DrawnLine, pos: egui::Pos2| -> Option<usize> {
             let cursor = line.galley.cursor_from_pos(pos - line.origin);
             let index = cursor.index.0.min(line.map.len().saturating_sub(1));
             line.map.get(index).copied()
+        };
+
+        // Dragging off the end of the text selects to the end, the way it does
+        // in any text area, so a drag takes the nearest line where a click
+        // takes none.
+        let nearest = |pos: egui::Pos2| -> Option<&DrawnLine> {
+            line_at(pos).or_else(|| {
+                let first = drawn.first()?;
+                if pos.y < first.rect.top() {
+                    Some(first)
+                } else {
+                    drawn.last()
+                }
+            })
         };
 
         if surface.drag_started() || surface.clicked() {
@@ -1317,15 +1336,24 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             let pos = ui
                 .input(|i| i.pointer.press_origin())
                 .or_else(|| surface.interact_pointer_pos());
-            if let Some(at) = pos.and_then(offset_at) {
-                gui.selecting_from = Some(at);
-                editor.set_caret(at);
+            match pos.and_then(|pos| Some((pos, line_at(pos)?))) {
+                Some((pos, line)) => {
+                    if let Some(at) = offset_on(line, pos) {
+                        gui.selecting_from = Some(at);
+                        editor.set_caret(at);
+                    }
+                }
+                None => {
+                    gui.selecting_from = None;
+                    editor.clear_caret();
+                }
             }
         } else if surface.dragged() {
-            if let (Some(from), Some(at)) = (
-                gui.selecting_from,
-                surface.interact_pointer_pos().and_then(offset_at),
-            ) {
+            let at = surface
+                .interact_pointer_pos()
+                .and_then(|pos| Some((pos, nearest(pos)?)))
+                .and_then(|(pos, line)| offset_on(line, pos));
+            if let (Some(from), Some(at)) = (gui.selecting_from, at) {
                 editor.select(from.min(at)..from.max(at));
             }
         }
@@ -1413,7 +1441,7 @@ fn line_body(
     ui: &mut egui::Ui,
     block: &Block,
     src: &str,
-    caret: usize,
+    caret: Option<usize>,
     selection: &std::ops::Range<usize>,
     raw: bool,
     palette: &Palette,
@@ -1570,8 +1598,8 @@ fn line_body(
     ui.painter()
         .galley(origin, Arc::clone(&galley), palette.body);
 
-    if caret >= block.range.start && caret <= block.range.end {
-        let spot = spot_of(caret);
+    if let Some(at) = caret.filter(|at| *at >= block.range.start && *at <= block.range.end) {
+        let spot = spot_of(at);
         let top = origin + spot.min.to_vec2();
         ui.painter().line_segment(
             [top, top + egui::vec2(0.0, spot.height())],

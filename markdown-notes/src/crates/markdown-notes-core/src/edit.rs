@@ -200,6 +200,9 @@ pub const DEFAULT_HEIGHT: i32 = 620;
 /// in the binary and a reparse of the document on every keystroke.
 pub struct Editor {
     sections: Vec<kode_core::Editor>,
+    /// Whether each section has a caret. One that was clicked away has none,
+    /// and nothing can be typed into it until one is placed again.
+    placed: Vec<bool>,
     active: usize,
     pub mode: ViewMode,
     pub theme: Theme,
@@ -223,6 +226,7 @@ impl Editor {
     pub fn new() -> Editor {
         Editor {
             sections: vec![kode_core::Editor::empty()],
+            placed: vec![true],
             active: 0,
             mode: ViewMode::Wysiwyg,
             theme: Theme::Auto,
@@ -292,6 +296,7 @@ impl Editor {
     /// Add an empty section after the last one and switch to it.
     pub fn new_section(&mut self) -> usize {
         self.sections.push(kode_core::Editor::empty());
+        self.placed.push(true);
         self.active = self.sections.len() - 1;
         self.dirty = true;
         self.active
@@ -306,9 +311,11 @@ impl Editor {
         self.dirty = true;
         if self.sections.len() == 1 {
             self.sections[0] = kode_core::Editor::empty();
+            self.placed[0] = true;
             return;
         }
         self.sections.remove(index);
+        self.placed.remove(index);
         self.active = if self.active > index {
             self.active - 1
         } else {
@@ -325,6 +332,8 @@ impl Editor {
         let to = to.min(last);
         let buffer = self.sections.remove(from);
         self.sections.insert(to, buffer);
+        let placed = self.placed.remove(from);
+        self.placed.insert(to, placed);
 
         // The active section keeps its contents, not its position.
         let active = if self.active == from {
@@ -369,6 +378,7 @@ impl Editor {
         if self.sections.is_empty() {
             self.sections.push(kode_core::Editor::empty());
         }
+        self.placed = vec![true; self.sections.len()];
         self.active = 0;
     }
 
@@ -432,18 +442,44 @@ impl Editor {
         self.set_caret(caret);
     }
 
+    /// Whether the section in front has somewhere to type.
+    ///
+    /// A click that lands where there is no line to put it on takes the caret
+    /// away, and until one is placed again there is nowhere for text to go.
+    pub fn has_caret(&self) -> bool {
+        self.placed.get(self.active).copied().unwrap_or(false)
+    }
+
+    /// Take the caret away, and the selection with it.
+    pub fn clear_caret(&mut self) {
+        let at = self.live().cursor();
+        self.live_mut().set_cursor(at);
+        if let Some(placed) = self.placed.get_mut(self.active) {
+            *placed = false;
+        }
+    }
+
+    fn place_caret(&mut self) {
+        if let Some(placed) = self.placed.get_mut(self.active) {
+            *placed = true;
+        }
+    }
+
     pub fn set_caret(&mut self, pos: usize) {
         let pos = self.pos_of(pos);
         self.live_mut().set_cursor(pos);
+        self.place_caret();
     }
 
     pub fn select(&mut self, range: Range<usize>) {
         let (start, end) = (self.pos_of(range.start), self.pos_of(range.end));
         self.live_mut().set_selection(start, end);
+        self.place_caret();
     }
 
     pub fn select_all(&mut self) {
         self.live_mut().select_all();
+        self.place_caret();
     }
 
     /// Set the window size, clamped to something a window can actually be.
@@ -544,8 +580,12 @@ impl Editor {
         true
     }
 
-    /// Insert text at the caret, replacing any selection.
+    /// Insert text at the caret, replacing any selection. With no caret there
+    /// is nowhere to put it, so a paste lands nowhere either.
     pub fn insert_str(&mut self, s: &str) {
+        if !self.has_caret() {
+            return;
+        }
         self.live_mut().insert(s);
         self.dirty = true;
     }
@@ -560,6 +600,10 @@ impl Editor {
             if let Some(r) = self.handle_ctrl(key, mods) {
                 return r;
             }
+        }
+        // No caret is nowhere to put a character, and nothing to move.
+        if !self.has_caret() {
+            return KeyResult { handled: false, changed: false, command: None };
         }
         let before = self.live().version();
         match key {
@@ -664,6 +708,12 @@ impl Editor {
             Key::Char(c) => c.to_ascii_lowercase(),
             _ => return None,
         };
+        // Opening, saving, the view mode and the theme are the window's, and
+        // work whether or not there is a caret. The rest are the document's.
+        let window = matches!(c, 'o' | 's' | '/' | 't');
+        if !window && !self.has_caret() {
+            return Some(KeyResult { handled: false, changed: false, command: None });
+        }
         let before = self.live().version();
         let r = match c {
             'b' => {
@@ -1229,5 +1279,91 @@ mod section_tests {
         assert_eq!(e.section_title(1), "Two");
         assert_eq!(e.section_title(2), "Three");
         assert_eq!(e.active_section(), 0);
+    }
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::*;
+
+    /// Somewhere to type is what a document opens with, in every section, so
+    /// whichever one is picked up carries on where it was left.
+    #[test]
+    fn every_section_opens_with_its_caret_at_the_end() {
+        let mut e = Editor::new();
+        e.set_document_text("# One\n\nfirst\n\n# Two\n\nsecond");
+        for section in 0..e.section_count() {
+            e.set_active_section(section);
+            assert!(e.has_caret(), "section {section} opened without a caret");
+            assert_eq!(
+                e.caret(),
+                e.text().len(),
+                "section {section} opened with its caret somewhere other than the end"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_editor_has_a_caret() {
+        assert!(Editor::new().has_caret());
+    }
+
+    /// Clicking where there is no line to put it on takes the caret away.
+    #[test]
+    fn the_caret_can_be_taken_away() {
+        let mut e = Editor::with_text("a line");
+        e.clear_caret();
+        assert!(!e.has_caret());
+    }
+
+    /// With no caret there is nowhere for a character to go, so nothing
+    /// happens: not the character, and not a caret appearing to hold it.
+    #[test]
+    fn a_key_does_nothing_while_there_is_no_caret() {
+        let mut e = Editor::with_text("a line");
+        e.clear_caret();
+        for key in [Key::Char('x'), Key::Enter, Key::Backspace, Key::Right] {
+            let result = e.handle_key(key, Mods::NONE);
+            assert!(!result.changed, "{key:?} edited the document with no caret");
+        }
+        assert_eq!(e.text(), "a line");
+        assert!(!e.has_caret(), "a key put the caret back");
+        assert!(!e.is_dirty());
+    }
+
+    /// Clicking on a line puts it back, which is what `set_caret` is.
+    #[test]
+    fn placing_the_caret_brings_it_back() {
+        let mut e = Editor::with_text("a line");
+        e.clear_caret();
+        e.set_caret(2);
+        assert!(e.has_caret());
+        assert_eq!(e.caret(), 2);
+        e.handle_key(Key::Char('!'), Mods::NONE);
+        assert_eq!(e.text(), "a !line");
+    }
+
+    /// The caret belongs to the section it was taken away in.
+    #[test]
+    fn taking_the_caret_away_leaves_the_other_sections_alone() {
+        let mut e = Editor::new();
+        e.set_document_text("# One\n\nfirst\n\n# Two\n\nsecond");
+        e.clear_caret();
+        assert!(!e.has_caret());
+        e.set_active_section(1);
+        assert!(e.has_caret(), "the section switched to came up without a caret");
+        e.set_active_section(0);
+        assert!(!e.has_caret(), "the caret came back on its own");
+    }
+
+    /// A selection is a caret with something held: taking the caret away takes
+    /// the selection with it.
+    #[test]
+    fn taking_the_caret_away_drops_the_selection() {
+        let mut e = Editor::with_text("a line");
+        e.select(0..3);
+        e.clear_caret();
+        assert!(!e.has_selection());
+        assert!(e.selected_text().is_empty());
     }
 }

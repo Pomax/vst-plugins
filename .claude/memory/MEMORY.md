@@ -16,6 +16,7 @@
 - [Never run a test you do not save](never-run-a-test-you-do-not-save.md) — no one-offs; every check is a named test in the suite, runnable alone
 - [LF line endings everywhere](lf-line-endings-everywhere.md) — every file uses LF, including .bat; never CRLF
 - [Plain language](plain-language.md) — say the thing; no preamble, framing, or throat-clearing
+- [Work notes go in the scratchpad](work-notes-go-in-the-scratchpad.md) — write the account of what changed to a file; the reply is the outcome only
 - [Answer with all of it](answer-with-all-of-it.md) — count the whole set before answering; a partial answer reads as a complete one
 - [Never use em dashes](never-use-em-dashes.md) — not in chat, comments, docs or test files; use a full stop, colon or brackets
 - [Snapshot before editing](snapshot-before-editing.md) — copy every file to the scratchpad before changing it, so any edit can be undone
