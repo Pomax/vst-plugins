@@ -1202,13 +1202,17 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     // so the checkboxes drawn on top of it still get their own clicks. This
     // is what the pointer talks to: a selection dragged from one line to
     // another is one gesture over the document, not a gesture inside a line.
-    let surface = ui
-        .interact(
-            ui.available_rect_before_wrap(),
-            document_id(),
-            Sense::click_and_drag(),
-        )
-        .on_hover_cursor(egui::CursorIcon::Text);
+    // The whole of the document that is on screen, which is not the space left
+    // where the first line starts: that is one window tall and measured from
+    // the top of the document, so in a document long enough to scroll it ends
+    // partway down and everything below it answers to nothing.
+    let visible = ui.clip_rect();
+    let across = ui.available_rect_before_wrap();
+    let area = egui::Rect::from_min_max(
+        egui::pos2(across.left(), visible.top()),
+        egui::pos2(across.right(), visible.bottom()),
+    );
+    let surface = ui.interact(area, document_id(), Sense::click_and_drag());
 
     let mut drawn: Vec<DrawnLine> = Vec::new();
     let mut toggled: Option<usize> = None;
@@ -1328,6 +1332,17 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                 }
             })
         };
+
+        // An I-beam says "there is text here to put a caret in", so it is shown
+        // where a click would do that and nowhere else: the empty space below
+        // the last line takes the caret away rather than placing it.
+        if surface.hovered() {
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if line_at(pos).is_some() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                }
+            }
+        }
 
         if surface.drag_started() || surface.clicked() {
             // Where the button went down, not where the pointer has reached:

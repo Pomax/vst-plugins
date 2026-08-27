@@ -6,13 +6,13 @@
 # end is what says whether each step did its job: every step leaves a mark the
 # next one cannot produce on its own.
 #
-# An I-beam is how a window says "there is text here to put a caret in". The
-# document said nothing, so the pointer stayed an arrow over it, which reads as
-# "nothing here to click". Over the text, over the empty space below it, which
-# is still document, and over the toolbar, which is not.
+# An I-beam is how a window says "there is text here to put a caret in", so it
+# is shown where a click would put one: over a line. The empty space below the
+# last line takes the caret away instead of placing it, and the toolbar is not
+# the document at all.
 type:text goes here
 cursor:60,155|ibeam
-cursor:400,400|ibeam
+cursor:400,400|arrow
 cursor:450,76|arrow
 
 # Dragging through the text selects what it crosses, which typing then
