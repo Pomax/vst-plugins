@@ -212,7 +212,9 @@ mod tests {
         e.open_path(&path).unwrap();
         assert_eq!(e.section_count(), 2);
         assert_eq!(e.section_text(0), "# One\n\nfirst");
-        assert_eq!(e.section_text(1), "# Two\n\nsecond");
+        // The newline the file ends with is part of the last section: what the
+        // file holds is what is opened, and saving it writes the same bytes.
+        assert_eq!(e.section_text(1), "# Two\n\nsecond\n");
         assert_eq!(e.section_title(0), "One");
         assert_eq!(e.section_title(1), "Two");
         assert_eq!(e.active_section(), 0);
@@ -310,5 +312,52 @@ mod tests {
         let mut reopened = Editor::new();
         reopened.open_path(&path).unwrap();
         assert_eq!(reopened.text(), "# Title\n- item");
+    }
+
+    /// Empty lines typed at the end of a document are part of it: they are
+    /// written out, and they are there again when it is opened.
+    #[test]
+    fn blank_lines_at_the_end_survive_a_save_and_an_open() {
+        let dir = temp_dir();
+        let path = dir.join("trailing.md");
+
+        let mut e = Editor::new();
+        e.set_document_text("# Title\n\nbody");
+        e.set_caret(e.text().len());
+        for _ in 0..3 {
+            e.handle_key(Key::Enter, Mods::NONE);
+        }
+        let typed = e.document_text();
+        assert_eq!(typed, "# Title\n\nbody\n\n\n\n", "the blank lines were not typed");
+
+        e.save_as(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            typed,
+            "the file on disk is not what was in the editor"
+        );
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.document_text(), typed, "opening it lost the blank lines");
+    }
+
+    /// The same for a document of several sections: the blank lines belong to
+    /// the end of the last one.
+    #[test]
+    fn blank_lines_at_the_end_of_the_last_section_survive_a_save_and_an_open() {
+        let dir = temp_dir();
+        let path = dir.join("trailing-sections.md");
+        let document = "# One\n\nfirst\n\n# Two\n\nsecond\n\n\n";
+
+        let mut e = Editor::new();
+        e.set_document_text(document);
+        e.save_as(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), document);
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.document_text(), document);
+        assert_eq!(reopened.section_count(), 2);
     }
 }
