@@ -140,23 +140,19 @@ window* is — the path through baseview and OpenGL, where the background is the
 renderer's clear colour rather than anything egui draws — screenshot it:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File src/tools/capture-window.ps1 -Theme light -Out target/window-light.png
+powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Theme light -Out target/window-light.png
 ```
 
-```bash
-src/tools/capture-window.sh --theme light --out target/window-light.png
-```
+`-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. It
+takes `-Notes` to show a particular markdown file, and `-ExeArgs` and `-Title`
+for capturing something other than the preview, such as the mini host.
 
-`-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. Both
-tools take `-Notes`/`--notes` to show a particular markdown file, and the
-Windows one takes `-ExeArgs` and `-Title` for capturing something other than the
-preview, such as the mini host.
+It launches the preview, locates the editor window by title, grabs its pixels
+off the screen and closes it. The title is used because the process also owns a
+console window and `MainWindowHandle` names whichever appeared first.
 
-Both launch the preview, locate the editor window, grab its pixels off the
-screen and close it. On Windows the window is found by title, because the
-process also owns a console window and `MainWindowHandle` names whichever
-appeared first. On macOS the bounds come from System Events, so the terminal
-running it needs Accessibility and Screen Recording permission.
+On macOS the UI tests photograph the window themselves, through the `Window
+Shot` app in `tools/window-shot`, so there is no script to run by hand.
 
 To see which scripts the system fonts cover, before and after text in a new
 script arrives:
@@ -283,16 +279,9 @@ running the plugin. `examples/scripts.rs` renders the evidence.
 
 ## Known limitations
 
-- **The macOS build has never run.** `xtask` emits the correct bundle layout
-  and CI builds it on a macOS runner, but nothing here has compiled or executed
-  it — a Windows machine cannot link a Mach-O binary. The first CI run on
-  `macos-14` is the first real test of it, including the macOS font paths and
-  `capture-window.sh`.
 - **Bold is drawn as a stronger colour, not a bold typeface.** egui ships no
   bold font family; this is the same approach egui uses for its own emphasis.
   Embedding a bold font would fix it properly.
-- **No mouse text selection.** Clicking places the caret; selection is
-  keyboard-only (`Shift`+motion, `Ctrl+A`).
 - **Input ownership.** When the host has attached a window, the GUI receives
   key events natively and `onKeyDown` returns `kResultFalse` — handling both
   would type every character twice. Without a window, `onKeyDown` is the only
