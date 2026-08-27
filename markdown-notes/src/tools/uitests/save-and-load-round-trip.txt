@@ -1,6 +1,6 @@
 # A whole file round trip, through the real buttons and the real dialogs:
-# save, check the file in code, delete it, save again under a second name,
-# check that in code, then open it back and check what came in.
+# save, check the file in code, delete it, save again with Save As, check that
+# in code, then open it back and check what came in.
 #
 # The regression this guards: the dialogs were opened from inside the frame
 # being drawn, and a native dialog runs its own message loop. The window's
@@ -10,31 +10,30 @@
 
 # Save is Save As until the document has a path, so this is the first dialog.
 # The file it wrote is checked in code the moment the dialog closes, and then
-# deleted in code: the save is proven right here, and nothing later in the run
-# can lean on its leftovers.
-remove:%CACHE%\round-trip-one.md
+# deleted in code: the save is proven right here, and the name is free for the
+# save below to write to a file that does not exist, as this one did.
+remove:%CACHE%\round-trip.md
 type:# Mix notes
 type:{ENTER}levels are close
 press:Save|501,76
-wait:2500
-type:%CACHE%\round-trip-one.md
+wait:500
+type:%CACHE%\round-trip.md
 type:{ENTER}
-wait:2000
-written:%CACHE%\round-trip-one.md|# Mix notes\n\nlevels are close
-remove:%CACHE%\round-trip-one.md
+wait:500
+written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close
+remove:%CACHE%\round-trip.md
 
-# Now a second section, and Save As to a different name. The document keeps
-# that one as its path afterwards, and the file is checked in code the same
-# way: both sections, in order.
-remove:%CACHE%\round-trip-two.md
+# Now a second section, and Save As. The document has a path by now, which is
+# what makes this a different action from the save above rather than the same
+# one twice. The file is checked in code the same way: both sections, in order.
 press:+|129,113
 type:# Drum bus
 press:Save As|567,76
-wait:2500
-type:%CACHE%\round-trip-two.md
+wait:500
+type:%CACHE%\round-trip.md
 type:{ENTER}
-wait:2000
-written:%CACHE%\round-trip-two.md|# Mix notes\n\nlevels are close\n\n# Drum bus
+wait:500
+written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close\n\n# Drum bus
 
 # Change the document, so that opening the file back has something to undo:
 # an open that silently did nothing would leave this mark, and the
@@ -43,15 +42,28 @@ plugin:400,300
 type: and then some
 wait:500
 
-# Open the second file back. It replaces what is open, so the mark is gone and
-# the document is exactly what the file holds.
+# Open the file back. It replaces what is open, so the mark is gone and the
+# document is exactly what the file holds.
 press:Open|443,76
-wait:2500
-type:%CACHE%\round-trip-two.md
+wait:500
+type:%CACHE%\round-trip.md
 type:{ENTER}
-wait:2000
+wait:500
 
-cleanup:%CACHE%\round-trip-two.md
+cleanup:%CACHE%\round-trip.md
+
+# Both tabs, read rather than typed into: the expectations below take the
+# document the plugin wrote and cut it into sections here, so they say
+# nothing about how many tabs the plugin made or which text each one holds.
+# A load that put the whole file in one tab satisfies them. Reading each tab
+# does not: the second tab has to show its own line and not the first tab's.
+press:Mix notes|60,113
+wait:500
+showing:levels are close|140
+press:Drum bus|170,113
+wait:500
+showing:Drum bus|140
+hidden:levels are close|140
 
 expect:sections is 2
 expect:section 0 is # Mix notes\n\nlevels are close

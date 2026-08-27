@@ -1225,6 +1225,45 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             );
             Ok(())
         }
+        "showing" | "hidden" => {
+            // `showing:TEXT|Y` reads the window below Y and fails unless TEXT
+            // is there; `hidden:` fails if it is. Below Y so the toolbars and
+            // the tab labels are out of it: what is being asked about is what
+            // the document displays, and a tab's own label is not that.
+            let (text, below) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read {kind}: {value}"))?;
+            let text = text.trim();
+            let below: i32 = below
+                .trim()
+                .parse()
+                .map_err(|_| format!("not a row: {value}"))?;
+            let window = window_rect(run.pid, &run.title)?;
+            let area = Rect {
+                x: window.x,
+                y: window.y + below,
+                width: window.width,
+                height: (window.height - below).max(1),
+            };
+            let probe = run
+                .state
+                .parent()
+                .map(|work| work.join("showing.png"))
+                .ok_or("nowhere to put the look")?;
+            let found = find_on_screen(area, text, &probe);
+            let _ = std::fs::remove_file(&probe);
+            let found = found?.is_some();
+            match (kind, found) {
+                ("showing", false) => {
+                    Err(format!("the document does not show {text:?}"))
+                }
+                ("hidden", true) => Err(format!("the document still shows {text:?}")),
+                _ => {
+                    println!("{kind}: {text}");
+                    Ok(())
+                }
+            }
+        }
         "dragtext" => {
             // `dragtext:TEXT|X,Y` selects by dragging from where TEXT starts
             // to X,Y in window coordinates. Where TEXT is comes from looking:

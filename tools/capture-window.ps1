@@ -41,6 +41,8 @@ param(
     #   press:LABEL|X,Y  photograph the region around X,Y, find the labelled
     #                 control in the picture to confirm or correct the spot,
     #                 delete the picture, and click where the label really is
+    #   showing:TEXT|Y   fail unless the window below Y shows TEXT
+    #   hidden:TEXT|Y    fail if the window below Y shows TEXT
     #   letgo:X,Y     move there and release the button
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
@@ -645,6 +647,35 @@ try {
                     Start-Sleep -Milliseconds 700
                 }
                 'wait' { Start-Sleep -Milliseconds ([int]$value) }
+                { $_ -in 'showing', 'hidden' } {
+                    # `showing:TEXT|Y` reads the window below Y and fails
+                    # unless TEXT is there; `hidden:` fails if it is. Below Y
+                    # so the toolbars and the tab labels are out of it: what
+                    # is being asked about is what the document displays, and
+                    # a tab's own label is not that.
+                    $text, $below = $value -split '\|', 2
+                    $text = $text.Trim()
+                    if (-not $text -or -not $below) { throw "cannot read ${kind}: $value" }
+                    $region = New-Object Win32Capture+RECT
+                    $region.Left = $rect.Left
+                    $region.Top = $rect.Top + [int]$below
+                    $region.Right = $rect.Right
+                    $region.Bottom = $rect.Bottom
+                    $probe = Join-Path $env:TEMP 'capture-window-showing.png'
+                    Save-Shot $region $probe
+                    try {
+                        $found = $null -ne (Find-Label $probe $text)
+                    } finally {
+                        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    }
+                    if ($kind -eq 'showing' -and -not $found) {
+                        throw "the document does not show `"$text`""
+                    }
+                    if ($kind -eq 'hidden' -and $found) {
+                        throw "the document still shows `"$text`""
+                    }
+                    Write-Host ("{0}: {1}" -f $kind, $text)
+                }
                 'dragtext' {
                     # `dragtext:TEXT|X,Y` selects by dragging from where TEXT
                     # starts to X,Y in window coordinates. Where TEXT is comes

@@ -24,6 +24,8 @@ codesign --force --sign - "$app"
 # tied to the old one: a stale entry blocks the new build from even asking.
 # Dropping the entry here means the next run prompts fresh instead of failing
 # against a grant that can never match.
-tccutil reset ScreenCapture com.markdown-notes.window-shot
+# A build with no entry to reset is the first build of it: there is nothing
+# stale to clear, and tccutil saying so is not a build failure.
+tccutil reset ScreenCapture com.markdown-notes.window-shot || true
 
 echo "dist:   $app"
