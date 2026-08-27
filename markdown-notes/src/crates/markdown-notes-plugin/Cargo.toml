@@ -77,6 +77,10 @@ required-features = ["snapshots"]
 name = "text_area"
 required-features = ["snapshots"]
 
+[[test]]
+name = "selection_rendering"
+required-features = ["snapshots"]
+
 [[example]]
 name = "snapshot"
 required-features = ["snapshots"]

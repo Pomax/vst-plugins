@@ -10,5 +10,6 @@ save-click-opens-the-dialog
 open-click-opens-the-dialog
 caret-below-a-code-block
 editing-with-mouse-and-keyboard
+selecting-across-lines
 save-and-load-round-trip
 section-strip

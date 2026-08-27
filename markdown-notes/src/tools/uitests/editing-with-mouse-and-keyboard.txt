@@ -24,7 +24,7 @@ cursor:450,76|arrow
 # drag sits far right of the text so it is past the line's end whatever width
 # a platform's font gives it. A word rather than part of one: text
 # recognition places words, and a mark inside one snaps to its start.
-dragtext:goes here|300,155
+dragtext:goes here|140|300,155
 type:X
 shot:%CACHE%\editing-dragged-to-select.png
 

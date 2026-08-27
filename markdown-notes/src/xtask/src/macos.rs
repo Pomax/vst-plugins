@@ -1340,25 +1340,29 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             }
         }
         "dragtext" => {
-            // `dragtext:TEXT|X,Y` selects by dragging from where TEXT starts
-            // to X,Y in window coordinates. Where TEXT is comes from looking:
-            // the row the drag ends on is photographed, TEXT is found in the
-            // picture, the picture is deleted, and the press lands on TEXT's
-            // first character. What width a font gives the characters before
-            // it stops mattering.
-            let (text, to) = value
-                .split_once('|')
-                .ok_or_else(|| format!("cannot read dragtext: {value}"))?;
+            // `dragtext:TEXT|Y|X,Y2` selects by dragging from where TEXT
+            // starts to X,Y2 in window coordinates. Where TEXT is comes from
+            // looking: the window below Y is photographed, the first TEXT in
+            // it is found, the picture is deleted, and the press lands on
+            // TEXT's first character. What width a font gives the characters
+            // before it stops mattering, and the same words in the toolbar
+            // above Y are not mistaken for it.
+            let mut parts = value.splitn(3, '|');
+            let (text, below, to) = match (parts.next(), parts.next(), parts.next()) {
+                (Some(text), Some(below), Some(to)) => (text, below, to),
+                _ => return Err(format!("cannot read dragtext: {value}")),
+            };
+            let below: i32 = below
+                .trim()
+                .parse()
+                .map_err(|_| format!("not a row: {value}"))?;
             let (to_x, to_y) = pair(to, "dragtext")?;
             let window = window_rect(run.pid, &run.title)?;
-            // The row being dragged along, not the whole window: the same
-            // words can be somewhere else entirely, and the toolbar's own
-            // placeholder text has caught this before.
             let band = Rect {
                 x: window.x,
-                y: window.y + (to_y - 30).max(0),
+                y: window.y + below,
                 width: window.width,
-                height: 60.min(window.height),
+                height: (window.height - below).max(1),
             };
             let probe = run
                 .state

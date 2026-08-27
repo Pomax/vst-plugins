@@ -1196,7 +1196,19 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
 
     ui.spacing_mut().item_spacing.y = 0.0;
 
-    let mut clicked: Option<Pointer> = None;
+    // One surface for the whole document, claimed before the lines are drawn
+    // so the checkboxes drawn on top of it still get their own clicks. This
+    // is what the pointer talks to: a selection dragged from one line to
+    // another is one gesture over the document, not a gesture inside a line.
+    let surface = ui
+        .interact(
+            ui.available_rect_before_wrap(),
+            document_id(),
+            Sense::click_and_drag(),
+        )
+        .on_hover_cursor(egui::CursorIcon::Text);
+
+    let mut drawn: Vec<DrawnLine> = Vec::new();
     let mut toggled: Option<usize> = None;
 
     let em = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -1268,36 +1280,60 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                 }
             }
 
-            if let Some(hit) = line_body(ui, block, &src, caret, &selection, raw, &palette, pad) {
-                clicked = Some(hit);
-            }
+            drawn.push(line_body(
+                ui, block, &src, caret, &selection, raw, &palette, pad,
+            ));
         });
     }
 
-    let touched = clicked.is_some();
     if let Some(line) = toggled {
         editor.toggle_checkbox(line);
-    } else if let Some(hit) = clicked {
-        if hit.pressed {
-            // Where a drag will select from, and where the caret goes if it
-            // turns out to be a plain click.
-            gui.selecting_from = Some(hit.at);
-            editor.set_caret(hit.at);
-        } else if hit.dragged {
-            if let Some(from) = gui.selecting_from {
-                let (a, b) = (from.min(hit.at), from.max(hit.at));
-                editor.select(a..b);
+    } else {
+        // Where in the document a point on screen is. The line is the one the
+        // pointer is level with, and above the first or below the last it is
+        // that line: dragging off the end of the text selects to the end,
+        // the way dragging off the end of any text area does.
+        let offset_at = |pos: egui::Pos2| -> Option<usize> {
+            let line = drawn
+                .iter()
+                .find(|line| pos.y >= line.rect.top() && pos.y <= line.rect.bottom())
+                .or_else(|| {
+                    let first = drawn.first()?;
+                    if pos.y < first.rect.top() {
+                        Some(first)
+                    } else {
+                        drawn.last()
+                    }
+                })?;
+            let cursor = line.galley.cursor_from_pos(pos - line.origin);
+            let index = cursor.index.0.min(line.map.len().saturating_sub(1));
+            line.map.get(index).copied()
+        };
+
+        if surface.drag_started() || surface.clicked() {
+            // Where the button went down, not where the pointer has reached:
+            // egui reports the latest position for both, and a drag is only
+            // recognised once it has moved.
+            let pos = ui
+                .input(|i| i.pointer.press_origin())
+                .or_else(|| surface.interact_pointer_pos());
+            if let Some(at) = pos.and_then(offset_at) {
+                gui.selecting_from = Some(at);
+                editor.set_caret(at);
+            }
+        } else if surface.dragged() {
+            if let (Some(from), Some(at)) = (
+                gui.selecting_from,
+                surface.interact_pointer_pos().and_then(offset_at),
+            ) {
+                editor.select(from.min(at)..from.max(at));
             }
         }
     }
 
-    // Clicking anywhere in the document — on a line or in the empty space
-    // below it — hands the keys back from whatever field had them.
-    let rest = ui.available_rect_before_wrap();
-    let response = ui
-        .interact(rest, document_id(), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::Text);
-    if touched || toggled.is_some() || response.clicked() {
+    // Clicking anywhere in the document, on a line or in the empty space
+    // below it, hands the keys back from whatever field had them.
+    if toggled.is_some() || surface.clicked() || surface.drag_started() {
         gui.document_focused = true;
     }
 }
@@ -1351,12 +1387,19 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
     }
 }
 
-/// Draw one line's text, its caret, and report a click position.
-/// What the pointer did over a line of the document, in source offsets.
-struct Pointer {
-    at: usize,
-    pressed: bool,
-    dragged: bool,
+/// A line as it was drawn, kept so the pointer can be mapped onto it.
+///
+/// The pointer is answered for the document as a whole rather than by each
+/// line for itself. A drag belongs to the widget it started on, so lines that
+/// sense their own drags can only ever select within themselves: the pointer
+/// crossing into the line below is not something that line is told about.
+struct DrawnLine {
+    rect: egui::Rect,
+    /// Where the text starts, which is inside the row for a code block.
+    origin: egui::Pos2,
+    galley: Arc<egui::Galley>,
+    /// The source offset of every character in the galley.
+    map: Vec<usize>,
 }
 
 /// Which edges of a code block this row is at, and so where its padding goes.
@@ -1375,7 +1418,7 @@ fn line_body(
     raw: bool,
     palette: &Palette,
     pad: Padding,
-) -> Option<Pointer> {
+) -> DrawnLine {
     let base = base_format(block, palette);
     let bold = crate::fonts::bold_family(ui);
     // A fence and the lines inside it are one block, not text that happens to
@@ -1449,9 +1492,10 @@ fn line_body(
         ui.available_width().max(galley.size().x + inset),
         galley.size().y + above + below,
     );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    // An I-beam over text, because that is what an I-beam means.
-    let response = response.on_hover_cursor(egui::CursorIcon::Text);
+    // Space, not a widget: the pointer is answered for the document as a
+    // whole, and a line that senses its own drags would keep every one of
+    // them to itself.
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
 
     // Where a source offset sits on this line. The galley is asked, because it
     // is the thing that placed the glyphs: a line mixes fonts, and anything
@@ -1499,15 +1543,20 @@ fn line_body(
             let (a, b) = (first.max(row_start), last.min(row_end));
             if a < b {
                 let rect = row.rect();
-                // A selection carrying on past this row runs to the row's own
-                // end: the offset after the last character of a wrapped row
-                // is the start of the next one.
-                let left = spot_of(from.max(map[a])).min.x;
-                let right = if b == row_end {
-                    rect.right()
-                } else {
-                    spot_of(map[b]).min.x
+                // Only a character inside the row is asked about. A wrap sits
+                // between two rows, and the galley answers for the end of the
+                // row above, so a selection carrying into this row would be
+                // drawn from its right edge and a band ending here would run
+                // the wrong way. Where the selection carries on, the row's own
+                // edge is the answer.
+                let edge = |at: usize| {
+                    galley
+                        .pos_from_cursor(egui::text::CCursor::new(at))
+                        .min
+                        .x
                 };
+                let left = if a > row_start { edge(a) } else { rect.left() };
+                let right = if b < row_end { edge(b) } else { rect.right() };
                 let band = egui::Rect::from_min_max(
                     origin + egui::vec2(left, rect.top()),
                     origin + egui::vec2(right, rect.bottom()),
@@ -1532,27 +1581,7 @@ fn line_body(
 
     let _ = raw;
 
-    // A press puts the caret down; dragging from there selects.
-    let pressed = response.drag_started() || response.clicked();
-    let dragged = response.dragged();
-    if !pressed && !dragged {
-        return None;
-    }
-    // Where the button went down, for the press, and where the pointer is
-    // now, for the drag. egui reports the pointer's latest position for both,
-    // and a drag is only recognised once it has moved: taking that position
-    // as the press anchors the selection wherever the pointer had already
-    // got to, which on a quick drag is several characters in.
-    let pos = if pressed {
-        ui.input(|i| i.pointer.press_origin())
-            .or_else(|| response.interact_pointer_pos())?
-    } else {
-        response.interact_pointer_pos()?
-    };
-    let cursor = galley.cursor_from_pos(pos - origin);
-    let index = cursor.index.0.min(map.len().saturating_sub(1));
-    let at = map.get(index).copied()?;
-    Some(Pointer { at, pressed, dragged })
+    DrawnLine { rect, origin, galley, map }
 }
 
 /// Where on the line the source offset `offset` sits: how far along, and on

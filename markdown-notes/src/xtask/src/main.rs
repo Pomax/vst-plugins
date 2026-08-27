@@ -664,6 +664,10 @@ fn test(args: &[String]) -> Result<(), String> {
                 "--test",
                 "section_dragging",
                 "--test",
+                "selection_rendering",
+                "--test",
+                "text_area",
+                "--test",
                 "title_field",
             ],
         )?;

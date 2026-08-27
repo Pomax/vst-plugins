@@ -677,26 +677,36 @@ try {
                     Write-Host ("{0}: {1}" -f $kind, $text)
                 }
                 'dragtext' {
-                    # `dragtext:TEXT|X,Y` selects by dragging from where TEXT
-                    # starts to X,Y in window coordinates. Where TEXT is comes
-                    # from looking: the window is photographed, TEXT is found
-                    # in the picture, the picture is deleted, and the press
-                    # lands on TEXT's first character.
-                    $text, $to = $value -split '\|', 2
-                    if (-not $text -or -not $to) { throw "cannot read dragtext: $value" }
+                    # `dragtext:TEXT|Y|X,Y2` selects by dragging from where
+                    # TEXT starts to X,Y2 in window coordinates. Where TEXT is
+                    # comes from looking: the window below Y is photographed,
+                    # the first TEXT in it is found, the picture is deleted,
+                    # and the press lands on TEXT's first character.
+                    $text, $below, $to = $value -split '\|', 3
+                    if (-not $text -or -not $below -or -not $to) {
+                        throw "cannot read dragtext: $value"
+                    }
                     $parts = $to -split ','
                     if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
+                    $band = New-Object Win32Capture+RECT
+                    $band.Left = $rect.Left
+                    $band.Top = $rect.Top + [int]$below
+                    $band.Right = $rect.Right
+                    $band.Bottom = $rect.Bottom
                     $probe = Join-Path $env:TEMP 'capture-window-press.png'
-                    Save-Shot $rect $probe
+                    Save-Shot $band $probe
                     try {
                         $found = Find-Label $probe $text.Trim()
                     } finally {
                         Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     }
                     if (-not $found) { throw "`"$text`" is not on screen to select from" }
+                    # On the first glyph, not beside it: a press lands on the
+                    # nearest character boundary, and the boundary before the
+                    # first letter is the one its ink starts at.
                     [Win32Capture]::Drag(
-                        $rect.Left + [int]$found.Left + 1,
-                        $rect.Top + [int](($found.Top + $found.Bottom) / 2),
+                        $band.Left + [int]$found.Left,
+                        $band.Top + [int](($found.Top + $found.Bottom) / 2),
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
                     Start-Sleep -Milliseconds 500
                     Write-Host ("dragtext: {0}" -f $text.Trim())
