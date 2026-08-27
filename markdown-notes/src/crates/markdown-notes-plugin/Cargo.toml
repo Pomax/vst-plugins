@@ -73,6 +73,10 @@ required-features = ["snapshots"]
 name = "title_field"
 required-features = ["snapshots"]
 
+[[test]]
+name = "text_area"
+required-features = ["snapshots"]
+
 [[example]]
 name = "snapshot"
 required-features = ["snapshots"]

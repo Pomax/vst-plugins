@@ -98,6 +98,11 @@ const TITLE_SIZE_BUMP: f32 = 5.0;
 /// How far a code block reaches above and below the rows it holds.
 const CODE_PADDING: f32 = 5.0;
 
+/// Narrowest a line is ever wrapped to. A window dragged narrower than its
+/// own margins would otherwise ask for a wrap width of zero, which lays out
+/// one character per row.
+const MIN_WRAP_WIDTH: f32 = 40.0;
+
 /// Breathing room around the section strip.
 const SECTION_MARGIN: egui::Margin = egui::Margin::symmetric(10, 4);
 
@@ -326,13 +331,32 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
 
     // The scroll area itself spans the full width so its bar sits against the
     // window edge; the padding goes inside, around the text.
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            egui::Frame::default()
-                .inner_margin(DOCUMENT_MARGIN)
-                .show(ui, |ui| document(ui, gui));
-        });
+    ui.scope(|ui| {
+        // A solid bar rather than egui's default floating one, which is drawn
+        // at zero opacity until the pointer is beside it: a document taller
+        // than the window has to say so without being hovered first. Solid
+        // also reserves the bar's width, so the text wraps clear of it.
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+        let handle = scrollbar_colour(gui, ui.visuals());
+        let visuals = ui.visuals_mut();
+        // The trough is the page it sits on, so only the handle shows.
+        visuals.extreme_bg_color = visuals.panel_fill;
+        for state in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            state.bg_fill = handle;
+        }
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::default()
+                    .inner_margin(DOCUMENT_MARGIN)
+                    .show(ui, |ui| document(ui, gui));
+            });
+    });
 
     settings_dialog(ui, gui);
 
@@ -493,6 +517,14 @@ fn rule(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 1.0), Sense::hover());
     ui.painter()
         .rect_filled(rect, 0.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+}
+
+/// The document scrollbar's handle, from the scheme the settings dialog edits.
+fn scrollbar_colour(gui: &Gui, visuals: &egui::Visuals) -> Color32 {
+    match gui.editor.lock() {
+        Ok(e) => rgba(e.colours.for_mode(visuals.dark_mode).scrollbar),
+        Err(_) => visuals.widgets.inactive.bg_fill,
+    }
 }
 
 fn toolbar_fill(gui: &Gui, visuals: &egui::Visuals) -> Color32 {
@@ -1388,12 +1420,6 @@ fn line_body(
     }
     map.push(block.range.end);
 
-    let galley = ui.painter().layout_job(job);
-
-    // The whole width of the line, not the width of what is written on it.
-    // Clicking past the end of a line is how everyone puts the caret at the
-    // end of it, and a line only as wide as its text has nothing there to
-    // click.
     // The code sits inside its block rather than flush against the edge, so
     // the row carries the padding: wider by the inset on both sides, and taller
     // at whichever end of the block it is at. Padding drawn outside the row
@@ -1407,6 +1433,18 @@ fn line_body(
     } else {
         (0.0, 0.0, 0.0)
     };
+
+    // A line longer than the window wraps, the way any text area wraps it:
+    // the width left on this row after the quote bars, the indent and the
+    // list glyph, less what a code block's own padding takes.
+    job.wrap.max_width = (ui.available_width() - inset).max(MIN_WRAP_WIDTH);
+
+    let galley = ui.painter().layout_job(job);
+
+    // The whole width of the line, not the width of what is written on it.
+    // Clicking past the end of a line is how everyone puts the caret at the
+    // end of it, and a line only as wide as its text has nothing there to
+    // click.
     let size = egui::vec2(
         ui.available_width().max(galley.size().x + inset),
         galley.size().y + above + below,
@@ -1415,11 +1453,13 @@ fn line_body(
     // An I-beam over text, because that is what an I-beam means.
     let response = response.on_hover_cursor(egui::CursorIcon::Text);
 
-    // Where a source offset sits along this line. The galley is asked, because
-    // it is the thing that placed the glyphs: a line mixes fonts, and anything
+    // Where a source offset sits on this line. The galley is asked, because it
+    // is the thing that placed the glyphs: a line mixes fonts, and anything
     // that re-measures the text in one font puts the caret in the wrong place
-    // the moment a bold or code span precedes it.
-    let x_of = |offset: usize| -> f32 { offset_x(&galley, &map, offset) };
+    // the moment a bold or code span precedes it. A wrapped line is several
+    // rows, so this is a rectangle rather than an x: the row it landed on is
+    // as much of the answer as how far along it is.
+    let spot_of = |offset: usize| -> egui::Rect { offset_spot(&galley, &map, offset) };
 
     // The block itself, behind everything else on the row, and the text inside
     // it clear of its edges. Rows of one block are drawn touching, so they read
@@ -1443,26 +1483,49 @@ fn line_body(
         rect.min
     };
 
-    // The selection goes behind the text, so the words stay readable.
+    // The selection goes behind the text, so the words stay readable. A
+    // wrapped line takes one band per row it crosses: a single rectangle over
+    // a selection that spans rows would cover the whole block between them,
+    // including the text it does not hold.
     let (from, to) = (
         selection.start.max(block.range.start),
         selection.end.min(block.range.end),
     );
     if from < to {
-        let band = egui::Rect::from_min_max(
-            origin + egui::vec2(x_of(from), 0.0),
-            origin + egui::vec2(x_of(to), galley.size().y),
-        );
-        ui.painter().rect_filled(band, 0.0, palette.selection);
+        let (first, last) = (char_index(&map, from), char_index(&map, to));
+        let mut row_start = 0usize;
+        for row in &galley.rows {
+            let row_end = row_start + row.glyphs.len() + usize::from(row.ends_with_newline);
+            let (a, b) = (first.max(row_start), last.min(row_end));
+            if a < b {
+                let rect = row.rect();
+                // A selection carrying on past this row runs to the row's own
+                // end: the offset after the last character of a wrapped row
+                // is the start of the next one.
+                let left = spot_of(from.max(map[a])).min.x;
+                let right = if b == row_end {
+                    rect.right()
+                } else {
+                    spot_of(map[b]).min.x
+                };
+                let band = egui::Rect::from_min_max(
+                    origin + egui::vec2(left, rect.top()),
+                    origin + egui::vec2(right, rect.bottom()),
+                );
+                ui.painter().rect_filled(band, 0.0, palette.selection);
+            }
+            row_start = row_end;
+        }
     }
 
     ui.painter()
         .galley(origin, Arc::clone(&galley), palette.body);
 
     if caret >= block.range.start && caret <= block.range.end {
-        let top = origin + egui::vec2(x_of(caret), 0.0);
+        let spot = spot_of(caret);
+        let top = origin + spot.min.to_vec2();
         ui.painter().line_segment(
-            [top, top + egui::vec2(0.0, galley.size().y)],
+            [top, top + egui::vec2(0.0, spot.height())],
             Stroke::new(1.5, palette.caret),
         );
     }
@@ -1482,22 +1545,23 @@ fn line_body(
     Some(Pointer { at, pressed, dragged })
 }
 
-/// How far along the line the source offset `offset` sits.
+/// Where on the line the source offset `offset` sits: how far along, and on
+/// which row of a wrapped line.
 ///
 /// `map` gives the source offset of every character in the galley, so the
 /// offset first becomes a character index and the galley then says where that
 /// character was put. Only the galley knows: a line mixes fonts, and measuring
 /// the preceding text in any single one of them places the caret inside the
 /// word before it as soon as a bold or code span comes first.
-fn offset_x(galley: &egui::Galley, map: &[usize], offset: usize) -> f32 {
-    let char_index = map
-        .iter()
+fn offset_spot(galley: &egui::Galley, map: &[usize], offset: usize) -> egui::Rect {
+    galley.pos_from_cursor(egui::text::CCursor::new(char_index(map, offset)))
+}
+
+/// Which character of the galley a source offset falls on.
+fn char_index(map: &[usize], offset: usize) -> usize {
+    map.iter()
         .position(|&at| at >= offset)
-        .unwrap_or(map.len().saturating_sub(1));
-    galley
-        .pos_from_cursor(egui::text::CCursor::new(char_index))
-        .min
-        .x
+        .unwrap_or(map.len().saturating_sub(1))
 }
 
 /// Append `text` to the job, recording the source offset of every byte.
@@ -1785,7 +1849,7 @@ mod tests {
                 .x;
         });
         let galley = galley.expect("nothing was laid out");
-        let x = offset_x(&galley, &map, 21);
+        let x = offset_spot(&galley, &map, 21).min.x;
 
         // Where the glyphs actually are: the caret belongs at the left edge of
         // the last character.

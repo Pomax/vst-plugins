@@ -1,5 +1,6 @@
-- [ ] Markdown Notes: the text area does not wrap lines. Make sure it does this, and that it reflows on window resize.
+- [x] Markdown Notes: the text area does not wrap lines. Make sure it does this, and that it reflows on window resize.
 - [x] MacOS mini host can't open VST3 using the file browse dialog, greyes out the VST3 bundle.
 - [ ] a test saves two files ("...-one.md" and "...-two.md") and then does nothign with the first file, so that's a completely meaningless action.
 - [ ] that same test then does not check BOTH tabs to confirm they contain the content they should.
 - [ ] Check whether mini-host can load VST 1 and 2 (i.e. is it backwards compatible). If not, add that if it's not too much work.
+- [ ] Text selection is naff: I can't just "select all text" using normal click dragging. I can't even do that in markdown source view, wtf?
