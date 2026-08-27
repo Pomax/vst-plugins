@@ -59,23 +59,23 @@ fn locate_plugin(args: &Args) -> Option<PathBuf> {
     args.plugin.clone().or_else(ask_for_plugin)
 }
 
-/// On Windows a `.vst3` is a file, so the file dialog picks it.
-#[cfg(target_os = "windows")]
+/// On Windows a `.vst3` is a file, and on macOS it is a bundle, which the
+/// system reports as a package: an item of type `public.data` rather than a
+/// folder. Both are files to a file dialog, so both are picked by one.
+///
+/// A directory dialog would not do on macOS. It can only choose directories,
+/// and a package is not one, so the bundle is shown greyed out and cannot be
+/// chosen at all.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn ask_for_plugin() -> Option<PathBuf> {
     dialog()
         .add_filter("VST3 plugin", &["vst3"])
         .pick_file()
 }
 
-/// Elsewhere a `.vst3` is a bundle directory, so the directory dialog picks it.
-///
-/// A file dialog would not do: the Finder only shows a directory as a single
-/// selectable item when its extension is one it knows, when an installed
-/// application has claimed that extension as a package type, or when the
-/// directory's package bit is set. `.vst3` is none of those on a machine with
-/// no VST3 host installed, so the bundle appears as an ordinary folder and a
-/// file dialog can only open it, not choose it.
-#[cfg(not(target_os = "windows"))]
+/// Elsewhere a `.vst3` is an ordinary directory, so the directory dialog
+/// picks it.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn ask_for_plugin() -> Option<PathBuf> {
     dialog().pick_folder()
 }
