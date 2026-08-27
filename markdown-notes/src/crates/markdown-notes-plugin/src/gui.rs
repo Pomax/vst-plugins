@@ -1538,7 +1538,17 @@ fn line_body(
     if !pressed && !dragged {
         return None;
     }
-    let pos = response.interact_pointer_pos()?;
+    // Where the button went down, for the press, and where the pointer is
+    // now, for the drag. egui reports the pointer's latest position for both,
+    // and a drag is only recognised once it has moved: taking that position
+    // as the press anchors the selection wherever the pointer had already
+    // got to, which on a quick drag is several characters in.
+    let pos = if pressed {
+        ui.input(|i| i.pointer.press_origin())
+            .or_else(|| response.interact_pointer_pos())?
+    } else {
+        response.interact_pointer_pos()?
+    };
     let cursor = galley.cursor_from_pos(pos - origin);
     let index = cursor.index.0.min(map.len().saturating_sub(1));
     let at = map.get(index).copied()?;

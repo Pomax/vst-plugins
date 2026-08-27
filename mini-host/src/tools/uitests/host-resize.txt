@@ -13,20 +13,25 @@
 type:something to keep
 
 # Resizing is a hand on the corner, moving: nothing here sets a size any
-# other way. Filmed from before the hand takes the corner, over a region big
-# enough for the largest size the window is dragged to, since the region is
-# fixed once recording starts: what the window does while it is happening can
-# then be watched rather than guessed at.
+# other way. The geometry files below are the assertions.
+#
+# The film is not one. It is recorded from before the hand takes the corner,
+# over a region big enough for the largest size the window is dragged to,
+# since the region is fixed once recording starts, and it is there to be
+# watched when something looks wrong. Nothing about how a resize looks can be
+# reduced to a frame count: a window that stretches its old picture and one
+# that redraws produce much the same numbers.
+# `host-resize-target.mp4` beside this file is what a right one looks like.
 remove:%CACHE%\host-resize-grown.txt
 remove:%CACHE%\host-resize-shrunk.txt
 film:%CACHE%\host-resize-drag|1000,760
 dragto:880,600,1000
-wait:800
+wait:500
 geometry:%CACHE%\host-resize-grown.txt
 # Smaller as well as bigger: a window that only ever grows can hide the case
 # where the plugin is left overhanging the frame it is in.
 dragto:620,420,1000
-wait:800
+wait:500
 geometry:%CACHE%\host-resize-shrunk.txt
 endfilm:
 

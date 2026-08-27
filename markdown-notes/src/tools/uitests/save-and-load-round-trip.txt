@@ -26,7 +26,10 @@ remove:%CACHE%\round-trip.md
 # Now a second section, and Save As. The document has a path by now, which is
 # what makes this a different action from the save above rather than the same
 # one twice. The file is checked in code the same way: both sections, in order.
-press:+|129,113
+# The + button carries no word, and a lone glyph is not something text
+# recognition reads reliably: it is clicked where the code puts it, and that
+# the click landed is said by the two tabs read at the end.
+plugin:129,87
 type:# Drum bus
 press:Save As|567,76
 wait:500

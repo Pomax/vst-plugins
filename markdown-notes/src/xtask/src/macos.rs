@@ -21,7 +21,7 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 
 /// A window's place on screen, in points, top left origin.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -1161,6 +1161,24 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             );
             Ok(())
         }
+        "nowindow" => {
+            // `nowindow:NAME` fails while a window of that name is still
+            // there. Closing one is an action like any other: something has
+            // to say it happened, and the next `window:` cannot, since with
+            // no name it takes whatever is in front, dialog included.
+            let wanted = value.trim();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if window_rect(run.pid, wanted).is_err() {
+                    println!("nowindow: {wanted}");
+                    return Ok(());
+                }
+                if Instant::now() > deadline {
+                    return Err(format!("the {wanted} window is still open"));
+                }
+                sleep(Duration::from_millis(200));
+            }
+        }
         "resize" => {
             // `resize:W,H` gives the window a drawable area of exactly that
             // size, matching what dragging its corner sets. The size a window
@@ -1225,6 +1243,63 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             );
             Ok(())
         }
+        "dialog" | "nodialog" => {
+            // `dialog:` fails unless a file dialog is open, `nodialog:` fails
+            // if one is. The panel is a window of another process, so it is
+            // found by looking rather than asked for: every open and save
+            // panel carries a Cancel button, and its own name, given as the
+            // value, is on it too.
+            let want = value.trim();
+            let probe = run
+                .state
+                .parent()
+                .map(|work| work.join("dialog.png"))
+                .ok_or("nowhere to put the look")?;
+            // The panel is a window of the host's own process, so it is found
+            // as a window rather than hunted for across the screen: the
+            // frontmost window being one other than the window under test is
+            // a dialog being up.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let front = loop {
+                let front = window_rect(run.pid, "").ok();
+                let other = front.filter(|rect| *rect != run.host);
+                if other.is_some() || kind == "nodialog" || Instant::now() > deadline {
+                    break other;
+                }
+                sleep(Duration::from_millis(200));
+            };
+            match (kind, front) {
+                ("dialog", None) => Err(format!(
+                    "no {want} dialog is open, so the button did nothing"
+                )),
+                ("dialog", Some(rect)) => {
+                    // Which dialog, read off the panel itself. A picture of
+                    // one window is small enough for text recognition to
+                    // read; a picture of the whole screen is not.
+                    let found = find_on_screen(rect, want, &probe)?;
+                    if found.is_none() {
+                        return Err(format!(
+                            "a dialog is open, but nothing on it says {want:?}; see {}",
+                            probe.display()
+                        ));
+                    }
+                    // The picture stays behind on a failure and goes on a
+                    // pass: what was on screen is the whole of the evidence,
+                    // and a step that throws it away leaves nothing to work
+                    // from.
+                    let _ = std::fs::remove_file(&probe);
+                    println!("dialog: {want}");
+                    Ok(())
+                }
+                ("nodialog", Some(_)) => {
+                    Err(format!("a {want} dialog is still open"))
+                }
+                _ => {
+                    println!("{kind}: {want}");
+                    Ok(())
+                }
+            }
+        }
         "showing" | "hidden" => {
             // `showing:TEXT|Y` reads the window below Y and fails unless TEXT
             // is there; `hidden:` fails if it is. Below Y so the toolbars and
@@ -1267,31 +1342,44 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
         "dragtext" => {
             // `dragtext:TEXT|X,Y` selects by dragging from where TEXT starts
             // to X,Y in window coordinates. Where TEXT is comes from looking:
-            // the window is photographed, TEXT is found in the picture, the
-            // picture is deleted, and the press lands on TEXT's first
-            // character. What width a font gives the characters before it
-            // stops mattering.
+            // the row the drag ends on is photographed, TEXT is found in the
+            // picture, the picture is deleted, and the press lands on TEXT's
+            // first character. What width a font gives the characters before
+            // it stops mattering.
             let (text, to) = value
                 .split_once('|')
                 .ok_or_else(|| format!("cannot read dragtext: {value}"))?;
             let (to_x, to_y) = pair(to, "dragtext")?;
             let window = window_rect(run.pid, &run.title)?;
+            // The row being dragged along, not the whole window: the same
+            // words can be somewhere else entirely, and the toolbar's own
+            // placeholder text has caught this before.
+            let band = Rect {
+                x: window.x,
+                y: window.y + (to_y - 30).max(0),
+                width: window.width,
+                height: 60.min(window.height),
+            };
             let probe = run
                 .state
                 .parent()
                 .map(|work| work.join("press.png"))
                 .ok_or("nowhere to put the look")?;
-            let found = find_box_on_screen(window, text.trim(), &probe);
+            let found = find_box_on_screen(band, text.trim(), &probe);
             let _ = std::fs::remove_file(&probe);
             let Some(from) = found? else {
                 return Err(format!("{text:?} is not on screen to select from"));
             };
-            take_hold(from.x + 1, from.y + from.height / 2)?;
+            // On the first glyph, not beside it. A press lands on the nearest
+            // character boundary, and the boundary before the first letter is
+            // the one its ink starts at.
+            let start = from.x;
+            take_hold(start, from.y + from.height / 2)?;
             let_go(window.x + to_x, window.y + to_y)?;
             sleep(Duration::from_millis(500));
             println!(
                 "dragtext: from {},{}",
-                from.x + 1 - window.x,
+                start - window.x,
                 from.y + from.height / 2 - window.y
             );
             Ok(())

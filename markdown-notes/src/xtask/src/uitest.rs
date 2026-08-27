@@ -169,7 +169,22 @@ fn read_test(path: &Path) -> Result<Test, String> {
             steps.push(line.to_string());
         }
     }
-    if expects.is_empty() {
+    // A test has to assert something. `expect:` does it after the run, from
+    // the state the plugin wrote; these do it during, from what is on screen
+    // or on disk at that moment, and a test whose whole subject is a window
+    // that opens has nothing left to say afterwards.
+    const ASSERTING: [&str; 6] = [
+        "dialog:",
+        "nodialog:",
+        "nowindow:",
+        "written:",
+        "showing:",
+        "hidden:",
+    ];
+    let asserts = steps
+        .iter()
+        .any(|step| ASSERTING.iter().any(|kind| step.trim_start().starts_with(kind)));
+    if expects.is_empty() && !asserts {
         return Err(format!("{name}: a test with nothing to assert is not a test"));
     }
     Ok(Test { name, steps, expects, cleanups, baseline })

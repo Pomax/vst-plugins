@@ -1,12 +1,16 @@
-# A code block typed through the real keyboard, and where the caret goes once
-# there is one above it.
+# A code block typed through the real keyboard, and where the keys go once
+# there is one above them.
 #
 # The fence lines take no row of their own unless the caret is on one, so the
-# rows the document draws are fewer than the lines it holds. The caret has to
-# land on the row of the line it is actually on.
+# rows the document draws are fewer than the lines it holds, and a caret that
+# followed rows rather than lines would put the next keystroke inside the
+# block. What the document ends up holding is what says where the keys went:
+# every line below is typed blind, at whatever the caret was.
 #
-# Typing the fence marker and pressing Enter is also what closes the fence, so
-# what the document ends up holding says whether that still works.
+# Where the caret is *drawn* is a question about pixels, which this cannot
+# answer and does not claim to: `caret_rendering.rs` renders the same document
+# headlessly and measures it. The picture here is for reading a failure, not
+# for deciding one.
 type:# secondary
 type:{ENTER}testing as well
 # Enter after the fence marker closes it and leaves the caret inside.

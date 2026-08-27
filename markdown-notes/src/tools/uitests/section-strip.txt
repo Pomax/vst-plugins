@@ -2,11 +2,10 @@
 # into each of the three kinds of place one can be dropped, which are between
 # two sections, in front of the first, and after the last.
 #
-# One run, a picture taken during each drag while the button is still down. The
-# state the plugin writes is written once, on the way out, so the expectations
-# describe where everything ended up: the order after all three drags is
-# `Vocal chain`, `Drum bus`, `Mix notes`, and nothing else produces that order.
-# Fail any one drag and the result is different every time:
+# One run. The state the plugin writes is written once, on the way out, so the
+# expectations describe where everything ended up: the order after all three
+# drags is `Vocal chain`, `Drum bus`, `Mix notes`, and nothing else produces
+# that order. Fail any one drag and the result is different every time:
 #
 #   the first fails  -> Drum bus, Vocal chain, Mix notes
 #   the second fails -> Mix notes, Drum bus, Vocal chain
@@ -24,9 +23,12 @@ type:# Mix notes
 type:{ENTER}levels are close
 press:project title|204,76
 type:{END}{BS 40}Ghostlight
-press:+|129,113
+# The + button carries no word, and a lone glyph is not something text
+# recognition reads reliably: it is clicked where the code puts it, and that
+# the click landed is said by the tabs read at the end.
+plugin:129,87
 type:# Drum bus
-press:+|239,113
+plugin:239,87
 type:# Vocal chain
 
 # With three sections the centres are 60, 170 and 280, and the last one ends at
@@ -35,6 +37,10 @@ type:# Vocal chain
 # Between two: the last section carried over the middle one, which puts the mark
 # in the gap between the first two. The button stays down across these steps,
 # which is what makes it a drag rather than two clicks.
+#
+# The mid-drag pictures are for reading a failure. What the strip draws while
+# a section is being carried, the ghost and the drop mark, is measured in
+# `section_dragging.rs` against a headless render; nothing here decides it.
 plugin:hold:280,87
 plugin:moveto:170,87
 shot:%CACHE%\section-drag-between.png
@@ -60,6 +66,22 @@ plugin:moveto:330,87
 shot:%CACHE%\section-drag-to-end.png
 plugin:letgo:330,87
 shot:%CACHE%\section-drag-to-end-landed.png
+
+# Each tab, read in turn. The expectations below take the document the plugin
+# wrote and cut it into sections here, so they say nothing about how many tabs
+# there are or what each one holds: three sections in one tab would satisfy
+# them. Each tab has to show its own text and not its neighbours'.
+press:Vocal chain|60,113
+wait:500
+showing:Vocal chain|140
+hidden:levels are close|140
+press:Drum bus|170,113
+wait:500
+showing:Drum bus|140
+hidden:levels are close|140
+press:Mix notes|280,113
+wait:500
+showing:levels are close|140
 
 expect:title is Ghostlight
 expect:sections is 3
