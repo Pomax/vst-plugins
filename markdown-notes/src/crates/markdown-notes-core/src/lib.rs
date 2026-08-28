@@ -9,7 +9,9 @@
 //! ```
 //! use markdown_notes_core::{Editor, Key, Mods};
 //!
-//! let mut editor = Editor::new();
+//! // Blank: a document nobody has opened starts on a heading to be named,
+//! // and this types its own.
+//! let mut editor = Editor::with_text("");
 //! for c in "# Shopping".chars() {
 //!     editor.handle_key(Key::Char(c), Mods::NONE);
 //! }

@@ -112,9 +112,8 @@ fn load_generic(family: FamilyName) -> Option<(String, Vec<u8>)> {
 
 /// The bold face of one of the system's generic families.
 ///
-/// Bold used to be drawn as a stronger colour because egui bundles no bold
-/// font. It bundles no font at all here: every face comes from the machine,
-/// and machines have a bold one.
+/// egui bundles no bold font, and none is bundled here either: every face
+/// comes from the machine, and machines have a bold one.
 fn load_bold(family: FamilyName) -> Option<(String, Vec<u8>)> {
     let mut properties = Properties::new();
     properties.weight = font_kit::properties::Weight::BOLD;

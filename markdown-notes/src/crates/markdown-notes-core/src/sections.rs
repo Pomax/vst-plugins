@@ -9,6 +9,17 @@
 /// Shown by a section whose text does not start with a heading.
 pub const UNTITLED: &str = "untitled";
 
+/// What a section with nothing in it is given to start from, so that every
+/// section has a heading and so a title.
+pub const NEW_SECTION: &str = "# Section Title";
+
+/// The part of [`NEW_SECTION`] that is the title, which is what a new section
+/// opens with selected: the first thing typed replaces it.
+pub fn new_section_title() -> std::ops::Range<usize> {
+    let start = NEW_SECTION.len() - "Section Title".len();
+    start..NEW_SECTION.len()
+}
+
 /// Widest a section title may be, in characters.
 ///
 /// The width is fixed rather than proportional to the longest title so the bar
@@ -104,20 +115,31 @@ pub fn split_document(text: &str) -> Vec<String> {
         parts.push(preamble.trim_end().to_string());
     }
     for (i, &start) in starts.iter().enumerate() {
-        let end = starts.get(i + 1).copied().unwrap_or(text.len());
-        parts.push(text[start..end].trim_end().to_string());
+        match starts.get(i + 1) {
+            Some(&end) => parts.push(text[start..end].trim_end().to_string()),
+            // The last section ends where the document does, so what it trails
+            // in is the document's own end and is kept as it was written.
+            None => parts.push(text[start..].to_string()),
+        }
     }
     parts
 }
 
 /// Join sections back into one document, in section order.
+///
+/// What a section trails in is normalised away, because one blank line is the
+/// separator between them. What the last one trails in is not: blank lines at
+/// the end of the document were typed there, and they are room to carry on
+/// writing in.
 pub fn join_document(parts: &[&str]) -> String {
-    parts
+    let body = parts
         .iter()
         .map(|p| p.trim_end())
         .filter(|p| !p.trim().is_empty())
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join("\n\n");
+    let tail = parts.last().map_or("", |p| &p[p.trim_end().len()..]);
+    format!("{body}{tail}")
 }
 
 #[cfg(test)]
@@ -234,6 +256,43 @@ mod tests {
     #[test]
     fn headed_sections_survive_a_save_and_load() {
         let sections = ["# One\n\nfirst", "# Two\n\nsecond", "# Three\n\nthird"];
+        let reopened = split_document(&join_document(&sections));
+        assert_eq!(reopened, sections);
+    }
+
+    /// Blank lines at the end of the document were typed on purpose: they are
+    /// room to carry on writing in, and saving is not the moment to decide the
+    /// document should be shorter.
+    #[test]
+    fn blank_lines_at_the_end_of_the_document_are_written_out() {
+        assert_eq!(
+            join_document(&["# One\n\nfirst", "# Two\n\nsecond\n\n\n"]),
+            "# One\n\nfirst\n\n# Two\n\nsecond\n\n\n"
+        );
+    }
+
+    #[test]
+    fn a_last_section_of_nothing_but_blank_lines_keeps_them() {
+        assert_eq!(join_document(&["# One\n\nfirst", "\n\n"]), "# One\n\nfirst\n\n");
+    }
+
+    #[test]
+    fn blank_lines_at_the_end_come_back_when_the_document_is_split() {
+        assert_eq!(
+            split_document("# One\n\nfirst\n\n# Two\n\nsecond\n\n\n"),
+            ["# One\n\nfirst", "# Two\n\nsecond\n\n\n"]
+        );
+    }
+
+    #[test]
+    fn a_document_of_one_section_keeps_the_blank_lines_at_its_end() {
+        let sections = ["# One\n\nfirst\n\n\n"];
+        assert_eq!(split_document(&join_document(&sections)), sections);
+    }
+
+    #[test]
+    fn headed_sections_survive_it_with_blank_lines_at_the_end() {
+        let sections = ["# One\n\nfirst", "# Two\n\nsecond\n\n\n"];
         let reopened = split_document(&join_document(&sections));
         assert_eq!(reopened, sections);
     }

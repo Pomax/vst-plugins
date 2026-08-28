@@ -1,0 +1,78 @@
+# Escape closes a preset dialog and does nothing else.
+#
+# Both dialogs commit on a single action. Enter or the Save button for one, a
+# click on a row for the other. So the only way out without committing is
+# Escape, and it has to be a way out that leaves no trace.
+remove:%PRESETS%\escape-test.preset
+remove:%PRESETS%\not-written.preset
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, leaving nothing: what is
+# being carried through a preset here is the plain word below.
+type:{BS 3}
+type:one
+
+# Save a preset for real, so the Load button has something to offer. The name
+# field opens with the last name saved or loaded in it, so it is cleared first.
+# Enter commits, so this dialog has to be gone too.
+press:Save preset|44,41
+wait:500
+window:Save preset
+type:{END}{BS 40}escape-test
+type:{ENTER}
+wait:500
+nowindow:Save preset
+window:
+
+# Change the document. Loading the preset would put it back to "one", so this
+# is what proves nothing was loaded.
+#
+# Beside the line rather than below it: the empty space under the last line
+# takes the caret away instead of placing it, and how much of that there is
+# depends on how big the window happens to be.
+plugin:400,128
+type: two
+wait:500
+
+# Load preset, then Escape. The dialog has to be gone afterwards, which is
+# what this test is about: the expectations at the end catch a dialog that
+# committed, and say nothing about one that simply stayed open.
+press:Load preset|128,41
+wait:500
+window:Load preset
+type:{ESC}
+wait:500
+nowindow:Load preset
+window:
+
+# Save preset with a name typed in, then Escape. No file by that name, and
+# again no dialog left behind.
+press:Save preset|44,41
+wait:500
+window:Save preset
+type:{END}{BS 40}not-written
+type:{ESC}
+wait:500
+nowindow:Save preset
+window:
+
+# And what the Load list offers: the preset that was committed is in it, the
+# one escaped out of is not. The file assertions below say the same thing
+# about the disk; this says it about what the dialog shows, which is what
+# somebody looking for their preset would see.
+press:Load preset|128,41
+wait:500
+window:Load preset
+showing:escape-test|0
+hidden:not-written|0
+type:{ESC}
+wait:500
+nowindow:Load preset
+window:
+
+cleanup:%PRESETS%\escape-test.preset
+cleanup:%PRESETS%\not-written.preset
+
+expect:file exists %PRESETS%\escape-test.preset
+expect:no file at %PRESETS%\not-written.preset
+expect:sections is 1
+expect:section 0 is one two

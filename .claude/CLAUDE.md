@@ -248,7 +248,7 @@ To check whether a path is ignored, ask git about the repository that already
 exists:
 
 ```bash
-git check-ignore -v "dist/Markdown Notes.vst3"   # why is (or isn't) this ignored
+git check-ignore -v "binaries/Markdown Notes.vst3"   # why is (or isn't) this ignored
 git status --ignored --short              # everything, including ignored paths
 ```
 
@@ -281,7 +281,7 @@ Say the thing. No preamble, no framing, no throat-clearing.
 Cut phrases like "worth being straight about", "the thing to note here",
 "to be clear", "what this does and doesn't tell us", "one honest caveat",
 "the underlying friction", "the real question here". Name the thing instead:
-"running the tests deletes dist/".
+"running the tests deletes the plugin from binaries/".
 They add words and no information. If a caveat matters, state it as a fact:
 "The macOS build never reached markdown-notes-plugin, so there may be more
 errors."

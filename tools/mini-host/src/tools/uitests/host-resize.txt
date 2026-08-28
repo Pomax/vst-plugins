@@ -1,0 +1,53 @@
+# The plugin's window fills the host's, at whatever size the host is.
+#
+# The plugin is a window of its own inside the host's, and it is moved from
+# inside the resize itself. Putting it right on the next frame of the host's
+# drawing loop is a frame late for every frame of a drag: the host paints its
+# new shape while the plugin still has the old one, so the edge of the window
+# shows the host's background where the plugin has not caught up.
+#
+# The strip across the top is 26 points tall, so the plugin gets everything
+# below that: the same width, and the height less 26.
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, leaving nothing: what has
+# to survive the resizing is the plain line below.
+type:{BS 3}
+type:something to keep
+
+# Resizing is a hand on the corner, moving: nothing here sets a size any
+# other way. The geometry files below are the assertions.
+#
+# The film is not one. It is recorded from before the hand takes the corner,
+# over a region big enough for the largest size the window is dragged to,
+# since the region is fixed once recording starts, and it is there to be
+# watched when something looks wrong. Nothing about how a resize looks can be
+# reduced to a frame count: a window that stretches its old picture and one
+# that redraws produce much the same numbers.
+# `host-resize-target.mp4` beside this file is what a right one looks like.
+remove:%CACHE%\host-resize-grown.txt
+remove:%CACHE%\host-resize-shrunk.txt
+film:%CACHE%\host-resize-drag|1000,760
+dragto:880,600,1000
+wait:500
+geometry:%CACHE%\host-resize-grown.txt
+# Smaller as well as bigger: a window that only ever grows can hide the case
+# where the plugin is left overhanging the frame it is in.
+dragto:620,420,1000
+wait:500
+geometry:%CACHE%\host-resize-shrunk.txt
+endfilm:
+
+# The sizes are named exactly, because a grab that lands on the wrong pixel
+# and drags nothing leaves the window as it was, and a test that only asked
+# whether the plugin still fits would pass on that.
+expect:file at %CACHE%\host-resize-grown.txt contains host=880x600
+expect:file at %CACHE%\host-resize-grown.txt contains editor=0,26,880x574
+# And the plugin fills it: nothing above it but the strip, nothing beside or
+# below it at all.
+expect:file at %CACHE%\host-resize-grown.txt contains inset=0,26,0,0
+expect:file at %CACHE%\host-resize-shrunk.txt contains host=620x420
+expect:file at %CACHE%\host-resize-shrunk.txt contains editor=0,26,620x394
+expect:file at %CACHE%\host-resize-shrunk.txt contains inset=0,26,0,0
+# And the plugin is still alive and still taking keys after all of that.
+expect:sections is 1
+expect:section 0 is something to keep

@@ -20,6 +20,8 @@
 //! cargo run -p xtask -- bundle [--release] [--target <triple>]
 //! ```
 
+#[cfg(target_os = "macos")]
+mod macos;
 mod uitest;
 
 use std::fs;
@@ -139,7 +141,6 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
     let opts = parse(args);
     let root = workspace_root();
 
-    // 1. Build the shared library.
     let mut cmd = Command::new(env!("CARGO"));
     cmd.current_dir(&root).arg("build").arg("-p").arg(PLUGIN_CRATE);
     if opts.release {
@@ -153,7 +154,6 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
         return Err("building the plugin failed".into());
     }
 
-    // 2. Find what it produced.
     let profile_dir = if opts.release { "release" } else { "debug" };
     let mut out_dir = build_dir(&root);
     if let Some(target) = &opts.target {
@@ -167,7 +167,6 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
         return Err(format!("expected {} to exist", lib.display()));
     }
 
-    // 3. Assemble the bundle.
     let bundle_root = out_dir.join("bundle").join(format!("{BUNDLE_NAME}.vst3"));
     if bundle_root.exists() {
         fs::remove_dir_all(&bundle_root).map_err(|e| format!("clearing old bundle: {e}"))?;
@@ -190,28 +189,52 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
         copy(&lib, &arch_dir.join(format!("{BUNDLE_NAME}.vst3")))?;
     }
 
-    // 3b. Describe the bundle in moduleinfo.json.
     match write_module_info(&bundle_root, &contents) {
         Ok(path) => println!("info:   {}", path.display()),
         Err(e) => println!("note:   could not write moduleinfo.json: {e}"),
     }
 
-    // 4. Copy the plugin binary to dist/, so the build result can be picked up
-    //    without digging through target/.
-    let dist = write_dist(&root, &lib, &bundle_root, &triple)?;
-    println!("dist:   {}", dist.display());
+    // The whole bundle, not just the binary inside it.
+    if is_macos(&triple) && cfg!(target_os = "macos") {
+        sign(&bundle_root)?;
+    }
 
-    // 5. Load what is about to ship, the way a host will.
+    // So the build result can be picked up without digging through the cache.
+    let built = write_binary(&root, &lib, &bundle_root, &triple)?;
+    if is_macos(&triple) && cfg!(target_os = "macos") {
+        sign(&built)?;
+    }
+    println!("binary: {}", built.display());
+
+    // Load what is about to ship, the way a host will.
     if runnable_here(&triple) {
-        verify_bundle(&dist)?;
+        verify_bundle(&built)?;
     } else {
         println!("note:   built for {triple}, which cannot be loaded here");
     }
 
-    // 6. The build succeeded and dist/ has the result, so the intermediates are
-    //    kept: .cache/ is a cache, so the next build only redoes what changed.
-
     Ok(bundle_root)
+}
+
+/// Sign a bundle so its signature covers the whole thing.
+///
+/// The linker ad-hoc signs the binary it produces, which leaves the bundle
+/// around it unsigned: `codesign` reports `Sealed Resources=none` and
+/// `Info.plist=not bound`. A host running under the hardened runtime with
+/// library validation refuses to load a bundle in that state, and the plugin
+/// never appears. Signing the assembled directory seals `Contents` and binds
+/// the `Info.plist` to the signature.
+fn sign(bundle: &Path) -> Result<(), String> {
+    let status = Command::new("codesign")
+        .args(["--force", "--sign", "-", "--timestamp=none"])
+        .arg(bundle)
+        .status()
+        .map_err(|e| format!("running codesign: {e}"))?;
+    if !status.success() {
+        return Err(format!("signing {} failed", bundle.display()));
+    }
+    println!("signed: {}", bundle.display());
+    Ok(())
 }
 
 /// Whether a bundle built for `triple` can be loaded by this process.
@@ -242,7 +265,7 @@ fn runnable_here(triple: &str) -> bool {
 /// `#[no_mangle]` — compiles and links cleanly and then fails in the host. The
 /// only way to know is to load it.
 fn verify_bundle(bundle: &Path) -> Result<(), String> {
-    let module = mini_host::Module::load(bundle)
+    let module = vst3_loader::Module::load(bundle)
         .map_err(|e| format!("{} does not load: {e}", bundle.display()))?;
 
     let count = module.class_count();
@@ -267,7 +290,7 @@ fn uitest(args: &[String]) -> Result<(), String> {
 
     // Both halves have to exist: this plugin, and the host that opens it.
     let bundle = bundle(&["--release".to_string()])?;
-    let plugin = dist_dir(&root).join(format!("{BUNDLE_NAME}.vst3"));
+    let plugin = binaries_dir(&root).join(format!("{BUNDLE_NAME}.vst3"));
     let plugin = if plugin.exists() { plugin } else { bundle };
 
     let host = mini_host(&root)?;
@@ -282,11 +305,12 @@ fn mini_host(root: &Path) -> Result<PathBuf, String> {
     let project = root
         .parent()
         .ok_or("no directory above this project")?
+        .join("tools")
         .join("mini-host");
     let name = if cfg!(windows) { "mini-host.exe" } else { "mini-host" };
 
     for candidate in [
-        root.parent().map(|p| p.join("dist").join(name)),
+        root.parent().map(|p| p.join("binaries").join(name)),
         Some(project.join(".cache").join("release").join(name)),
     ]
     .into_iter()
@@ -314,10 +338,10 @@ fn mini_host(root: &Path) -> Result<PathBuf, String> {
 
 /// Where finished builds go: one directory shared by every project here, so
 /// the results sit together rather than one level down inside each.
-fn dist_dir(root: &Path) -> PathBuf {
+fn binaries_dir(root: &Path) -> PathBuf {
     match root.parent() {
-        Some(parent) => parent.join("dist"),
-        None => root.join("dist"),
+        Some(parent) => parent.join("binaries"),
+        None => root.join("binaries"),
     }
 }
 
@@ -339,9 +363,9 @@ fn remove_path(path: &Path) -> Result<(), String> {
     })
 }
 
-/// Take this project's result back out of the shared `dist/`.
-fn remove_dist(root: &Path) {
-    let target = dist_dir(root).join(format!("{BUNDLE_NAME}.vst3"));
+/// Take this project's result back out of the shared `binaries/`.
+fn remove_binary(root: &Path) {
+    let target = binaries_dir(root).join(format!("{BUNDLE_NAME}.vst3"));
     if !target.exists() {
         return;
     }
@@ -456,7 +480,7 @@ fn directory_size(dir: &Path) -> u64 {
 /// built, rather than written from constants here, so the description cannot
 /// disagree with the thing it describes.
 fn write_module_info(bundle_root: &Path, contents: &Path) -> Result<PathBuf, String> {
-    let module = mini_host::Module::load(bundle_root).map_err(|e| e.to_string())?;
+    let module = vst3_loader::Module::load(bundle_root).map_err(|e| e.to_string())?;
     let factory = module.factory_info();
 
     let mut classes = Vec::new();
@@ -532,23 +556,23 @@ fn write_module_info(bundle_root: &Path, contents: &Path) -> Result<PathBuf, Str
 }
 
 
-/// Replace `<root>/dist` with the build result.
+/// Put the build result in `<root>/binaries`.
 ///
-/// The directory is deleted and recreated, so it holds this build and nothing
-/// else. On Windows and Linux that is the plugin binary; on macOS it is the
-/// bundle, which is the only loadable form there.
-fn write_dist(
+/// On Windows and Linux that is the plugin binary; on macOS it is the bundle,
+/// which is the only loadable form there.
+fn write_binary(
     root: &Path,
     lib: &Path,
     bundle_root: &Path,
     triple: &str,
 ) -> Result<PathBuf, String> {
-    let dist = dist_dir(root);
-    let target = dist.join(format!("{BUNDLE_NAME}.vst3"));
+    let binaries = binaries_dir(root);
+    let target = binaries.join(format!("{BUNDLE_NAME}.vst3"));
     // Shared with the other projects alongside this one, so only this
     // project's own result is cleared out.
     remove_path(&target)?;
-    fs::create_dir_all(&dist).map_err(|e| format!("creating {}: {e}", dist.display()))?;
+    fs::create_dir_all(&binaries)
+        .map_err(|e| format!("creating {}: {e}", binaries.display()))?;
 
     if is_macos(triple) {
         copy_tree(bundle_root, &target)?;
@@ -588,9 +612,9 @@ fn test(args: &[String]) -> Result<(), String> {
     let root = workspace_root();
 
     // A test run compiles the plugin but is not a build of it, so anything in
-    // dist/ is now describing older code. Remove it rather than leave something
-    // stale that looks current.
-    remove_dist(&root);
+    // binaries/ is now describing older code. Remove it rather than leave
+    // something stale that looks current.
+    remove_binary(&root);
 
     let run = |what: &str, extra: &[&str]| -> Result<(), String> {
         let mut cmd = Command::new(env!("CARGO"));
@@ -626,6 +650,22 @@ fn test(args: &[String]) -> Result<(), String> {
                 "snapshots",
                 "--test",
                 "theme_rendering",
+                "--test",
+                "caret_in_view",
+                "--test",
+                "caret_rendering",
+                "--test",
+                "clicking_the_document",
+                "--test",
+                "block_spacing",
+                "--test",
+                "section_dragging",
+                "--test",
+                "selection_rendering",
+                "--test",
+                "text_area",
+                "--test",
+                "title_field",
             ],
         )?;
     }

@@ -7,8 +7,8 @@ binary, instantiates it the way a DAW would, and lets you drive it.
 It comes in three forms:
 
 - **`vst3-loader`**, in this project: loads a plugin and reports on it.
-- **`mini-host`**, a separate project alongside this one, which opens a window
-  it, so the plugin can be used by hand.
+- **`mini-host`**, a separate project beside this one in `tools/`, which opens a
+  window for it, so the plugin can be used by hand.
 - **the library**, for writing scripted interactions in Rust.
 
 ---
@@ -22,11 +22,11 @@ run <path-to-plugin.vst3>
 Point it at this project's plugin:
 
 ```bash
-run dist/Markdown Notes.vst3
+run ../../binaries/Markdown Notes.vst3
 ```
 
 ```text
-binary   dist/Markdown Notes.vst3
+binary   ../../binaries/Markdown Notes.vst3
 vendor   markdown-notes
 factory  IPluginFactory=true IPluginFactory2=true IPluginFactory3=true
 classes  1
@@ -54,7 +54,7 @@ the view object and a plugin does not draw until the host calls
 `IPlugView::attached`. `mini-host` does that:
 
 ```bash
-cargo run --bin mini-host -- ../dist/Markdown Notes.vst3
+cargo run --bin mini-host -- ../../binaries/Markdown Notes.vst3
 ```
 
 The Markdown Notes project's `run.bat` and `run.sh` do exactly that.
@@ -187,16 +187,16 @@ Add it as a dependency:
 
 ```toml
 [dependencies]
-mini-host = { path = "../mini-host/src/crates/mini-host" }
+vst3-loader = { path = "../tools/vst3-loader/src/crates/vst3-loader" }
 ```
 
 ### Loading and inspecting
 
 ```rust
 use std::path::Path;
-use mini_host::Module;
+use vst3_loader::Module;
 
-let module = Module::load(Path::new("dist/Markdown Notes.vst3"))?;
+let module = Module::load(Path::new("binaries/Markdown Notes.vst3"))?;
 
 println!("{}", module.vendor());
 for i in 0..module.class_count() {

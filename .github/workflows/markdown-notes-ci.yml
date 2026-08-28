@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "markdown-notes/**"
-      - "mini-host/**"
+      - "tools/mini-host/**"
       - ".github/workflows/markdown-notes-ci.yml"
   workflow_dispatch:
 

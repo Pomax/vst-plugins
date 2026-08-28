@@ -1,0 +1,4 @@
+# Build output goes to .cache/ rather than target/, the same as every other
+# project here.
+[build]
+target-dir = ".cache"

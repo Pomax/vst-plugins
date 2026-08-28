@@ -1,0 +1,100 @@
+# A preset restores the plugin in a host that has never seen the document.
+#
+# Saving a preset, closing the host, opening it again and loading that preset
+# is the whole point of a preset. Loading one back into the same process the
+# plugin was already holding the document in proves nothing: the state was
+# never gone.
+#
+# Two sections, each a heading and a paragraph, and the document also saved to a
+# file of its own on the way. Saving a file is a copy going out; it is not
+# supposed to change the document or what a preset holds of it.
+remove:%PRESETS%\across-runs.preset
+# A section opens on a heading waiting to be named, so this names it rather
+# than typing a `#` of its own.
+type:first
+type:{ENTER}the first paragraph
+# The + button carries no word, and a lone glyph is not something text
+# recognition reads reliably: it is clicked where the code puts it, and that
+# the click landed is said by the two tabs read after the preset comes back.
+plugin:129,87
+type:second
+type:{ENTER}the second paragraph
+
+remove:%CACHE%\across-runs.md
+press:Save As|567,76
+wait:500
+type:%CACHE%\across-runs.md
+type:{ENTER}
+wait:500
+# What that dialog wrote, checked here rather than assumed: a save that never
+# happened would otherwise only show up further down, as a document with a
+# file path typed into it.
+written:%CACHE%\across-runs.md|# first\n\nthe first paragraph\n\n# second\n\nthe second paragraph
+
+# The name field opens with the last name saved or loaded in it, so it is
+# cleared before this one is typed.
+press:Save preset|44,41
+wait:500
+window:Save preset
+shot:%CACHE%\host-presets-save.png
+type:{END}{BS 40}across-runs
+type:{ENTER}
+wait:500
+nowindow:Save preset
+window:
+
+# A new host, holding a plugin that starts empty.
+restart:
+wait:500
+
+press:Load preset|128,41
+wait:500
+window:Load preset
+shot:%CACHE%\host-presets-list.png
+# One click on a row is the whole interaction, and it goes by name: the list
+# also holds whatever presets have been saved by hand, so this one is wherever
+# the alphabet puts it among them.
+#
+# Where flicker shows, if it ever comes back. A dialog that is not modal leaves
+# the window behind it being activated and deactivated over and over, and both
+# title bars go light and dark with it. Filming it costs four seconds of
+# recording on every run to re-prove something already fixed, so it is off:
+# uncomment these three lines and the expectation at the bottom to film the
+# pointer being dragged across the dialog and off it.
+#film:%CACHE%\host-presets-behind
+#wiggle:3000
+#endfilm:
+row:%PRESETS%|across-runs
+wait:500
+nowindow:Load preset
+window:
+# What the restored document looks like, which is where this went wrong: the
+# state was right while the window showed the frame drawn as it changed.
+shot:%CACHE%\across-runs-restored.png
+
+# Both tabs came back, each holding its own section. The expectations below
+# cut the document into sections here, so they cannot tell two tabs from one
+# tab holding everything; reading each tab can.
+press:first|60,113
+wait:500
+showing:the first paragraph|140
+hidden:the second paragraph|140
+press:second|170,113
+wait:500
+showing:the second paragraph|140
+hidden:the first paragraph|140
+
+cleanup:%PRESETS%\across-runs.preset
+cleanup:%CACHE%\across-runs.md
+
+# The preset is a file of its own, in the directory this plugin's presets live
+# in. Without this the test would pass on a preset that was never written, so
+# long as the document happened to come back looking right.
+expect:file exists %PRESETS%\across-runs.preset
+expect:sections is 2
+expect:section 0 is # first\n\nthe first paragraph
+expect:section 1 is # second\n\nthe second paragraph
+# Crossing the dialog lights up a row and a button or two, which is a few dozen
+# distinct frames out of two hundred. A dialog fighting the window behind it for
+# the focus repaints both of them continuously instead, and every frame differs.
+#expect:file at %CACHE%\host-presets-behind.txt has distinct_frames at most 60

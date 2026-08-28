@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "vst3-loader/**"
-      - "mini-host/**"
+      - "tools/vst3-loader/**"
+      - "tools/mini-host/**"
       - "!**/*.md"
   workflow_dispatch:
 
@@ -20,7 +20,7 @@ env:
 
 defaults:
   run:
-    working-directory: vst3-loader
+    working-directory: tools/vst3-loader
 
 jobs:
   windows:
@@ -39,12 +39,12 @@ jobs:
         run: ./build.bat
 
       - name: Zip
-        run: Compress-Archive -Path ../dist/vst3-loader.exe -DestinationPath vst3-loader-windows-x86_64.zip
+        run: Compress-Archive -Path ../../binaries/vst3-loader.exe -DestinationPath vst3-loader-windows-x86_64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vst3-loader-windows-x86_64
-          path: vst3-loader/vst3-loader-windows-x86_64.zip
+          path: tools/vst3-loader/vst3-loader-windows-x86_64.zip
           if-no-files-found: error
 
   macos:
@@ -65,12 +65,12 @@ jobs:
         run: ./build.sh
 
       - name: Zip
-        run: ditto -c -k --sequesterRsrc ../dist/vst3-loader vst3-loader-macos-arm64.zip
+        run: ditto -c -k --sequesterRsrc ../../binaries/vst3-loader vst3-loader-macos-arm64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vst3-loader-macos-arm64
-          path: vst3-loader/vst3-loader-macos-arm64.zip
+          path: tools/vst3-loader/vst3-loader-macos-arm64.zip
           if-no-files-found: error
 
   release:

@@ -3,20 +3,20 @@
 Screenshot the real editor window.
 
 .DESCRIPTION
-The headless snapshot renderer proves the drawing code is right, but it does not
-prove the actual window is: that path goes through baseview and OpenGL, and the
+The headless pixel tests prove the drawing code is right, but they do not prove
+the actual window is: that path goes through baseview and OpenGL, and the
 background is the renderer's clear colour rather than anything egui draws. This
-launches the real preview window, waits for it to appear, captures its pixels
+launches the given program, waits for its window to appear, captures its pixels
 off the screen with BitBlt, and closes it.
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File src/tools/capture-window.ps1 -Theme light -Out target/window-light.png
+powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Exe binaries/mini-host.exe -Title "Mini VST Host" -Out window.png
 #>
 param(
     [ValidateSet('light', 'dark', 'auto')]
     [string]$Theme = 'auto',
-    [string]$Out = 'target/window.png',
-    [string]$Exe = 'target/debug/examples/preview.exe',
+    [string]$Out = 'window.png',
+    [string]$Exe = 'binaries/mini-host.exe',
     [string]$Notes = '',
     # Arguments to launch with. Given, they replace -Theme and -Notes, for an
     # executable that does not take those. Separate them with `|`: with
@@ -34,10 +34,17 @@ param(
     #   type:TEXT     send TEXT as key presses
     #   wait:MS       pause
     #   remove:PATH   delete a file, so a save does not hit "already exists"
-    #   resize:W,H    give the window a drawable area of exactly W by H
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
     #   moveto:X,Y    move the pointer there, at the speed a hand moves
+    #   press:LABEL|X,Y  photograph the window, find the labelled control
+    #                 nearest X,Y in the picture to confirm or correct the spot,
+    #                 delete the picture, and click where the label really is
+    #   showing:TEXT|Y   fail unless the window below Y shows TEXT
+    #   hidden:TEXT|Y    fail if the window below Y shows TEXT
+    #   dialog:WORD   fail unless a file dialog with WORD on it is open
+    #   nodialog:WORD fail if a file dialog is open at all
+    #   nowindow:TITLE fail while a window with that title is still there
     #   letgo:X,Y     move there and release the button
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
@@ -50,7 +57,7 @@ param(
     # "x,y" inside the window to park the pointer on before the grab, for
     # capturing a hover state.
     [string]$HoverAt = '',
-    [int]$SettleMs = 2500
+    [int]$SettleMs = 500
 )
 
 $ErrorActionPreference = 'Stop'
@@ -159,7 +166,7 @@ public class Win32Capture {
     }
 
     /// Hold a modifier, tap a key, let go, as a keyboard does it.
-    public static void Chord(ushort modifier, ushort key) {
+    public static void Shortcut(ushort modifier, ushort key) {
         Send(KeyInput(modifier, false));
         System.Threading.Thread.Sleep(40);
         Send(KeyInput(key, false));
@@ -320,24 +327,7 @@ public class Win32Capture {
 
     [DllImport("user32.dll")] public static extern bool SetWindowPos(
         IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll")] public static extern bool AdjustWindowRectEx(
-        ref RECT r, uint style, bool menu, uint exStyle);
-    [DllImport("user32.dll")] public static extern int GetWindowLongW(IntPtr hWnd, int index);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
-
-    /// Give a window a drawable area of exactly this size.
-    ///
-    /// The size a window is set to counts its frame, and what a test cares
-    /// about is the room inside: how big the frame is depends on the theme.
-    public static void SetClientSize(IntPtr hWnd, int width, int height) {
-        RECT want; want.Left = 0; want.Top = 0; want.Right = width; want.Bottom = height;
-        uint style = (uint)GetWindowLongW(hWnd, -16);    // GWL_STYLE
-        uint exStyle = (uint)GetWindowLongW(hWnd, -20);  // GWL_EXSTYLE
-        AdjustWindowRectEx(ref want, style, false, exStyle);
-        SetWindowPos(hWnd, IntPtr.Zero, 0, 0,
-            want.Right - want.Left, want.Bottom - want.Top,
-            0x0002 | 0x0004 | 0x0010);  // NOMOVE | NOZORDER | NOACTIVATE
-    }
 
     /// The plugin's own window inside the host's: the biggest child there is.
     ///
@@ -409,13 +399,33 @@ public class Win32Capture {
         if (match != IntPtr.Zero) return match;
         return strict ? IntPtr.Zero : biggest;
     }
+
+    /// A visible window of this process that is not `notThis`.
+    ///
+    /// A file dialog is a window of the process that opened it, so a second
+    /// window being there is a dialog being up. Zero when there is none.
+    public static IntPtr OtherWindow(uint targetPid, IntPtr notThis) {
+        IntPtr found = IntPtr.Zero;
+        long biggestArea = 0;
+        EnumWindows((h, l) => {
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            if (pid != targetPid || h == notThis || !IsWindowVisible(h)) return true;
+            RECT r;
+            if (!GetWindowRect(h, out r)) return true;
+            long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+            if (area > biggestArea) { biggestArea = area; found = h; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 '@
 
 [Win32Capture]::SetProcessDPIAware() | Out-Null
 
 if (-not (Test-Path $Exe)) {
-    throw "$Exe not found - run: cargo build -p markdown-notes-plugin --example preview"
+    throw "$Exe not found - run build.bat"
 }
 
 $outDir = Split-Path -Parent $Out
@@ -450,6 +460,80 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     $gfx.Dispose()
     $bmp.Dispose()
+}
+
+# Every piece of text in a picture, with where each one is.
+#
+# The whole picture is read once and the answer searched afterwards. Asking the
+# recogniser for one string is not what it does: it reads what is there either
+# way, and a small picture cut to one control is read far worse than a whole
+# window.
+function Read-Text([string]$path) {
+    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
+    if (-not (Test-Path $finder)) {
+        throw "the text finder is not built: run tools\find-text\build.bat"
+    }
+    $answer = @(& $finder $path)
+    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+
+    $lines = @()
+    foreach ($row in $answer | Select-Object -Skip 1) {
+        $parts = $row -split '\s+', 5
+        if ($parts.Count -ne 5) { continue }
+        $lines += @{
+            Text = $parts[4]
+            Left = [int]$parts[0]; Top = [int]$parts[1]
+            Right = [int]$parts[0] + [int]$parts[2]
+            Bottom = [int]$parts[1] + [int]$parts[3]
+            X = [int]$parts[0] + [int]([int]$parts[2] / 2)
+            Y = [int]$parts[1] + [int]([int]$parts[3] / 2)
+        }
+    }
+    return $lines
+}
+
+# Every place a piece of text is in a picture, best match first.
+#
+# The box is of the words that match, not of the whole line they were read on:
+# neighbouring buttons come back as one line, and the centre of that line is
+# the gap between them rather than either button.
+function Find-All([string]$path, [string]$label) {
+    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
+    if (-not (Test-Path $finder)) {
+        throw "the text finder is not built: run tools\find-text\build.bat"
+    }
+    $answer = @(& $finder $path $label)
+    if ($LASTEXITCODE -eq 1) { return @() }
+    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+
+    $found = @()
+    foreach ($row in $answer | Select-Object -Skip 1) {
+        $parts = $row -split '\s+'
+        if ($parts.Count -ne 4) { continue }
+        $found += @{
+            Left = [int]$parts[0]; Top = [int]$parts[1]
+            Right = [int]$parts[0] + [int]$parts[2]
+            Bottom = [int]$parts[1] + [int]$parts[3]
+            X = [int]$parts[0] + [int]([int]$parts[2] / 2)
+            Y = [int]$parts[1] + [int]([int]$parts[3] / 2)
+        }
+    }
+    return $found
+}
+
+# Where a labelled control is inside a picture, found by reading it.
+#
+# With `$near` given, the match closest to that spot wins, so a word that is
+# both a tab and a heading is told apart by where it is. Returns the centre as
+# a hashtable with X and Y in picture pixels, or $null when the label is
+# nowhere in the picture.
+function Find-Label([string]$path, [string]$label, $near) {
+    $found = @(Find-All $path $label)
+    if (-not $found.Count) { return $null }
+    if (-not $near) { return $found[0] }
+    return $found | Sort-Object {
+        [Math]::Pow($_.X - $near.X, 2) + [Math]::Pow($_.Y - $near.Y, 2)
+    } | Select-Object -First 1
 }
 
 # Where ffmpeg is. Recording a window is its job, and screenshots cannot do it:
@@ -511,7 +595,7 @@ try {
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $false)
         Write-Warning "no window titled ""$Title"" found; falling back to the largest one"
     }
-    if ($hwnd -eq [IntPtr]::Zero) { throw 'the preview window never appeared' }
+    if ($hwnd -eq [IntPtr]::Zero) { throw 'the window never appeared' }
     [Win32Capture]::ShowWindow($hwnd, 5) | Out-Null   # SW_SHOW
     if (-not [Win32Capture]::BringToFront($hwnd)) {
         Write-Warning 'the window would not come to the front'
@@ -537,7 +621,7 @@ try {
     if ($Type) {
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.SendKeys]::SendWait($Type)
-        Start-Sleep -Milliseconds 900
+        Start-Sleep -Milliseconds 500
     }
 
     if ($StepFile) {
@@ -556,20 +640,147 @@ try {
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
                     Start-Sleep -Milliseconds 500
                 }
+                'press' {
+                    # `press:LABEL|X,Y` looks first and clicks second. X,Y is
+                    # where the code puts the control, in window coordinates;
+                    # the window is photographed, the label nearest that spot
+                    # is found in the picture, and the click goes where the
+                    # label really is. A label the window does not show is a
+                    # failure, not a blind click.
+                    $label, $at = $value -split '\|', 2
+                    $label = $label.Trim()
+                    if (-not $label -or -not $at) { throw "cannot read press: $value" }
+                    $parts = $at -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read press: $value" }
+                    $x = [int]$parts[0]
+                    $y = [int]$parts[1]
+                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
+                    Save-Shot $rect $probe
+                    $found = Find-Label $probe $label @{ X = $x; Y = $y }
+                    if (-not $found) {
+                        # The picture stays when the label is not in it: what
+                        # the window actually held is the only way to tell a
+                        # control drawn elsewhere from one that cannot be read.
+                        throw "no control labelled `"$label`" is in the window; it is in $probe"
+                    }
+                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    [Win32Capture]::Click(
+                        $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
+                    Start-Sleep -Milliseconds 500
+                    Write-Host ("press:  {0} at {1},{2}" -f $label, $found.X, $found.Y)
+                }
                 'type' {
                     [System.Windows.Forms.SendKeys]::SendWait($value)
-                    Start-Sleep -Milliseconds 700
+                    Start-Sleep -Milliseconds 500
                 }
                 'wait' { Start-Sleep -Milliseconds ([int]$value) }
-                'drag' {
-                    # `drag:X1,Y1,X2,Y2` presses at the first point, releases at
-                    # the second, moving across in between.
-                    $parts = $value -split ','
-                    if ($parts.Count -ne 4) { throw "cannot read drag: $value" }
+                { $_ -in 'showing', 'hidden' } {
+                    # `showing:TEXT|Y` reads the window below Y and fails
+                    # unless TEXT is there; `hidden:` fails if it is. Below Y
+                    # so the toolbars and the tab labels are out of it: what
+                    # is being asked about is what the document displays, and
+                    # a tab's own label is not that.
+                    $text, $below = $value -split '\|', 2
+                    $text = $text.Trim()
+                    if (-not $text -or -not $below) { throw "cannot read ${kind}: $value" }
+                    # The whole window is photographed and the answer filtered
+                    # to what is below Y afterwards: a picture cut to a band is
+                    # read worse than a whole window.
+                    $probe = Join-Path $env:TEMP 'capture-window-showing.png'
+                    Save-Shot $rect $probe
+                    try {
+                        $found = @(Find-All $probe $text |
+                            Where-Object { $_.Top -ge [int]$below }).Count -gt 0
+                    } finally {
+                        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    }
+                    if ($kind -eq 'showing' -and -not $found) {
+                        throw "the document does not show `"$text`""
+                    }
+                    if ($kind -eq 'hidden' -and $found) {
+                        throw "the document still shows `"$text`""
+                    }
+                    Write-Host ("{0}: {1}" -f $kind, $text)
+                }
+                { $_ -in 'dialog', 'nodialog' } {
+                    # `dialog:WORD` fails unless a file dialog is open with
+                    # WORD on it; `nodialog:WORD` fails if one is open at all.
+                    #
+                    # A file dialog is a window of the process that opened it,
+                    # so a second window of that process being there is a
+                    # dialog being up. Which dialog is read off the dialog
+                    # itself: the title is the plugin's name on both of them,
+                    # and only what is written inside says which.
+                    $want = $value.Trim()
+                    $panel = [IntPtr]::Zero
+                    foreach ($try in 1..15) {
+                        $panel = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
+                        if ($panel -ne [IntPtr]::Zero -or $kind -eq 'nodialog') { break }
+                        Start-Sleep -Milliseconds 200
+                    }
+                    if ($kind -eq 'nodialog') {
+                        if ($panel -ne [IntPtr]::Zero) { throw "a $want dialog is still open" }
+                        Write-Host ("nodialog: {0}" -f $want)
+                        break
+                    }
+                    if ($panel -eq [IntPtr]::Zero) {
+                        throw "no $want dialog is open, so the button did nothing"
+                    }
+                    $probe = Join-Path $env:TEMP 'capture-window-dialog.png'
+                    Save-Shot ([Win32Capture]::VisibleRect($panel)) $probe
+                    if (-not (Find-Label $probe $want)) {
+                        throw "a dialog is open, but nothing on it says ""$want""; see $probe"
+                    }
+                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    Write-Host ("dialog: {0}" -f $want)
+                }
+                'nowindow' {
+                    # `nowindow:TITLE` fails while a window with that title is
+                    # still there: what a dialog that closed cleanly leaves.
+                    $want = $value.Trim()
+                    $gone = [IntPtr]::Zero
+                    foreach ($try in 1..15) {
+                        $gone = [Win32Capture]::FindWindow([uint32]$proc.Id, $want, $true)
+                        if ($gone -eq [IntPtr]::Zero) { break }
+                        Start-Sleep -Milliseconds 200
+                    }
+                    if ($gone -ne [IntPtr]::Zero) { throw "the window ""$want"" is still open" }
+                    Write-Host ("nowindow: {0}" -f $want)
+                }
+                'dragtext' {
+                    # `dragtext:TEXT|Y|X,Y2` selects by dragging from where
+                    # TEXT starts to X,Y2 in window coordinates. Where TEXT is
+                    # comes from looking: the window below Y is photographed,
+                    # the first TEXT in it is found, the picture is deleted,
+                    # and the press lands on TEXT's first character.
+                    $text, $below, $to = $value -split '\|', 3
+                    if (-not $text -or -not $below -or -not $to) {
+                        throw "cannot read dragtext: $value"
+                    }
+                    $parts = $to -split ','
+                    if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
+                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
+                    Save-Shot $rect $probe
+                    $found = @(Find-All $probe $text.Trim() |
+                        Where-Object { $_.Top -ge [int]$below })[0]
+                    if (-not $found) {
+                        $read = @(Read-Text $probe | Where-Object { $_.Top -ge [int]$below })
+                        # What was readable instead: a step that says only "not
+                        # found" cannot tell a word drawn elsewhere from a word
+                        # the reader could not make out.
+                        $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
+                        throw "`"$text`" is not on screen to select from; below $below the window reads: $saw; see $probe"
+                    }
+                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    # On the first glyph, not beside it: a press lands on the
+                    # nearest character boundary, and the boundary before the
+                    # first letter is the one its ink starts at.
                     [Win32Capture]::Drag(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1],
-                        $rect.Left + [int]$parts[2], $rect.Top + [int]$parts[3])
-                    Start-Sleep -Milliseconds 400
+                        $rect.Left + [int]$found.Left,
+                        $rect.Top + [int](($found.Top + $found.Bottom) / 2),
+                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    Start-Sleep -Milliseconds 500
+                    Write-Host ("dragtext: {0}" -f $text.Trim())
                 }
                 'hold' {
                     # `hold:X,Y` presses and keeps holding, so the steps after
@@ -602,16 +813,16 @@ try {
                     [Win32Capture]::SetCursorPos(
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1]) | Out-Null
                     # The window only changes it when it next redraws.
-                    Start-Sleep -Milliseconds 700
+                    Start-Sleep -Milliseconds 500
                     $shown = [Win32Capture]::CursorNow()
                     if ($shown -ne $want.Trim()) {
                         throw "cursor at $where is $shown, expected $($want.Trim())"
                     }
                 }
-                'chord' {
-                    # `chord:ctrl+a` is a modifier held down over one key.
+                'shortcut' {
+                    # `shortcut:ctrl+a` is a modifier held down over one key.
                     $parts = $value.Trim().ToLower() -split '\+'
-                    if ($parts.Count -ne 2) { throw "cannot read chord: $value" }
+                    if ($parts.Count -ne 2) { throw "cannot read shortcut: $value" }
                     $modifier = switch ($parts[0]) {
                         'ctrl'  { 0x11 }
                         'shift' { 0x10 }
@@ -621,8 +832,16 @@ try {
                     $letter = $parts[1]
                     if ($letter.Length -ne 1) { throw "unknown key: $letter" }
                     $key = [uint16][char]($letter.ToUpper())
-                    [Win32Capture]::Chord([uint16]$modifier, $key)
+                    [Win32Capture]::Shortcut([uint16]$modifier, $key)
                     Start-Sleep -Milliseconds 300
+                }
+                'kill' {
+                    # Force quit, for a test that ends with a native modal
+                    # dialog up: nothing can ask the window to close
+                    # underneath one. The program gets no shutdown, so such a
+                    # test asserts on files, not state.
+                    Stop-Process -Id $proc.Id -Force
+                    $proc.WaitForExit(5000) | Out-Null
                 }
                 'restart' {
                     # Close the program and start it again. What a preset has
@@ -750,32 +969,24 @@ try {
                         $rect.Left, $rect.Top,
                         ($rect.Right - $rect.Left), ($rect.Bottom - $rect.Top))
                 }
-                'resize' {
-                    # `resize:W,H` gives the window under test a drawable area
-                    # of exactly that size, the way dragging its corner would.
+                'dragto' {
+                    # `dragto:W,H,MS` drags the window's bottom right corner
+                    # until the drawable area is exactly W by H, whatever size
+                    # the window started at, so the expectations afterwards
+                    # can name exact numbers without a size being set by
+                    # anything but the mouse.
                     $parts = $value -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read resize: $value" }
-                    [Win32Capture]::SetClientSize($hwnd, [int]$parts[0], [int]$parts[1])
-                    Start-Sleep -Milliseconds 700
-                    $rect = [Win32Capture]::VisibleRect($hwnd)
-                    $hostRect = $rect
-                    Write-Host ("resize: $($parts[0])x$($parts[1])")
-                }
-                'dragedge' {
-                    # `dragedge:DX,DY,MS` takes hold of the window's bottom
-                    # right corner and drags it by DX,DY over MS milliseconds,
-                    # which is the only way to see what a resize looks like
-                    # while it happens rather than after it.
-                    $parts = $value -split ','
-                    if ($parts.Count -ne 3) { throw "cannot read dragedge: $value" }
+                    if ($parts.Count -ne 3) { throw "cannot read dragto: $value" }
+                    $client = [Win32Capture]::ClientRect($hwnd)
+                    $dx = [int]$parts[0] - ($client.Right - $client.Left)
+                    $dy = [int]$parts[1] - ($client.Bottom - $client.Top)
                     $area = [Win32Capture]::OuterRect($hwnd)
                     [Win32Capture]::DragCorner(
-                        $area.Right - 3, $area.Bottom - 3,
-                        [int]$parts[0], [int]$parts[1], [int]$parts[2])
+                        $area.Right - 3, $area.Bottom - 3, $dx, $dy, [int]$parts[2])
                     Start-Sleep -Milliseconds 500
                     $rect = [Win32Capture]::VisibleRect($hwnd)
                     $hostRect = $rect
-                    Write-Host ("dragedge: {0},{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
+                    Write-Host ("dragto: {0}x{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
                 }
                 'geometry' {
                     # `geometry:PATH` writes down what the window under test and
@@ -800,6 +1011,19 @@ try {
                 'remove' {
                     if (Test-Path -LiteralPath $value) {
                         Remove-Item -LiteralPath $value -Force
+                    }
+                }
+                'written' {
+                    # `written:PATH|TEXT` checks a file in code, mid-test,
+                    # right when the step before it claims to have written it.
+                    $p, $want = $value -split '\|', 2
+                    if (-not (Test-Path -LiteralPath $p)) {
+                        throw "$p was not written"
+                    }
+                    $want = $want.Trim().Replace('\n', "`n")
+                    $got = [System.IO.File]::ReadAllText($p)
+                    if (-not $got.Contains($want)) {
+                        throw "$p holds `"$got`", expected it to contain `"$want`""
                     }
                 }
                 'shot' {
@@ -910,24 +1134,26 @@ try {
         $y = $rect.Top + [int]$parts[1]
         [Win32Capture]::SetCursorPos($x, $y) | Out-Null
         # The window redraws on the enter event, not before it.
-        Start-Sleep -Milliseconds 700
+        Start-Sleep -Milliseconds 500
     }
 
     # The picture is always of the window under test, whichever window the
-    # steps were last addressing.
-    $rect = [Win32Capture]::VisibleRect($hwnd)
-    if ($rect.Right -le $rect.Left) { $rect = $hostRect }
-    $width = $rect.Right - $rect.Left
-    $height = $rect.Bottom - $rect.Top
+    # steps were last addressing. A killed program has no window left.
+    if (-not $proc.HasExited) {
+        $rect = [Win32Capture]::VisibleRect($hwnd)
+        if ($rect.Right -le $rect.Left) { $rect = $hostRect }
+        $width = $rect.Right - $rect.Left
+        $height = $rect.Bottom - $rect.Top
 
-    $full = if ([System.IO.Path]::IsPathRooted($Out)) {
-        $Out
-    } else {
-        Join-Path (Get-Location) $Out
+        $full = if ([System.IO.Path]::IsPathRooted($Out)) {
+            $Out
+        } else {
+            Join-Path (Get-Location) $Out
+        }
+        Save-Shot $rect $full
+
+        Write-Output "captured ${width}x${height} -> $Out"
     }
-    Save-Shot $rect $full
-
-    Write-Output "captured ${width}x${height} -> $Out"
 }
 finally {
     if (-not $proc.HasExited) {

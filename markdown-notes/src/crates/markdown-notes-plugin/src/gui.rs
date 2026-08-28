@@ -98,6 +98,15 @@ const TITLE_SIZE_BUMP: f32 = 5.0;
 /// How far a code block reaches above and below the rows it holds.
 const CODE_PADDING: f32 = 5.0;
 
+/// Narrowest a line is ever wrapped to. A window dragged narrower than its
+/// own margins would otherwise ask for a wrap width of zero, which lays out
+/// one character per row.
+const MIN_WRAP_WIDTH: f32 = 40.0;
+
+/// How much of the document is kept visible above and below the caret when
+/// the document is scrolled to it, so it never sits against an edge.
+const CARET_MARGIN: f32 = 12.0;
+
 /// Breathing room around the section strip.
 const SECTION_MARGIN: egui::Margin = egui::Margin::symmetric(10, 4);
 
@@ -138,6 +147,13 @@ struct Gui {
     /// Whether the document is what keystrokes go to. Set by clicking into it,
     /// cleared when a field takes the keyboard.
     document_focused: bool,
+    /// Which section the caret was in and where, as of last frame. The caret
+    /// is painted rather than allocated, so the scroll area has nothing of its
+    /// own to follow: the document is scrolled to it when this changes.
+    caret_was: Option<(usize, usize)>,
+    /// When the caret last moved. The blink starts from there, so a caret
+    /// being driven along by typing stays solid instead of flickering.
+    caret_moved_at: f64,
 }
 
 impl Gui {
@@ -158,6 +174,8 @@ impl Gui {
             selecting_from: None,
             settings_open: false,
             document_focused: true,
+            caret_was: None,
+            caret_moved_at: 0.0,
         }
     }
 
@@ -326,13 +344,32 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
 
     // The scroll area itself spans the full width so its bar sits against the
     // window edge; the padding goes inside, around the text.
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            egui::Frame::default()
-                .inner_margin(DOCUMENT_MARGIN)
-                .show(ui, |ui| document(ui, gui));
-        });
+    ui.scope(|ui| {
+        // A solid bar rather than egui's default floating one, which is drawn
+        // at zero opacity until the pointer is beside it: a document taller
+        // than the window has to say so without being hovered first. Solid
+        // also reserves the bar's width, so the text wraps clear of it.
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+        let handle = scrollbar_colour(gui, ui.visuals());
+        let visuals = ui.visuals_mut();
+        // The trough is the page it sits on, so only the handle shows.
+        visuals.extreme_bg_color = visuals.panel_fill;
+        for state in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            state.bg_fill = handle;
+        }
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::default()
+                    .inner_margin(DOCUMENT_MARGIN)
+                    .show(ui, |ui| document(ui, gui));
+            });
+    });
 
     settings_dialog(ui, gui);
 
@@ -372,28 +409,17 @@ pub fn draw_frame_for_test(ui: &mut egui::Ui, state: &mut TestGui) {
     draw_ui(ui, &mut state.0);
 }
 
-/// Keep the window and the stored size in step, in both directions.
+/// Record the window's size, so it is saved with the project.
 ///
-/// Two things can change the size and they must not fight:
-///
-/// - **The window was resized** (the user dragged an edge, or the host resized
-///   its frame and called `onSize`, which the window then followed). The window
-///   is the truth; record it so it is saved with the project.
-/// - **The stored size changed** while the window did not — the host called
-///   `IPlugView::onSize`, or a project was loaded with a different size. Then
-///   the window has to be told to follow, which `ViewportCommand::InnerSize`
-///   does. Without this the plugin's stored size and its actual window silently
-///   diverge: the frame resizes and the editor inside it does not.
+/// The window is the truth. The host owns the frame, and the editor is drawn
+/// into whatever it is given: a plugin that asks for a size of its own is a
+/// plugin arguing with its host.
 fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
     let size = ui.ctx().viewport_rect().size();
     let window = (size.x.round() as i32, size.y.round() as i32);
     if window.0 <= 0 || window.1 <= 0 {
         return;
     }
-
-    // The window is the host's. The editor follows it and never asks it to
-    // follow the editor: a size is not part of a document, so there is nothing
-    // stored for the window to be put back to.
     if gui.last_seen_size == Some(window) {
         return;
     }
@@ -504,6 +530,14 @@ fn rule(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 1.0), Sense::hover());
     ui.painter()
         .rect_filled(rect, 0.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+}
+
+/// The document scrollbar's handle, from the scheme the settings dialog edits.
+fn scrollbar_colour(gui: &Gui, visuals: &egui::Visuals) -> Color32 {
+    match gui.editor.lock() {
+        Ok(e) => rgba(e.colours.for_mode(visuals.dark_mode).scrollbar),
+        Err(_) => visuals.widgets.inactive.bg_fill,
+    }
 }
 
 fn toolbar_fill(gui: &Gui, visuals: &egui::Visuals) -> Color32 {
@@ -1168,14 +1202,32 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
 
     let doc = editor.render();
     let src = editor.text().to_string();
-    let caret = editor.caret();
+    // None when the caret has been clicked away: there is nothing to draw and
+    // no line to reveal the markers on.
+    let caret = editor.has_caret().then(|| editor.caret());
     let selection = editor.selection();
     let raw = editor.mode == ViewMode::Raw;
     let palette = Palette::from(editor.colours.for_mode(ui.visuals().dark_mode));
 
     ui.spacing_mut().item_spacing.y = 0.0;
 
-    let mut clicked: Option<Pointer> = None;
+    // One surface for the whole document, claimed before the lines are drawn
+    // so the checkboxes drawn on top of it still get their own clicks. This
+    // is what the pointer talks to: a selection dragged from one line to
+    // another is one gesture over the document, not a gesture inside a line.
+    // The whole of the document that is on screen, which is not the space left
+    // where the first line starts: that is one window tall and measured from
+    // the top of the document, so in a document long enough to scroll it ends
+    // partway down and everything below it answers to nothing.
+    let visible = ui.clip_rect();
+    let across = ui.available_rect_before_wrap();
+    let area = egui::Rect::from_min_max(
+        egui::pos2(across.left(), visible.top()),
+        egui::pos2(across.right(), visible.bottom()),
+    );
+    let surface = ui.interact(area, document_id(), Sense::click_and_drag());
+
+    let mut drawn: Vec<DrawnLine> = Vec::new();
     let mut toggled: Option<usize> = None;
 
     let em = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -1188,7 +1240,8 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         .blocks
         .iter()
         .filter(|block| {
-            let editing_fence = caret >= block.range.start && caret <= block.range.end;
+            let editing_fence = caret
+                .is_some_and(|at| at >= block.range.start && at <= block.range.end);
             raw || !matches!(block.kind, BlockKind::Fence { .. }) || editing_fence
         })
         .collect();
@@ -1247,38 +1300,139 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                 }
             }
 
-            if let Some(hit) = line_body(ui, block, &src, caret, &selection, raw, &palette, pad) {
-                clicked = Some(hit);
-            }
+            drawn.push(line_body(
+                ui, block, &src, caret, &selection, &palette, pad,
+            ));
         });
     }
 
-    let touched = clicked.is_some();
     if let Some(line) = toggled {
         editor.toggle_checkbox(line);
-    } else if let Some(hit) = clicked {
-        if hit.pressed {
-            // Where a drag will select from, and where the caret goes if it
-            // turns out to be a plain click.
-            gui.selecting_from = Some(hit.at);
-            editor.set_caret(hit.at);
-        } else if hit.dragged {
-            if let Some(from) = gui.selecting_from {
-                let (a, b) = (from.min(hit.at), from.max(hit.at));
-                editor.select(a..b);
+    } else {
+        // The line the pointer is level with, and nothing when it is level
+        // with none of them: the space below the last line is document, but it
+        // is not a line, and there is nowhere on it to put a caret.
+        let line_at = |pos: egui::Pos2| -> Option<&DrawnLine> {
+            drawn
+                .iter()
+                .find(|line| pos.y >= line.rect.top() && pos.y <= line.rect.bottom())
+        };
+
+        // Which offset a point on a line is at. Past the end of a line is that
+        // line's end and in front of its start is its start, because a line is
+        // only as wide as what is written on it and the space beside it belongs
+        // to it.
+        let offset_on = |line: &DrawnLine, pos: egui::Pos2| -> Option<usize> {
+            let cursor = line.galley.cursor_from_pos(pos - line.origin);
+            let index = cursor.index.0.min(line.map.len().saturating_sub(1));
+            line.map.get(index).copied()
+        };
+
+        // Dragging off the end of the text selects to the end, the way it does
+        // in any text area, so a drag takes the nearest line where a click
+        // takes none.
+        let nearest = |pos: egui::Pos2| -> Option<&DrawnLine> {
+            line_at(pos).or_else(|| {
+                let first = drawn.first()?;
+                if pos.y < first.rect.top() {
+                    Some(first)
+                } else {
+                    drawn.last()
+                }
+            })
+        };
+
+        // An I-beam says "there is text here to put a caret in", so it is shown
+        // where a click would do that and nowhere else: the empty space below
+        // the last line takes the caret away rather than placing it.
+        if surface.hovered() {
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if line_at(pos).is_some() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                }
+            }
+        }
+
+        if surface.drag_started() || surface.clicked() {
+            // Where the button went down, not where the pointer has reached:
+            // egui reports the latest position for both, and a drag is only
+            // recognised once it has moved.
+            let pos = ui
+                .input(|i| i.pointer.press_origin())
+                .or_else(|| surface.interact_pointer_pos());
+            match pos.and_then(|pos| Some((pos, line_at(pos)?))) {
+                Some((pos, line)) => {
+                    if let Some(at) = offset_on(line, pos) {
+                        gui.selecting_from = Some(at);
+                        editor.set_caret(at);
+                    }
+                }
+                None => {
+                    gui.selecting_from = None;
+                    editor.clear_caret();
+                }
+            }
+        } else if surface.dragged() {
+            let at = surface
+                .interact_pointer_pos()
+                .and_then(|pos| Some((pos, nearest(pos)?)))
+                .and_then(|(pos, line)| offset_on(line, pos));
+            if let (Some(from), Some(at)) = (gui.selecting_from, at) {
+                editor.select(from.min(at)..from.max(at));
             }
         }
     }
 
-    // Clicking anywhere in the document — on a line or in the empty space
-    // below it — hands the keys back from whatever field had them.
-    let rest = ui.available_rect_before_wrap();
-    let response = ui
-        .interact(rest, document_id(), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::Text);
-    if touched || toggled.is_some() || response.clicked() {
+    // Clicking anywhere in the document, on a line or in the empty space
+    // below it, hands the keys back from whatever field had them.
+    if toggled.is_some() || surface.clicked() || surface.drag_started() {
         gui.document_focused = true;
     }
+
+    // Writing past the bottom of the window has to bring what is being written
+    // into view. Only when the caret moves: doing it every frame would fight
+    // the scrollbar and the wheel, which are how a reader looks elsewhere.
+    let now = caret.map(|at| (editor.active_section(), at));
+    let spot = drawn.iter().find_map(|line| line.caret);
+    if now != gui.caret_was {
+        gui.caret_was = now;
+        gui.caret_moved_at = ui.input(|i| i.time);
+        if let Some(spot) = spot {
+            ui.scroll_to_rect(spot.expand2(egui::vec2(0.0, CARET_MARGIN)), None);
+        }
+    }
+    if let Some(spot) = spot {
+        blink_caret(ui, spot, palette.caret, gui.caret_moved_at);
+    }
+}
+
+/// Draw the caret, on and off, the way every text field does.
+///
+/// The phase runs from `moved_at`, so the caret is solid while it is being
+/// driven along by typing and only starts blinking once it sits still. The
+/// repaint is asked for at the next change of state: nothing else in the
+/// window is animating, so without it the caret would freeze mid-cycle.
+fn blink_caret(ui: &egui::Ui, spot: egui::Rect, colour: egui::Color32, moved_at: f64) {
+    let paint = || {
+        ui.painter()
+            .line_segment([spot.min, spot.left_bottom()], Stroke::new(1.5, colour));
+    };
+
+    let cursor = &ui.visuals().text_cursor;
+    if !cursor.blink {
+        paint();
+        return;
+    }
+
+    let cycle = cursor.on_duration + cursor.off_duration;
+    let at = ((ui.input(|i| i.time) - moved_at) % cycle as f64) as f32;
+    let next = if at < cursor.on_duration {
+        paint();
+        cursor.on_duration - at
+    } else {
+        cycle - at
+    };
+    ui.ctx().request_repaint_after_secs(next);
 }
 
 /// Vertical space to leave between two consecutive lines.
@@ -1319,7 +1473,6 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
     }
 
     match (&previous.kind, &current.kind) {
-        // Lines of one paragraph, and lines inside one fence.
         (Paragraph, Paragraph) => 0.0,
         (Code, Code) | (Fence { .. }, Code) | (Code, Fence { .. }) => 0.0,
 
@@ -1330,12 +1483,21 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
     }
 }
 
-/// Draw one line's text, its caret, and report a click position.
-/// What the pointer did over a line of the document, in source offsets.
-struct Pointer {
-    at: usize,
-    pressed: bool,
-    dragged: bool,
+/// A line as it was drawn, kept so the pointer can be mapped onto it.
+///
+/// The pointer is answered for the document as a whole rather than by each
+/// line for itself. A drag belongs to the widget it started on, so lines that
+/// sense their own drags can only ever select within themselves: the pointer
+/// crossing into the line below is not something that line is told about.
+struct DrawnLine {
+    rect: egui::Rect,
+    /// Where the text starts, which is inside the row for a code block.
+    origin: egui::Pos2,
+    galley: Arc<egui::Galley>,
+    /// The source offset of every character in the galley.
+    map: Vec<usize>,
+    /// Where the caret was drawn, when it is on this line.
+    caret: Option<egui::Rect>,
 }
 
 /// Which edges of a code block this row is at, and so where its padding goes.
@@ -1349,12 +1511,11 @@ fn line_body(
     ui: &mut egui::Ui,
     block: &Block,
     src: &str,
-    caret: usize,
+    caret: Option<usize>,
     selection: &std::ops::Range<usize>,
-    raw: bool,
     palette: &Palette,
     pad: Padding,
-) -> Option<Pointer> {
+) -> DrawnLine {
     let base = base_format(block, palette);
     let bold = crate::fonts::bold_family(ui);
     // A fence and the lines inside it are one block, not text that happens to
@@ -1399,12 +1560,6 @@ fn line_body(
     }
     map.push(block.range.end);
 
-    let galley = ui.painter().layout_job(job);
-
-    // The whole width of the line, not the width of what is written on it.
-    // Clicking past the end of a line is how everyone puts the caret at the
-    // end of it, and a line only as wide as its text has nothing there to
-    // click.
     // The code sits inside its block rather than flush against the edge, so
     // the row carries the padding: wider by the inset on both sides, and taller
     // at whichever end of the block it is at. Padding drawn outside the row
@@ -1418,19 +1573,34 @@ fn line_body(
     } else {
         (0.0, 0.0, 0.0)
     };
+
+    // A line longer than the window wraps, the way any text area wraps it:
+    // the width left on this row after the quote bars, the indent and the
+    // list glyph, less what a code block's own padding takes.
+    job.wrap.max_width = (ui.available_width() - inset).max(MIN_WRAP_WIDTH);
+
+    let galley = ui.painter().layout_job(job);
+
+    // The whole width of the line, not the width of what is written on it.
+    // Clicking past the end of a line is how everyone puts the caret at the
+    // end of it, and a line only as wide as its text has nothing there to
+    // click.
     let size = egui::vec2(
         ui.available_width().max(galley.size().x + inset),
         galley.size().y + above + below,
     );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    // An I-beam over text, because that is what an I-beam means.
-    let response = response.on_hover_cursor(egui::CursorIcon::Text);
+    // Space, not a widget: the pointer is answered for the document as a
+    // whole, and a line that senses its own drags would keep every one of
+    // them to itself.
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
 
-    // Where a source offset sits along this line. The galley is asked, because
-    // it is the thing that placed the glyphs: a line mixes fonts, and anything
+    // Where a source offset sits on this line. The galley is asked, because it
+    // is the thing that placed the glyphs: a line mixes fonts, and anything
     // that re-measures the text in one font puts the caret in the wrong place
-    // the moment a bold or code span precedes it.
-    let x_of = |offset: usize| -> f32 { offset_x(&galley, &map, offset) };
+    // the moment a bold or code span precedes it. A wrapped line is several
+    // rows, so this is a rectangle rather than an x: the row it landed on is
+    // as much of the answer as how far along it is.
+    let spot_of = |offset: usize| -> egui::Rect { offset_spot(&galley, &map, offset) };
 
     // The block itself, behind everything else on the row, and the text inside
     // it clear of its edges. Rows of one block are drawn touching, so they read
@@ -1454,61 +1624,79 @@ fn line_body(
         rect.min
     };
 
-    // The selection goes behind the text, so the words stay readable.
+    // The selection goes behind the text, so the words stay readable. A
+    // wrapped line takes one band per row it crosses: a single rectangle over
+    // a selection that spans rows would cover the whole block between them,
+    // including the text it does not hold.
     let (from, to) = (
         selection.start.max(block.range.start),
         selection.end.min(block.range.end),
     );
     if from < to {
-        let band = egui::Rect::from_min_max(
-            origin + egui::vec2(x_of(from), 0.0),
-            origin + egui::vec2(x_of(to), galley.size().y),
-        );
-        ui.painter().rect_filled(band, 0.0, palette.selection);
+        let (first, last) = (char_index(&map, from), char_index(&map, to));
+        let mut row_start = 0usize;
+        for row in &galley.rows {
+            let row_end = row_start + row.glyphs.len() + usize::from(row.ends_with_newline);
+            let (a, b) = (first.max(row_start), last.min(row_end));
+            if a < b {
+                let rect = row.rect();
+                // Only a character inside the row is asked about. A wrap sits
+                // between two rows, and the galley answers for the end of the
+                // row above, so a selection carrying into this row would be
+                // drawn from its right edge and a band ending here would run
+                // the wrong way. Where the selection carries on, the row's own
+                // edge is the answer.
+                let edge = |at: usize| {
+                    galley
+                        .pos_from_cursor(egui::text::CCursor::new(at))
+                        .min
+                        .x
+                };
+                let left = if a > row_start { edge(a) } else { rect.left() };
+                let right = if b < row_end { edge(b) } else { rect.right() };
+                let band = egui::Rect::from_min_max(
+                    origin + egui::vec2(left, rect.top()),
+                    origin + egui::vec2(right, rect.bottom()),
+                );
+                ui.painter().rect_filled(band, 0.0, palette.selection);
+            }
+            row_start = row_end;
+        }
     }
 
     ui.painter()
         .galley(origin, Arc::clone(&galley), palette.body);
 
-    if caret >= block.range.start && caret <= block.range.end {
-        let top = origin + egui::vec2(x_of(caret), 0.0);
-        ui.painter().line_segment(
-            [top, top + egui::vec2(0.0, galley.size().y)],
-            Stroke::new(1.5, palette.caret),
-        );
+    // Where the caret goes, not the caret itself: it is painted once the whole
+    // document is drawn, so that it blinks on one clock rather than per line.
+    let mut drawn_caret = None;
+    if let Some(at) = caret.filter(|at| *at >= block.range.start && *at <= block.range.end) {
+        let spot = spot_of(at);
+        let top = origin + spot.min.to_vec2();
+        let bottom = top + egui::vec2(0.0, spot.height());
+        drawn_caret = Some(egui::Rect::from_min_max(top, bottom));
     }
 
-    let _ = raw;
-
-    // A press puts the caret down; dragging from there selects.
-    let pressed = response.drag_started() || response.clicked();
-    let dragged = response.dragged();
-    if !pressed && !dragged {
-        return None;
-    }
-    let pos = response.interact_pointer_pos()?;
-    let cursor = galley.cursor_from_pos(pos - origin);
-    let index = cursor.index.0.min(map.len().saturating_sub(1));
-    let at = map.get(index).copied()?;
-    Some(Pointer { at, pressed, dragged })
+    DrawnLine { rect, origin, galley, map, caret: drawn_caret }
 }
 
-/// How far along the line the source offset `offset` sits.
+/// Where on the line the source offset `offset` sits: how far along, and on
+/// which row of a wrapped line.
 ///
 /// `map` gives the source offset of every character in the galley, so the
 /// offset first becomes a character index and the galley then says where that
 /// character was put. Only the galley knows: a line mixes fonts, and measuring
 /// the preceding text in any single one of them places the caret inside the
 /// word before it as soon as a bold or code span comes first.
-fn offset_x(galley: &egui::Galley, map: &[usize], offset: usize) -> f32 {
-    let char_index = map
-        .iter()
+fn offset_spot(galley: &egui::Galley, map: &[usize], offset: usize) -> egui::Rect {
+    galley.pos_from_cursor(egui::text::CCursor::new(char_index(map, offset)))
+}
+
+/// Which character of the galley a source offset falls on.
+fn char_index(map: &[usize], offset: usize) -> usize {
+    map.iter()
         .position(|&at| at >= offset)
-        .unwrap_or(map.len().saturating_sub(1));
-    galley
-        .pos_from_cursor(egui::text::CCursor::new(char_index))
-        .min
-        .x
+        .unwrap_or(map.len().saturating_sub(1))
 }
 
 /// Append `text` to the job, recording the source offset of every byte.
@@ -1761,10 +1949,10 @@ mod tests {
 
     /// The caret goes after a bold word, not inside it.
     ///
-    /// A line of mixed formats used to be re-measured in the body font to place
-    /// the caret, so every bold or code span before it made the caret drift
-    /// back by the difference between the two faces: type `**well** yo` and the
-    /// caret sits between the `y` and the `o`.
+    /// A line of mixed formats is placed by the galley that drew it. Measuring
+    /// it in the body font instead drifts the caret back by the difference
+    /// between the two faces, once per bold or code span in front of it: type
+    /// `**well** yo` and the caret sits between the `y` and the `o`.
     #[test]
     fn the_caret_lands_after_bold_text_not_inside_it() {
         let ctx = egui::Context::default();
@@ -1796,7 +1984,7 @@ mod tests {
                 .x;
         });
         let galley = galley.expect("nothing was laid out");
-        let x = offset_x(&galley, &map, 21);
+        let x = offset_spot(&galley, &map, 21).min.x;
 
         // Where the glyphs actually are: the caret belongs at the left edge of
         // the last character.
@@ -1810,8 +1998,8 @@ mod tests {
             last.pos.x
         );
 
-        // And that is not where one font puts it, or the test would pass
-        // against the bug.
+        // And that is not where one font puts it, or measuring in the body
+        // font would pass this too.
         assert!(
             x - flat > 1.0,
             "the bold face should be wider: galley {x}, one font {flat}"

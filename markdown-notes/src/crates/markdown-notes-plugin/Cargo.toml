@@ -13,10 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 markdown-notes-core.workspace = true
 vst3.workspace = true
-serde_json = "1"
 # Native Open/Save dialogs, so file operations look like the host's own.
 rfd = "0.15"
-egui-baseview = { version = "0.6.0", default-features = false, features = ["opengl"] }
 # default-features off drops the embedded font set (~1.4 MB); the fonts come
 # from the operating system instead, see gui::install_system_fonts.
 egui = { version = "0.35", default-features = false }
@@ -31,6 +29,18 @@ egui_kittest = { version = "0.35.0", features = ["wgpu"], optional = true }
 image = { version = "0.25.10", optional = true }
 font-kit = "0.14.3"
 
+# The editor's renderer, chosen per platform.
+#
+# Windows draws through OpenGL and works. macOS cannot: baseview's
+# `NSOpenGLContext` has no usable drawable by the first frame, so the first
+# texture the painter asks for comes back as zero and egui_glow panics. wgpu
+# draws through Metal there instead.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+egui-baseview = { version = "0.6.0", default-features = false, features = ["opengl"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+egui-baseview = { version = "0.6.0", default-features = false, features = ["wgpu"] }
+
 [dev-dependencies]
 # The roles the headless tests query by. Already in the tree under
 # egui_kittest; named here so a test can say which role it means.
@@ -39,7 +49,6 @@ accesskit = "0.24"
 [features]
 # Enables the headless renderer:
 #   cargo test -p markdown-notes-plugin --features snapshots
-#   cargo run  -p markdown-notes-plugin --features snapshots --example snapshot
 snapshots = ["dep:egui_kittest", "dep:image"]
 
 [[test]]
@@ -62,13 +71,19 @@ required-features = ["snapshots"]
 name = "title_field"
 required-features = ["snapshots"]
 
-[[example]]
-name = "snapshot"
+[[test]]
+name = "text_area"
 required-features = ["snapshots"]
 
-[[example]]
-name = "scripts"
+[[test]]
+name = "selection_rendering"
 required-features = ["snapshots"]
 
-[[example]]
-name = "preview"
+[[test]]
+name = "clicking_the_document"
+required-features = ["snapshots"]
+
+[[test]]
+name = "caret_in_view"
+required-features = ["snapshots"]
+

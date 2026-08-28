@@ -22,7 +22,6 @@ impl Editor {
         // Normalise CRLF so caret arithmetic stays byte-exact.
         let contents = contents.replace("\r\n", "\n");
         self.set_document_text(&contents);
-        self.set_caret(0);
         self.file = Some(path.to_path_buf());
         self.dirty = false;
         self.clear_history();
@@ -102,7 +101,9 @@ mod tests {
         assert_eq!(e.text(), "# Hello\n\n- a\n");
         assert_eq!(e.file.as_deref(), Some(path.as_path()));
         assert!(!e.is_dirty());
-        assert_eq!(e.caret(), 0);
+        // At the end of the section, ready to carry on writing.
+        assert!(e.has_caret());
+        assert_eq!(e.caret(), e.text().len());
     }
 
     #[test]
@@ -211,7 +212,9 @@ mod tests {
         e.open_path(&path).unwrap();
         assert_eq!(e.section_count(), 2);
         assert_eq!(e.section_text(0), "# One\n\nfirst");
-        assert_eq!(e.section_text(1), "# Two\n\nsecond");
+        // The newline the file ends with is part of the last section: what the
+        // file holds is what is opened, and saving it writes the same bytes.
+        assert_eq!(e.section_text(1), "# Two\n\nsecond\n");
         assert_eq!(e.section_title(0), "One");
         assert_eq!(e.section_title(1), "Two");
         assert_eq!(e.active_section(), 0);
@@ -255,11 +258,11 @@ mod tests {
         let target = dir.join("named.md");
 
         let mut e = Editor::with_text("# One");
-        e.title = "Ghostlight".to_string();
+        e.title = "funky cake".to_string();
         e.save_as(&target).unwrap();
 
         let written = fs::read_to_string(&target).unwrap();
-        assert!(!written.contains("Ghostlight"), "{written:?}");
+        assert!(!written.contains("funky cake"), "{written:?}");
     }
 
     #[test]
@@ -285,6 +288,9 @@ mod tests {
 
         let mut e = Editor::with_text("# One");
         e.new_section();
+        // A new section comes with a heading, so this is emptied by hand to be
+        // the gap the test is about.
+        e.set_text("");
         e.new_section();
         e.set_text("# Three");
         e.save_as(&target).unwrap();
@@ -309,5 +315,52 @@ mod tests {
         let mut reopened = Editor::new();
         reopened.open_path(&path).unwrap();
         assert_eq!(reopened.text(), "# Title\n- item");
+    }
+
+    /// Empty lines typed at the end of a document are part of it: they are
+    /// written out, and they are there again when it is opened.
+    #[test]
+    fn blank_lines_at_the_end_survive_a_save_and_an_open() {
+        let dir = temp_dir();
+        let path = dir.join("trailing.md");
+
+        let mut e = Editor::new();
+        e.set_document_text("# Title\n\nbody");
+        e.set_caret(e.text().len());
+        for _ in 0..3 {
+            e.handle_key(Key::Enter, Mods::NONE);
+        }
+        let typed = e.document_text();
+        assert_eq!(typed, "# Title\n\nbody\n\n\n\n", "the blank lines were not typed");
+
+        e.save_as(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            typed,
+            "the file on disk is not what was in the editor"
+        );
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.document_text(), typed, "opening it lost the blank lines");
+    }
+
+    /// The same for a document of several sections: the blank lines belong to
+    /// the end of the last one.
+    #[test]
+    fn blank_lines_at_the_end_of_the_last_section_survive_a_save_and_an_open() {
+        let dir = temp_dir();
+        let path = dir.join("trailing-sections.md");
+        let document = "# One\n\nfirst\n\n# Two\n\nsecond\n\n\n";
+
+        let mut e = Editor::new();
+        e.set_document_text(document);
+        e.save_as(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), document);
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.document_text(), document);
+        assert_eq!(reopened.section_count(), 2);
     }
 }

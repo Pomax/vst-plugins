@@ -83,7 +83,7 @@ DAW-side caching, and the enum values behind media type and bus direction.
 Splitting into two classes was tried and reverted; it fixed nothing and is a lot
 of COM machinery for a note-taking effect.
 
-Next step: install `dist/Markdown Notes.vst3`, rescan a DAW, report what it says.
+Next step: install `binaries/Markdown Notes.vst3`, rescan a DAW, report what it says.
 
 ## Known gaps
 

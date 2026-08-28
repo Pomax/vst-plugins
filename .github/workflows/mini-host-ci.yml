@@ -3,7 +3,7 @@ name: Mini host CI
 on:
   pull_request:
     paths:
-      - "mini-host/**"
+      - "tools/mini-host/**"
       - ".github/workflows/mini-host-ci.yml"
   workflow_dispatch:
 
@@ -18,7 +18,7 @@ env:
 
 defaults:
   run:
-    working-directory: mini-host
+    working-directory: tools/mini-host
 
 jobs:
   test:

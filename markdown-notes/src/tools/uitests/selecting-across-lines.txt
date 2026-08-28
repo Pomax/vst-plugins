@@ -1,0 +1,26 @@
+# Dragging selects across lines, the way it does in any text area.
+#
+# Each line of the document is drawn as its own row, so a selection that runs
+# from one line into the next is the case to check: three lines, and one drag
+# that starts on the second and ends below the third. What it selects is
+# everything from that point on, which typing then replaces.
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, so the three lines below
+# are three paragraphs at the same height as each other.
+type:{BS 3}
+type:first line here
+type:{ENTER}second line here
+type:{ENTER}third line here
+
+# From the start of the second line to well below the last line, which is off
+# the end of the text: a drag that runs past the end selects to the end,
+# rather than stopping at the line it began on. The second line's first
+# character is the boundary being pressed on, so no space beside it can be
+# taken in or left out depending on which pixel the press lands.
+dragtext:second line here|140|400,400
+type:X
+wait:500
+shot:%CACHE%\selecting-across-lines.png
+
+expect:sections is 1
+expect:section 0 is first line here\n\nX

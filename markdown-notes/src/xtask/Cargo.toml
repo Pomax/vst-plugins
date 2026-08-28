@@ -12,4 +12,22 @@ publish = false
 markdown-notes-core.workspace = true
 # Used to read the freshly built plugin's own factory metadata when generating
 # moduleinfo.json, so the file can never drift from the binary it describes.
-mini-host.workspace = true
+vst3-loader.workspace = true
+
+# Synthesising clicks and keystrokes, and finding the window to send them to.
+# Windows has `tools/capture-window.ps1` for this; macOS has no equivalent
+# program to shell out to, so the driver is built in.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+# Naming the cursor a window is asking for, which is a `cursor:` step's whole
+# assertion and is only readable through AppKit.
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", features = [
+    "NSCursor",
+    "NSImage",
+    # The stock cursors come back NULL until AppKit is up, and AppKit is up
+    # once something has asked for the application object.
+    "NSApplication",
+    "NSResponder",
+] }
+objc2-foundation = { version = "0.3.2", features = ["std", "NSData"] }

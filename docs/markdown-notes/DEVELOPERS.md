@@ -14,12 +14,12 @@ complete VST3 bindings with no C++ SDK dependency, and supports both
 |---|---|
 | `src/crates/markdown-notes-core` | The editor: a document, WYSIWYG layout, as-you-type conversion, plugin state, file I/O. No UI, no plugin dependencies. The buffer, caret, selection and undo are [`kode-markdown`](https://crates.io/crates/kode-markdown)'s; see [EDITOR_CHOICE.md](EDITOR_CHOICE.md). |
 | `src/crates/markdown-notes-plugin` | The VST3 plugin, plus the egui GUI. |
-| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../mini-host`. |
+| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../tools/mini-host`. |
 | `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite. |
 | `src/tools` | Screenshot helpers for the real editor window. |
 
-The VST3 host this project tests against is a separate project: `../mini-host`,
-documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
+The VST3 host this project tests against is a separate project:
+`../tools/mini-host`, documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
 
 ## Building
 
@@ -27,10 +27,10 @@ documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
 cargo dist
 ```
 
-That leaves the installable plugin in `dist/`, and nothing else:
+That leaves the installable plugin in `binaries/`, beside the tools:
 
 ```text
-dist/
+binaries/
   Markdown Notes.vst3
 ```
 
@@ -41,11 +41,11 @@ is what gets copied into the VST3 folder:
 - Windows: `C:\Program Files\Common Files\VST3\`
 - macOS: `~/Library/Audio/Plug-Ins/VST3/`
 
-`dist/` is deleted and recreated by every build, so it only ever holds the
-current one.
+This project's own result in `binaries/` is replaced by every build, so it only
+ever holds the current one.
 
 **A successful build deletes `target/`.** Everything worth keeping has been
-copied to `dist/`; what remains only helps when something went wrong, so it
+copied to `binaries/`; what remains only helps when something went wrong, so it
 survives a *failed* build and not a successful one. The trade is that the next
 build is a cold one.
 
@@ -68,7 +68,8 @@ cargo run -p xtask -- test
 ```
 
 That builds the plugin, then runs the unit tests and the scenario suite in that
-order, and — since it too is a build — clears `dist/` first and deletes
+order, and, since it too is a build, clears this project's result from
+`binaries/` first and deletes
 `target/` when everything passes. `--keep-target` leaves the build output in
 place for a faster next run. The order is the point: the scenario runner loads the plugin binary at
 runtime rather than linking it, so cargo has no idea the two are related and
@@ -101,78 +102,45 @@ test.bat
 ./test.sh
 ```
 
-Both open `../dist/Markdown Notes.vst3` in the mini host, which lives alongside this project in `../mini-host` and must be built there first.
-
-To look at the editor's drawing code alone, without going through VST3 at all:
-
-```bash
-cargo run -p markdown-notes-plugin --example preview
-```
-
-The preview takes an optional theme and an optional markdown file:
-
-```bash
-cargo run -p markdown-notes-plugin --example preview -- light src/tools/screenshot-notes.md
-```
-
-To render the GUI headlessly to PNGs — no window, no human needed:
-
-```bash
-cargo run -p markdown-notes-plugin --features snapshots --example snapshot
-```
+Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first.
 
 The `snapshots` feature is opt-in because the headless renderer pulls in the
 whole wgpu/naga stack: several gigabytes of build output for a plugin that
 ships as 5 MB. `cargo run -p xtask -- test --snapshots` runs the pixel tests
 along with everything else.
 
-That writes `target/snapshots/{light,dark}.png` through a real rasteriser and
-reports the background and text brightness of each. The same machinery backs
-[`tests/theme_rendering.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/tests/theme_rendering.rs),
-which asserts on actual pixels: that light really is light, that the text
-contrasts with it, and that the two themes do not look alike. Those tests exist
-because the light theme once passed every non-visual check while the window
-stayed black — nothing painted the background, so egui's dark-on-light text was
-drawn onto a black clear colour. Only pixels catch that.
+Those tests render the drawing code through a real rasteriser with no window
+involved. [`tests/theme_rendering.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/tests/theme_rendering.rs)
+asserts on actual pixels: that light really is light, that the text contrasts
+with it, and that the two themes do not look alike. They exist because the
+light theme once passed every non-visual check while the window stayed black:
+nothing painted the background, so egui's dark-on-light text was drawn onto a
+black clear colour. Only pixels catch that.
 
 The headless renderer proves the *drawing code* is right. To prove the *real
-window* is — the path through baseview and OpenGL, where the background is the
-renderer's clear colour rather than anything egui draws — screenshot it:
+window* is, which is the path through baseview and OpenGL where the background
+is the renderer's clear colour rather than anything egui draws, run the UI
+tests: they open the plugin in the mini host and photograph it.
 
 ```bash
-powershell -ExecutionPolicy Bypass -File src/tools/capture-window.ps1 -Theme light -Out target/window-light.png
+powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Exe ../binaries/mini-host.exe -Title "Mini VST Host" -Out window.png
 ```
 
-```bash
-src/tools/capture-window.sh --theme light --out target/window-light.png
-```
+`-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. It
+takes `-ExeArgs` for what to launch the host with, and `-Title` to say which
+window to photograph.
 
-`-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. Both
-tools take `-Notes`/`--notes` to show a particular markdown file, and the
-Windows one takes `-ExeArgs` and `-Title` for capturing something other than the
-preview, such as the mini host.
-
-Both launch the preview, locate the editor window, grab its pixels off the
-screen and close it. On Windows the window is found by title, because the
-process also owns a console window and `MainWindowHandle` names whichever
-appeared first. On macOS the bounds come from System Events, so the terminal
-running it needs Accessibility and Screen Recording permission.
-
-To see which scripts the system fonts cover, before and after text in a new
-script arrives:
-
-```bash
-cargo run -p markdown-notes-plugin --features snapshots --example scripts
-```
+On macOS the UI tests photograph the window themselves, through the `Window
+Shot` app in `tools/window-shot`.
 
 The host is also a standalone tool that loads **any** VST3 plugin, not just
 this one:
 
 ```bash
-cd ../mini-host && cargo run --bin vst3-host -- ../dist/Markdown Notes.vst3
+cd ../tools/mini-host && cargo run --bin vst3-host -- ../../binaries/Markdown Notes.vst3
 ```
 
-See [the mini host guide](../mini-host/USING.md) for how to use it and how a
+See [the mini host guide](../mini-host/DEVELOPERS.md) for how to use it and how a
 VST3 plugin is loaded.
 
 ## CI
@@ -279,20 +247,13 @@ monospace faces — enough for Latin, Greek, Cyrillic, Hebrew and Arabic — and
 when text arrives in a script those cannot draw, the font for it is fetched
 from the system at that moment and added as a fallback. Nothing is captured at
 build time except a list of family names; the lookup happens on the machine
-running the plugin. `examples/scripts.rs` renders the evidence.
+running the plugin.
 
 ## Known limitations
 
-- **The macOS build has never run.** `xtask` emits the correct bundle layout
-  and CI builds it on a macOS runner, but nothing here has compiled or executed
-  it — a Windows machine cannot link a Mach-O binary. The first CI run on
-  `macos-14` is the first real test of it, including the macOS font paths and
-  `capture-window.sh`.
 - **Bold is drawn as a stronger colour, not a bold typeface.** egui ships no
   bold font family; this is the same approach egui uses for its own emphasis.
   Embedding a bold font would fix it properly.
-- **No mouse text selection.** Clicking places the caret; selection is
-  keyboard-only (`Shift`+motion, `Ctrl+A`).
 - **Input ownership.** When the host has attached a window, the GUI receives
   key events natively and `onKeyDown` returns `kResultFalse` — handling both
   would type every character twice. Without a window, `onKeyDown` is the only

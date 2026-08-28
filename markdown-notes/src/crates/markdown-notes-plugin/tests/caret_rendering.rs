@@ -34,6 +34,41 @@ fn render(caret: usize) -> image::RgbaImage {
     harness.render().expect("rendering failed")
 }
 
+/// The same window with the caret blinking, and the clock under the test's
+/// control: `time` is the absolute moment each frame is drawn at.
+///
+/// The caret is placed on the first frame, which is what the blink runs from,
+/// so every frame here is drawn `at` seconds after the caret last moved.
+fn render_blinking(at: f64) -> image::RgbaImage {
+    let editor = Arc::new(Mutex::new(Editor::with_text(SAMPLE)));
+    if let Ok(mut e) = editor.lock() {
+        e.theme = Theme::Light;
+        e.colours.light.caret = Rgba::rgba(255, 0, 0, 255);
+        e.set_caret(SAMPLE.len());
+    }
+    let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(700.0, 400.0))
+        .wgpu()
+        .build_ui(move |ui| markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state));
+
+    markdown_notes_plugin::gui::TestGui::install_fonts(&harness.ctx);
+    // The harness turns blinking off so that snapshots do not depend on when
+    // they were taken. Blinking is the thing under test here.
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        harness
+            .ctx
+            .style_mut_of(theme, |s| s.visuals.text_cursor.blink = true);
+    }
+
+    harness.input_mut().time = Some(0.0);
+    harness.run_steps(3);
+    harness.input_mut().time = Some(at);
+    harness.run_steps(1);
+    harness.render().expect("rendering failed")
+}
+
 /// Top and bottom row of every pixel matching `wanted`.
 fn rows_of(image: &image::RgbaImage, wanted: impl Fn([u8; 4]) -> bool) -> Option<(u32, u32)> {
     let mut top = None;
@@ -125,5 +160,23 @@ fn the_caret_below_a_code_block_is_clear_of_it() {
         "the caret is drawn at rows {top}..{bottom}, and rows {:?} of it are inside the code block",
         inside.iter().collect::<std::collections::BTreeSet<_>>()
     );
+}
+
+/// The caret goes on and off, which is how anyone knows it is a text caret and
+/// not a line someone drew. Both halves of the cycle, from one placement of
+/// the caret: on at the start, gone once the on half is over, back again a
+/// full cycle later.
+#[test]
+fn the_caret_blinks() {
+    let on = 0.5;
+    let off = 0.5;
+    for (at, expected) in [(0.1, true), (on + 0.1, false), (on + off + 0.1, true)] {
+        let drawn = rows_of(&render_blinking(at), is_caret).is_some();
+        assert_eq!(
+            drawn, expected,
+            "{at} seconds after the caret was placed it should be {}",
+            if expected { "drawn" } else { "gone" }
+        );
+    }
 }
 

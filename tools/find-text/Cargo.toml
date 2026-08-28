@@ -1,0 +1,38 @@
+[workspace]
+
+[package]
+name = "find-text"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["markdown-notes"]
+description = "Where a piece of text is in a picture, on Windows"
+publish = false
+
+[[bin]]
+name = "find-text"
+path = "src/main.rs"
+
+[dependencies]
+# The asynchronous half of the runtime, which the calls below hand back and
+# this waits on.
+windows-future = "0.3.2"
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage",
+    "Storage_Streams",
+    # The runtime has to be brought up before any of the above answers, and
+    # in the multithreaded apartment so that waiting on an operation here does
+    # not stop the one that completes it.
+    "Win32_System_Com",
+    # Reaching the picture's pixels, to pull its greys apart before reading.
+    "Win32_System_WinRT",
+] }
+
+[profile.release]
+opt-level = 2
+strip = true

@@ -2,7 +2,7 @@
 # Run every project's tests. Stops at the first failure.
 set -e
 
-for project in mini-host vst3-loader markdown-notes; do
+for project in tools/mini-host tools/vst3-loader markdown-notes; do
     echo "=== $project ==="
     (cd "$project" && ./test.sh "$@")
 done

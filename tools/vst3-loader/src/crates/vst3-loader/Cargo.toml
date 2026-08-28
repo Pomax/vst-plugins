@@ -1,0 +1,20 @@
+[package]
+name = "vst3-loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Loads a VST3 plugin the way a DAW does, and reports what it declares"
+
+[lib]
+name = "vst3_loader"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vst3-loader"
+path = "src/main.rs"
+
+[dependencies]
+vst3.workspace = true
+libloading = "0.8"
+raw-window-handle = "0.6"

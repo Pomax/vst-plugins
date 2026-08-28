@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "markdown-notes/**"
-      - "mini-host/**"
+      - "tools/mini-host/**"
       - "!**/*.md"
       - "!markdown-notes/docs/**"
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
         run: cargo run -p xtask -- bundle --release
 
       - name: Zip
-        run: Compress-Archive -Path "../dist/Markdown Notes.vst3" -DestinationPath markdown-notes-windows-x86_64.zip
+        run: Compress-Archive -Path "../binaries/Markdown Notes.vst3" -DestinationPath markdown-notes-windows-x86_64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -66,7 +66,7 @@ jobs:
         run: cargo run -p xtask -- bundle --release --target aarch64-apple-darwin
 
       - name: Zip
-        run: ditto -c -k --sequesterRsrc --keepParent "../dist/Markdown Notes.vst3" markdown-notes-macos-arm64.zip
+        run: ditto -c -k --sequesterRsrc --keepParent "../binaries/Markdown Notes.vst3" markdown-notes-macos-arm64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
