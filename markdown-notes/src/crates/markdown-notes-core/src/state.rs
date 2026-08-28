@@ -264,11 +264,11 @@ mod tests {
     fn the_title_round_trips_and_defaults() {
         let mut e = Editor::new();
         assert_eq!(e.title, "...project title goes here...");
-        e.title = "Ghostlight".to_string();
+        e.title = "funky cake".to_string();
 
         let mut restored = Editor::new();
         restored.load_state_bytes(&e.state_bytes());
-        assert_eq!(restored.title, "Ghostlight");
+        assert_eq!(restored.title, "funky cake");
 
         // Written before the title existed.
         let s = PluginState::from_bytes(br#"{"notes":"x"}"#);

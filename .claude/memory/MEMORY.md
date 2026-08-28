@@ -23,6 +23,8 @@
 - [Never use git without being asked](never-use-git-without-being-asked.md) — no status, log, diff or restore; undo comes from the scratchpad copies
 - [Run only the tests the change affects](run-only-the-tests-the-change-affects.md) — name the suite; UI runs cost the user their desktop
 - [Never tail command output](never-tail-command-output.md) — no `| tail`, ever; read the whole log or the first error is thrown away
+- [Answer by checking, not by running](answer-by-checking-not-by-running.md) — "did I break X" is settled by reading the changes; never answer it with "I cannot run those"
+- [Say when it cannot be done](say-when-it-cannot-be-done.md) — if the task is impossible inside the scope named, say so first and stop; do not widen it or invent a substitute
 - [Ask instead of assuming intent](ask-instead-of-assuming-intent.md) — a question is not an instruction; ask and wait for the actual answer before acting
 - [Window Shot rebuild resets its grant](window-shot-rebuild-resets-its-grant.md) — its build script drops the stale screen recording entry itself; never tell the user to flip the toggle
 - [Resize keeps text size](resize-keeps-text-size.md) — the confirmed target: text stays the same size through a live resize; the reference film sits beside the host-resize test

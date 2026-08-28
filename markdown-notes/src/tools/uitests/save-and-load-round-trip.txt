@@ -12,7 +12,9 @@
 # deleted in code: the save is proven right here, and the name is free for the
 # save below to write to a file that does not exist, as this one did.
 remove:%CACHE%\round-trip.md
-type:# Mix notes
+# The document opens on a heading waiting to be named, so this names it rather
+# than typing a `#` of its own.
+type:Mix notes
 type:{ENTER}levels are close
 press:Save|501,76
 wait:500
@@ -29,7 +31,7 @@ remove:%CACHE%\round-trip.md
 # recognition reads reliably: it is clicked where the code puts it, and that
 # the click landed is said by the two tabs read at the end.
 plugin:129,87
-type:# Drum bus
+type:Drum bus
 press:Save As|567,76
 wait:500
 type:%CACHE%\round-trip.md

@@ -224,8 +224,8 @@ impl Default for Editor {
 
 impl Editor {
     pub fn new() -> Editor {
-        Editor {
-            sections: vec![kode_core::Editor::empty()],
+        let mut e = Editor {
+            sections: vec![kode_core::Editor::new(sections::NEW_SECTION)],
             placed: vec![true],
             active: 0,
             mode: ViewMode::Wysiwyg,
@@ -236,7 +236,9 @@ impl Editor {
             file: None,
             title: DEFAULT_TITLE.to_string(),
             dirty: false,
-        }
+        };
+        e.select(sections::new_section_title());
+        e
     }
 
     pub fn with_text(text: impl Into<String>) -> Editor {
@@ -295,10 +297,11 @@ impl Editor {
 
     /// Add an empty section after the last one and switch to it.
     pub fn new_section(&mut self) -> usize {
-        self.sections.push(kode_core::Editor::empty());
+        self.sections.push(kode_core::Editor::new(sections::NEW_SECTION));
         self.placed.push(true);
         self.active = self.sections.len() - 1;
         self.dirty = true;
+        self.select(sections::new_section_title());
         self.active
     }
 
@@ -310,8 +313,10 @@ impl Editor {
         }
         self.dirty = true;
         if self.sections.len() == 1 {
-            self.sections[0] = kode_core::Editor::empty();
+            self.sections[0] = kode_core::Editor::new(sections::NEW_SECTION);
             self.placed[0] = true;
+            self.active = 0;
+            self.select(sections::new_section_title());
             return;
         }
         self.sections.remove(index);
@@ -951,8 +956,11 @@ impl Editor {
 mod typing_tests {
     use super::*;
 
+    /// Typed into a blank document, so what comes out is only what was typed.
+    /// A document nobody has opened comes with a heading to name, which these
+    /// are not about.
     fn typed(s: &str) -> Editor {
-        let mut e = Editor::new();
+        let mut e = Editor::with_text("");
         for c in s.chars() {
             if c == '\n' {
                 e.handle_key(Key::Enter, Mods::NONE);
@@ -1011,7 +1019,7 @@ mod typing_tests {
     /// it, which is when the rules that ask need to know.
     #[test]
     fn an_unclosed_fence_is_a_code_block() {
-        let mut e = Editor::new();
+        let mut e = Editor::with_text("");
         for c in "```rust".chars() {
             e.handle_key(Key::Char(c), Mods::NONE);
         }
@@ -1109,7 +1117,7 @@ mod tests {
 
     #[test]
     fn a_plain_t_is_typed_rather_than_cycling_the_theme() {
-        let mut e = Editor::new();
+        let mut e = Editor::with_text("");
         e.handle_key(Key::Char('t'), Mods::NONE);
         assert_eq!(e.text(), "t");
         assert_eq!(e.theme, Theme::Auto);
@@ -1119,7 +1127,7 @@ mod tests {
     fn the_theme_is_not_undoable() {
         // Undo restores document snapshots; a view preference is not part of
         // the document and must survive an undo.
-        let mut e = Editor::new();
+        let mut e = Editor::with_text("");
         for c in "hello".chars() {
             e.handle_key(Key::Char(c), Mods::NONE);
         }
@@ -1136,12 +1144,30 @@ mod tests {
 mod section_tests {
     use super::*;
 
+    /// A document nobody has opened is one section waiting to be named, the
+    /// same as any section made afterwards.
     #[test]
-    fn a_new_editor_has_one_empty_section() {
-        let e = Editor::new();
+    fn a_new_editor_opens_on_a_section_waiting_for_its_name() {
+        let mut e = Editor::new();
         assert_eq!(e.section_count(), 1);
         assert_eq!(e.active_section(), 0);
-        assert_eq!(e.section_title(0), "untitled");
+        assert_eq!(e.text(), sections::NEW_SECTION);
+        assert_eq!(e.section_title(0), "Section Title");
+
+        for c in "Mix notes".chars() {
+            e.handle_key(Key::Char(c), Mods::NONE);
+        }
+        assert_eq!(e.text(), "# Mix notes");
+    }
+
+    /// A document that was saved empty comes back empty. Somebody emptied it,
+    /// the same way a note name that was cleared stays cleared.
+    #[test]
+    fn a_document_saved_empty_is_not_given_a_heading_back() {
+        let mut e = Editor::with_text("# Something");
+        e.set_document_text("");
+        assert_eq!(e.section_count(), 1);
+        assert_eq!(e.text(), "");
     }
 
     #[test]
@@ -1150,8 +1176,21 @@ mod section_tests {
         let index = e.new_section();
         assert_eq!(index, 1);
         assert_eq!(e.active_section(), 1);
-        assert_eq!(e.text(), "");
+        assert_eq!(e.text(), sections::NEW_SECTION);
         assert_eq!(e.section_text(0), "# First\n\nbody");
+    }
+
+    /// A new section opens with its title selected, so the first thing typed
+    /// is its name and the heading marker stays put.
+    #[test]
+    fn the_title_of_a_new_section_is_replaced_by_what_is_typed_first() {
+        let mut e = Editor::with_text("# First");
+        e.new_section();
+        for c in "Drum bus".chars() {
+            e.handle_key(Key::Char(c), Mods::NONE);
+        }
+        assert_eq!(e.text(), "# Drum bus");
+        assert_eq!(e.section_title(1), "Drum bus");
     }
 
     #[test]
@@ -1159,7 +1198,9 @@ mod section_tests {
         let mut e = Editor::with_text("# One");
         e.set_caret(2);
         e.new_section();
-        for c in "# Two".chars() {
+        // The new section's title is selected, so this names it rather than
+        // being added to it.
+        for c in "Two".chars() {
             e.handle_key(Key::Char(c), Mods::NONE);
         }
         assert_eq!(e.text(), "# Two");
@@ -1190,7 +1231,7 @@ mod section_tests {
         let mut e = Editor::with_text("# Drum bus\n\nbody");
         assert_eq!(e.section_title(0), "Drum bus");
         e.new_section();
-        assert_eq!(e.section_title(1), "untitled");
+        assert_eq!(e.section_title(1), "Section Title");
     }
 
     #[test]
@@ -1224,7 +1265,7 @@ mod section_tests {
         let mut e = Editor::with_text("# Only");
         e.close_section(0);
         assert_eq!(e.section_count(), 1);
-        assert_eq!(e.text(), "");
+        assert_eq!(e.text(), sections::NEW_SECTION);
     }
 
     #[test]

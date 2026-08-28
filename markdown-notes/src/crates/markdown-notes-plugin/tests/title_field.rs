@@ -13,7 +13,7 @@ use markdown_notes_core::{Editor, Theme, DEFAULT_TITLE};
 /// the name is a field across the middle of it rather than a squeezed sliver.
 const SIZE: (f32, f32) = (900.0, 400.0);
 
-const CHOSEN: &str = "Ghostlight";
+const CHOSEN: &str = "funky cake";
 
 fn with_title(title: Option<&str>) -> (Harness<'static>, Arc<Mutex<Editor>>) {
     let editor = Arc::new(Mutex::new(Editor::new()));

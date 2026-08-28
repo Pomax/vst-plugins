@@ -4,6 +4,10 @@
 # from one line into the next is the case to check: three lines, and one drag
 # that starts on the second and ends below the third. What it selects is
 # everything from that point on, which typing then replaces.
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, so the three lines below
+# are three paragraphs at the same height as each other.
+type:{BS 3}
 type:first line here
 type:{ENTER}second line here
 type:{ENTER}third line here

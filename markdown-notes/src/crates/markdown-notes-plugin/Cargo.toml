@@ -13,7 +13,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 markdown-notes-core.workspace = true
 vst3.workspace = true
-serde_json = "1"
 # Native Open/Save dialogs, so file operations look like the host's own.
 rfd = "0.15"
 # default-features off drops the embedded font set (~1.4 MB); the fonts come
@@ -50,7 +49,6 @@ accesskit = "0.24"
 [features]
 # Enables the headless renderer:
 #   cargo test -p markdown-notes-plugin --features snapshots
-#   cargo run  -p markdown-notes-plugin --features snapshots --example snapshot
 snapshots = ["dep:egui_kittest", "dep:image"]
 
 [[test]]
@@ -89,13 +87,3 @@ required-features = ["snapshots"]
 name = "caret_in_view"
 required-features = ["snapshots"]
 
-[[example]]
-name = "snapshot"
-required-features = ["snapshots"]
-
-[[example]]
-name = "scripts"
-required-features = ["snapshots"]
-
-[[example]]
-name = "preview"

@@ -1,4 +1,4 @@
-# Ghostlight — rough mix 3
+# funky cake — rough mix 3
 
 **128 bpm** · **F minor** · tracked 12 Feb, mixing since
 

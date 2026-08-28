@@ -149,6 +149,16 @@ pub fn run(module: &Module, scenario: &Scenario) -> Result<(), Failure> {
         message: e.to_string(),
     })?;
 
+    // The plugin opens on a heading waiting to be named. That is its own
+    // behaviour, described where the sections are; these scenarios describe
+    // editing, and start from a document with nothing in it.
+    let blank = PluginState::default().to_bytes();
+    plugin.set_state(&blank).map_err(|e| Failure {
+        step_index: 0,
+        step: "<clear the document>".into(),
+        message: e.to_string(),
+    })?;
+
     for (i, step) in scenario.steps.iter().enumerate() {
         let err = |m: String| fail(i, step, m);
         match step {

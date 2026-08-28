@@ -104,63 +104,34 @@ test.bat
 
 Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first.
 
-To look at the editor's drawing code alone, without going through VST3 at all:
-
-```bash
-cargo run -p markdown-notes-plugin --example preview
-```
-
-The preview takes an optional theme and an optional markdown file:
-
-```bash
-cargo run -p markdown-notes-plugin --example preview -- light src/tools/screenshot-notes.md
-```
-
-To render the GUI headlessly to PNGs — no window, no human needed:
-
-```bash
-cargo run -p markdown-notes-plugin --features snapshots --example snapshot
-```
-
 The `snapshots` feature is opt-in because the headless renderer pulls in the
 whole wgpu/naga stack: several gigabytes of build output for a plugin that
 ships as 5 MB. `cargo run -p xtask -- test --snapshots` runs the pixel tests
 along with everything else.
 
-That writes `target/snapshots/{light,dark}.png` through a real rasteriser and
-reports the background and text brightness of each. The same machinery backs
-[`tests/theme_rendering.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/tests/theme_rendering.rs),
-which asserts on actual pixels: that light really is light, that the text
-contrasts with it, and that the two themes do not look alike. Those tests exist
-because the light theme once passed every non-visual check while the window
-stayed black — nothing painted the background, so egui's dark-on-light text was
-drawn onto a black clear colour. Only pixels catch that.
+Those tests render the drawing code through a real rasteriser with no window
+involved. [`tests/theme_rendering.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/tests/theme_rendering.rs)
+asserts on actual pixels: that light really is light, that the text contrasts
+with it, and that the two themes do not look alike. They exist because the
+light theme once passed every non-visual check while the window stayed black:
+nothing painted the background, so egui's dark-on-light text was drawn onto a
+black clear colour. Only pixels catch that.
 
 The headless renderer proves the *drawing code* is right. To prove the *real
-window* is — the path through baseview and OpenGL, where the background is the
-renderer's clear colour rather than anything egui draws — screenshot it:
+window* is, which is the path through baseview and OpenGL where the background
+is the renderer's clear colour rather than anything egui draws, run the UI
+tests: they open the plugin in the mini host and photograph it.
 
 ```bash
-powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Theme light -Out target/window-light.png
+powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Exe ../binaries/mini-host.exe -Title "Mini VST Host" -Out window.png
 ```
 
 `-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. It
-takes `-Notes` to show a particular markdown file, and `-ExeArgs` and `-Title`
-for capturing something other than the preview, such as the mini host.
-
-It launches the preview, locates the editor window by title, grabs its pixels
-off the screen and closes it. The title is used because the process also owns a
-console window and `MainWindowHandle` names whichever appeared first.
+takes `-ExeArgs` for what to launch the host with, and `-Title` to say which
+window to photograph.
 
 On macOS the UI tests photograph the window themselves, through the `Window
-Shot` app in `tools/window-shot`, so there is no script to run by hand.
-
-To see which scripts the system fonts cover, before and after text in a new
-script arrives:
-
-```bash
-cargo run -p markdown-notes-plugin --features snapshots --example scripts
-```
+Shot` app in `tools/window-shot`.
 
 The host is also a standalone tool that loads **any** VST3 plugin, not just
 this one:
@@ -276,7 +247,7 @@ monospace faces — enough for Latin, Greek, Cyrillic, Hebrew and Arabic — and
 when text arrives in a script those cannot draw, the font for it is fetched
 from the system at that moment and added as a fallback. Nothing is captured at
 build time except a list of family names; the lookup happens on the machine
-running the plugin. `examples/scripts.rs` renders the evidence.
+running the plugin.
 
 ## Known limitations
 

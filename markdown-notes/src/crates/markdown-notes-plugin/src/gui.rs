@@ -151,6 +151,9 @@ struct Gui {
     /// is painted rather than allocated, so the scroll area has nothing of its
     /// own to follow: the document is scrolled to it when this changes.
     caret_was: Option<(usize, usize)>,
+    /// When the caret last moved. The blink starts from there, so a caret
+    /// being driven along by typing stays solid instead of flickering.
+    caret_moved_at: f64,
 }
 
 impl Gui {
@@ -172,6 +175,7 @@ impl Gui {
             settings_open: false,
             document_focused: true,
             caret_was: None,
+            caret_moved_at: 0.0,
         }
     }
 
@@ -1297,7 +1301,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             }
 
             drawn.push(line_body(
-                ui, block, &src, caret, &selection, raw, &palette, pad,
+                ui, block, &src, caret, &selection, &palette, pad,
             ));
         });
     }
@@ -1389,12 +1393,46 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     // into view. Only when the caret moves: doing it every frame would fight
     // the scrollbar and the wheel, which are how a reader looks elsewhere.
     let now = caret.map(|at| (editor.active_section(), at));
+    let spot = drawn.iter().find_map(|line| line.caret);
     if now != gui.caret_was {
         gui.caret_was = now;
-        if let Some(spot) = drawn.iter().find_map(|line| line.caret) {
+        gui.caret_moved_at = ui.input(|i| i.time);
+        if let Some(spot) = spot {
             ui.scroll_to_rect(spot.expand2(egui::vec2(0.0, CARET_MARGIN)), None);
         }
     }
+    if let Some(spot) = spot {
+        blink_caret(ui, spot, palette.caret, gui.caret_moved_at);
+    }
+}
+
+/// Draw the caret, on and off, the way every text field does.
+///
+/// The phase runs from `moved_at`, so the caret is solid while it is being
+/// driven along by typing and only starts blinking once it sits still. The
+/// repaint is asked for at the next change of state: nothing else in the
+/// window is animating, so without it the caret would freeze mid-cycle.
+fn blink_caret(ui: &egui::Ui, spot: egui::Rect, colour: egui::Color32, moved_at: f64) {
+    let paint = || {
+        ui.painter()
+            .line_segment([spot.min, spot.left_bottom()], Stroke::new(1.5, colour));
+    };
+
+    let cursor = &ui.visuals().text_cursor;
+    if !cursor.blink {
+        paint();
+        return;
+    }
+
+    let cycle = cursor.on_duration + cursor.off_duration;
+    let at = ((ui.input(|i| i.time) - moved_at) % cycle as f64) as f32;
+    let next = if at < cursor.on_duration {
+        paint();
+        cursor.on_duration - at
+    } else {
+        cycle - at
+    };
+    ui.ctx().request_repaint_after_secs(next);
 }
 
 /// Vertical space to leave between two consecutive lines.
@@ -1475,7 +1513,6 @@ fn line_body(
     src: &str,
     caret: Option<usize>,
     selection: &std::ops::Range<usize>,
-    raw: bool,
     palette: &Palette,
     pad: Padding,
 ) -> DrawnLine {
@@ -1630,17 +1667,15 @@ fn line_body(
     ui.painter()
         .galley(origin, Arc::clone(&galley), palette.body);
 
+    // Where the caret goes, not the caret itself: it is painted once the whole
+    // document is drawn, so that it blinks on one clock rather than per line.
     let mut drawn_caret = None;
     if let Some(at) = caret.filter(|at| *at >= block.range.start && *at <= block.range.end) {
         let spot = spot_of(at);
         let top = origin + spot.min.to_vec2();
         let bottom = top + egui::vec2(0.0, spot.height());
-        ui.painter()
-            .line_segment([top, bottom], Stroke::new(1.5, palette.caret));
         drawn_caret = Some(egui::Rect::from_min_max(top, bottom));
     }
-
-    let _ = raw;
 
     DrawnLine { rect, origin, galley, map, caret: drawn_caret }
 }

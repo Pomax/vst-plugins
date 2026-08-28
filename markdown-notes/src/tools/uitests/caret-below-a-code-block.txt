@@ -11,7 +11,9 @@
 # answer and does not claim to: `caret_rendering.rs` renders the same document
 # headlessly and measures it. The picture here is for reading a failure, not
 # for deciding one.
-type:# secondary
+# The document opens on a heading waiting to be named, so this names it rather
+# than typing a `#` of its own.
+type:secondary
 type:{ENTER}testing as well
 # Enter after the fence marker closes it and leaves the caret inside.
 type:{ENTER}```py

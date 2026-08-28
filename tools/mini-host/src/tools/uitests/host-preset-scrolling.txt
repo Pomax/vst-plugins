@@ -8,6 +8,10 @@
 # The presets are copies of one real one. Saving two dozen through the dialog
 # would test the dialog two dozen times and the scrollbar once.
 remove:%PRESETS%\zz-bulk.preset
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, leaving nothing: what is
+# being carried through a preset here is the plain line below.
+type:{BS 3}
 type:the document that came back
 
 # One real preset, saved the way any preset is saved. The name field opens with

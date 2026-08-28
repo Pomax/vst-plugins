@@ -462,7 +462,7 @@ fn drive(
         .arg(steps)
         .arg("-Out")
         .arg(shot)
-        .args(["-SettleMs", "4000"])
+        .args(["-SettleMs", "500"])
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;

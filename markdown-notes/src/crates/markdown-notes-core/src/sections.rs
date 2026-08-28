@@ -9,6 +9,17 @@
 /// Shown by a section whose text does not start with a heading.
 pub const UNTITLED: &str = "untitled";
 
+/// What a section with nothing in it is given to start from, so that every
+/// section has a heading and so a title.
+pub const NEW_SECTION: &str = "# Section Title";
+
+/// The part of [`NEW_SECTION`] that is the title, which is what a new section
+/// opens with selected: the first thing typed replaces it.
+pub fn new_section_title() -> std::ops::Range<usize> {
+    let start = NEW_SECTION.len() - "Section Title".len();
+    start..NEW_SECTION.len()
+}
+
 /// Widest a section title may be, in characters.
 ///
 /// The width is fixed rather than proportional to the longest title so the bar

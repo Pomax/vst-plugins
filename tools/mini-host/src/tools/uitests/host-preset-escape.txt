@@ -5,6 +5,10 @@
 # Escape, and it has to be a way out that leaves no trace.
 remove:%PRESETS%\escape-test.preset
 remove:%PRESETS%\not-written.preset
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, leaving nothing: what is
+# being carried through a preset here is the plain word below.
+type:{BS 3}
 type:one
 
 # Save a preset for real, so the Load button has something to offer. The name
@@ -21,7 +25,11 @@ window:
 
 # Change the document. Loading the preset would put it back to "one", so this
 # is what proves nothing was loaded.
-plugin:400,300
+#
+# Beside the line rather than below it: the empty space under the last line
+# takes the caret away instead of placing it, and how much of that there is
+# depends on how big the window happens to be.
+plugin:400,128
 type: two
 wait:500
 

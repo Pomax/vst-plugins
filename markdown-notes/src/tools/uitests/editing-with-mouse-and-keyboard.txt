@@ -10,6 +10,10 @@
 # is shown where a click would put one: over a line. The empty space below the
 # last line takes the caret away instead of placing it, and the toolbar is not
 # the document at all.
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `: what this test is about is
+# a paragraph, drawn at the height a paragraph is drawn at.
+type:{BS 3}
 type:text goes here
 cursor:60,155|ibeam
 cursor:400,400|arrow
@@ -18,13 +22,15 @@ cursor:450,76|arrow
 # Dragging through the text selects what it crosses, which typing then
 # replaces. The press has to land inside the text: a line is only as wide as
 # what is written on it, and a press beside it belongs to no line at all.
-# The drag runs from where "goes here" starts, found by looking rather than
-# by a pixel count, to past the end of the line, so what it selects is
-# everything from there on: "text goes here" becomes "text X". The end of the
-# drag sits far right of the text so it is past the line's end whatever width
-# a platform's font gives it. A word rather than part of one: text
-# recognition places words, and a mark inside one snaps to its start.
-dragtext:goes here|140|300,155
+# The drag runs from where "goes" starts, found by looking rather than by a
+# pixel count, to past the end of the line, so what it selects is everything
+# from there on: "text goes here" becomes "text X". The end of the drag sits
+# far right of the text so it is past the line's end whatever width a
+# platform's font gives it. A word rather than part of one: text recognition
+# places words, and a mark inside one snaps to its start. Not the last word on
+# the line either: the caret stands against it, and a reader takes the two
+# together and makes a different letter of it.
+dragtext:goes|140|300,155
 type:X
 shot:%CACHE%\editing-dragged-to-select.png
 

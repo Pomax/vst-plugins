@@ -258,11 +258,11 @@ mod tests {
         let target = dir.join("named.md");
 
         let mut e = Editor::with_text("# One");
-        e.title = "Ghostlight".to_string();
+        e.title = "funky cake".to_string();
         e.save_as(&target).unwrap();
 
         let written = fs::read_to_string(&target).unwrap();
-        assert!(!written.contains("Ghostlight"), "{written:?}");
+        assert!(!written.contains("funky cake"), "{written:?}");
     }
 
     #[test]
@@ -288,6 +288,9 @@ mod tests {
 
         let mut e = Editor::with_text("# One");
         e.new_section();
+        // A new section comes with a heading, so this is emptied by hand to be
+        // the gap the test is about.
+        e.set_text("");
         e.new_section();
         e.set_text("# Three");
         e.save_as(&target).unwrap();

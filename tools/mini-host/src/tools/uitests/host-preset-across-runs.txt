@@ -9,13 +9,15 @@
 # file of its own on the way. Saving a file is a copy going out; it is not
 # supposed to change the document or what a preset holds of it.
 remove:%PRESETS%\across-runs.preset
-type:# first
+# A section opens on a heading waiting to be named, so this names it rather
+# than typing a `#` of its own.
+type:first
 type:{ENTER}the first paragraph
 # The + button carries no word, and a lone glyph is not something text
 # recognition reads reliably: it is clicked where the code puts it, and that
 # the click landed is said by the two tabs read after the preset comes back.
 plugin:129,87
-type:# second
+type:second
 type:{ENTER}the second paragraph
 
 remove:%CACHE%\across-runs.md

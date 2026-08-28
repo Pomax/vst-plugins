@@ -8,6 +8,10 @@
 #
 # The strip across the top is 26 points tall, so the plugin gets everything
 # below that: the same width, and the height less 26.
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `, leaving nothing: what has
+# to survive the resizing is the plain line below.
+type:{BS 3}
 type:something to keep
 
 # Resizing is a hand on the corner, moving: nothing here sets a size any

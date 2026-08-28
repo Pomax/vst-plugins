@@ -2330,7 +2330,6 @@ dependencies = [
  "markdown-notes-core",
  "raw-window-handle",
  "rfd",
- "serde_json",
  "vst3",
 ]
 
