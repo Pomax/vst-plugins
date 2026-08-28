@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "mini-host/**"
+      - "tools/mini-host/**"
       - "!**/*.md"
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ env:
 
 defaults:
   run:
-    working-directory: mini-host
+    working-directory: tools/mini-host
 
 jobs:
   windows:
@@ -38,12 +38,12 @@ jobs:
         run: ./build.bat
 
       - name: Zip
-        run: Compress-Archive -Path ../dist/mini-host.exe -DestinationPath mini-host-windows-x86_64.zip
+        run: Compress-Archive -Path ../../binaries/mini-host.exe -DestinationPath mini-host-windows-x86_64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mini-host-windows-x86_64
-          path: mini-host/mini-host-windows-x86_64.zip
+          path: tools/mini-host/mini-host-windows-x86_64.zip
           if-no-files-found: error
 
   macos:
@@ -64,12 +64,12 @@ jobs:
         run: ./build.sh
 
       - name: Zip
-        run: ditto -c -k --sequesterRsrc ../dist/mini-host mini-host-macos-arm64.zip
+        run: ditto -c -k --sequesterRsrc ../../binaries/mini-host mini-host-macos-arm64.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mini-host-macos-arm64
-          path: mini-host/mini-host-macos-arm64.zip
+          path: tools/mini-host/mini-host-macos-arm64.zip
           if-no-files-found: error
 
   release:

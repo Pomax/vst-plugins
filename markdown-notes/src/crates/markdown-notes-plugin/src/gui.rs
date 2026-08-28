@@ -103,6 +103,10 @@ const CODE_PADDING: f32 = 5.0;
 /// one character per row.
 const MIN_WRAP_WIDTH: f32 = 40.0;
 
+/// How much of the document is kept visible above and below the caret when
+/// the document is scrolled to it, so it never sits against an edge.
+const CARET_MARGIN: f32 = 12.0;
+
 /// Breathing room around the section strip.
 const SECTION_MARGIN: egui::Margin = egui::Margin::symmetric(10, 4);
 
@@ -143,6 +147,10 @@ struct Gui {
     /// Whether the document is what keystrokes go to. Set by clicking into it,
     /// cleared when a field takes the keyboard.
     document_focused: bool,
+    /// Which section the caret was in and where, as of last frame. The caret
+    /// is painted rather than allocated, so the scroll area has nothing of its
+    /// own to follow: the document is scrolled to it when this changes.
+    caret_was: Option<(usize, usize)>,
 }
 
 impl Gui {
@@ -163,6 +171,7 @@ impl Gui {
             selecting_from: None,
             settings_open: false,
             document_focused: true,
+            caret_was: None,
         }
     }
 
@@ -1296,10 +1305,6 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     if let Some(line) = toggled {
         editor.toggle_checkbox(line);
     } else {
-        // Where in the document a point on screen is. The line is the one the
-        // pointer is level with, and above the first or below the last it is
-        // that line: dragging off the end of the text selects to the end,
-        // the way dragging off the end of any text area does.
         // The line the pointer is level with, and nothing when it is level
         // with none of them: the space below the last line is document, but it
         // is not a line, and there is nowhere on it to put a caret.
@@ -1379,6 +1384,17 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     if toggled.is_some() || surface.clicked() || surface.drag_started() {
         gui.document_focused = true;
     }
+
+    // Writing past the bottom of the window has to bring what is being written
+    // into view. Only when the caret moves: doing it every frame would fight
+    // the scrollbar and the wheel, which are how a reader looks elsewhere.
+    let now = caret.map(|at| (editor.active_section(), at));
+    if now != gui.caret_was {
+        gui.caret_was = now;
+        if let Some(spot) = drawn.iter().find_map(|line| line.caret) {
+            ui.scroll_to_rect(spot.expand2(egui::vec2(0.0, CARET_MARGIN)), None);
+        }
+    }
 }
 
 /// Vertical space to leave between two consecutive lines.
@@ -1419,7 +1435,6 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
     }
 
     match (&previous.kind, &current.kind) {
-        // Lines of one paragraph, and lines inside one fence.
         (Paragraph, Paragraph) => 0.0,
         (Code, Code) | (Fence { .. }, Code) | (Code, Fence { .. }) => 0.0,
 
@@ -1443,6 +1458,8 @@ struct DrawnLine {
     galley: Arc<egui::Galley>,
     /// The source offset of every character in the galley.
     map: Vec<usize>,
+    /// Where the caret was drawn, when it is on this line.
+    caret: Option<egui::Rect>,
 }
 
 /// Which edges of a code block this row is at, and so where its padding goes.
@@ -1613,18 +1630,19 @@ fn line_body(
     ui.painter()
         .galley(origin, Arc::clone(&galley), palette.body);
 
+    let mut drawn_caret = None;
     if let Some(at) = caret.filter(|at| *at >= block.range.start && *at <= block.range.end) {
         let spot = spot_of(at);
         let top = origin + spot.min.to_vec2();
-        ui.painter().line_segment(
-            [top, top + egui::vec2(0.0, spot.height())],
-            Stroke::new(1.5, palette.caret),
-        );
+        let bottom = top + egui::vec2(0.0, spot.height());
+        ui.painter()
+            .line_segment([top, bottom], Stroke::new(1.5, palette.caret));
+        drawn_caret = Some(egui::Rect::from_min_max(top, bottom));
     }
 
     let _ = raw;
 
-    DrawnLine { rect, origin, galley, map }
+    DrawnLine { rect, origin, galley, map, caret: drawn_caret }
 }
 
 /// Where on the line the source offset `offset` sits: how far along, and on
@@ -1896,10 +1914,10 @@ mod tests {
 
     /// The caret goes after a bold word, not inside it.
     ///
-    /// A line of mixed formats used to be re-measured in the body font to place
-    /// the caret, so every bold or code span before it made the caret drift
-    /// back by the difference between the two faces: type `**well** yo` and the
-    /// caret sits between the `y` and the `o`.
+    /// A line of mixed formats is placed by the galley that drew it. Measuring
+    /// it in the body font instead drifts the caret back by the difference
+    /// between the two faces, once per bold or code span in front of it: type
+    /// `**well** yo` and the caret sits between the `y` and the `o`.
     #[test]
     fn the_caret_lands_after_bold_text_not_inside_it() {
         let ctx = egui::Context::default();
@@ -1945,8 +1963,8 @@ mod tests {
             last.pos.x
         );
 
-        // And that is not where one font puts it, or the test would pass
-        // against the bug.
+        // And that is not where one font puts it, or measuring in the body
+        // font would pass this too.
         assert!(
             x - flat > 1.0,
             "the bold face should be wider: galley {x}, one font {flat}"

@@ -2,7 +2,7 @@
 REM Build every project. Stops at the first failure.
 setlocal
 
-for %%p in (mini-host vst3-loader markdown-notes) do (
+for %%p in (tools\mini-host tools\vst3-loader markdown-notes) do (
     echo === %%p ===
     pushd "%%p"
     call ".\build.bat" %*

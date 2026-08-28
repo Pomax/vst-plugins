@@ -2,11 +2,10 @@
 # save, check the file in code, delete it, save again with Save As, check that
 # in code, then open it back and check what came in.
 #
-# The regression this guards: the dialogs were opened from inside the frame
-# being drawn, and a native dialog runs its own message loop. The window's
-# frame timer kept firing, egui was asked to lay out a frame while it was
-# already laying one out, and the plugin died. A dead plugin never reaches its
-# shutdown, so this test sees that as no state written at all.
+# A native dialog runs its own message loop, so one opened from inside the
+# frame being drawn leaves the frame timer firing into a layout that is already
+# under way, and the plugin dies. A dead plugin never reaches its shutdown, so
+# this test sees that as no state written at all.
 
 # Save is Save As until the document has a path, so this is the first dialog.
 # The file it wrote is checked in code the moment the dialog closes, and then

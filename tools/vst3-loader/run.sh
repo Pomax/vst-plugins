@@ -4,7 +4,7 @@
 set -e
 
 loader=
-for candidate in ../dist/vst3-loader .cache/release/vst3-loader; do
+for candidate in ../../binaries/vst3-loader .cache/release/vst3-loader; do
     if [ -x "$candidate" ]; then loader=$candidate; break; fi
 done
 

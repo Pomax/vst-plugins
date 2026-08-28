@@ -4,7 +4,7 @@
 set -e
 
 host=
-for candidate in ../dist/mini-host .cache/release/mini-host; do
+for candidate in ../../binaries/mini-host .cache/release/mini-host; do
     if [ -x "$candidate" ]; then host=$candidate; break; fi
 done
 

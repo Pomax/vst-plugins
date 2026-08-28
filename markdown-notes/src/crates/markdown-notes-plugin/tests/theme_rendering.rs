@@ -1,9 +1,9 @@
 //! Rendering tests for the themes.
 //!
 //! These render the real GUI through a real rasteriser and look at the pixels.
-//! They exist because the light theme once "worked" by every other measure —
-//! the state was right, the visuals were right — while the window stayed black,
-//! since nothing painted the background. Only pixels catch that.
+//! A theme can be right in every other measure, state and visuals both, while
+//! the window stays black because nothing paints the background. Only pixels
+//! catch that.
 
 use std::sync::{Arc, Mutex};
 

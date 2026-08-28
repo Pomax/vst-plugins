@@ -24,7 +24,8 @@ a drag the queue never empties, so the plugin is never asked for a frame, and
 the area it has just been stretched into shows what the graphics card left
 there: black. It looks like a repaint failure in the host, and it is not.
 
-**How to apply:** this lives in `mini-host/src/crates/mini-host/src/app/place.rs`
+**How to apply:** this lives in
+`tools/mini-host/src/crates/mini-host/src/app/place.rs`
 as `track_editor` and `draw_now`. macOS needs none of it: an `NSView` with an
 autoresizing mask is resized by AppKit inside the resize. Do not move the
 tracking back into the frame loop, and do not drop the paint nudge because it

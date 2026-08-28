@@ -23,8 +23,9 @@ Nothing here is specific to any one plugin.
 | `src/crates/mini-host/src/bin/vst3-host.rs` | Command-line inspector. |
 | `src/crates/mini-host/src/bin/mini-host/` | The windowed host: window, icon, saved position. |
 
-Build output goes to `.cache/`, not `target/`. The finished executables are
-copied to `../dist`, shared with the other projects here.
+The project lives in `tools/mini-host`. Build output goes to `.cache/`, not
+`target/`, and the finished executables are copied to `../../binaries`, shared
+with the other projects here.
 
 ## Building and running
 
@@ -39,20 +40,20 @@ build.bat
 Then point the windowed host at a plugin:
 
 ```bash
-run.bat ..\dist\Markdown Notes.vst3
+run.bat ..\..\binaries\Markdown Notes.vst3
 ```
 
 ```bash
-./run.sh ../dist/Markdown Notes.vst3
+./run.sh ../../binaries/Markdown Notes.vst3
 ```
 
-`run` builds nothing. It uses `../dist/mini-host`, falling back to
+`run` builds nothing. It uses `../../binaries/mini-host`, falling back to
 `.cache/release/mini-host`, and fails if neither is there.
 
 To inspect a plugin instead of opening it:
 
 ```bash
-cargo run --bin vst3-host -- ../dist/Markdown Notes.vst3
+cargo run --bin vst3-host -- ../../binaries/Markdown Notes.vst3
 ```
 
 Tests:

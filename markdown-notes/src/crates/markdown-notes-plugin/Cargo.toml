@@ -85,6 +85,10 @@ required-features = ["snapshots"]
 name = "clicking_the_document"
 required-features = ["snapshots"]
 
+[[test]]
+name = "caret_in_view"
+required-features = ["snapshots"]
+
 [[example]]
 name = "snapshot"
 required-features = ["snapshots"]

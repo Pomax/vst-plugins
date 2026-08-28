@@ -1,7 +1,7 @@
 @echo off
 REM Open a VST3 plugin in the host's window. Builds nothing: run build first.
 REM   run <path-to-plugin-or-bundle>
-set HOST=..\dist\mini-host.exe
+set HOST=..\..\binaries\mini-host.exe
 if not exist "%HOST%" set HOST=.cache\release\mini-host.exe
 
 if not exist "%HOST%" (

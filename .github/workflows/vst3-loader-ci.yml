@@ -3,8 +3,8 @@ name: VST3 loader CI
 on:
   pull_request:
     paths:
-      - "vst3-loader/**"
-      - "mini-host/**"
+      - "tools/vst3-loader/**"
+      - "tools/mini-host/**"
       - ".github/workflows/vst3-loader-ci.yml"
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ env:
 
 defaults:
   run:
-    working-directory: vst3-loader
+    working-directory: tools/vst3-loader
 
 jobs:
   test:

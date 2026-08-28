@@ -22,11 +22,11 @@ use markdown_notes_core::PluginState;
 const HOST_STRIP_HEIGHT: i32 = 26;
 
 /// Where the mini host keeps this plugin's presets: beside the executable it
-/// was run from, which is the shared `dist`.
+/// was run from, which is the shared `binaries`.
 fn presets_dir(root: &Path) -> PathBuf {
     root.parent()
-        .map(|parent| parent.join("dist"))
-        .unwrap_or_else(|| root.join("dist"))
+        .map(|parent| parent.join("binaries"))
+        .unwrap_or_else(|| root.join("binaries"))
         .join("presets")
         .join("Markdown Notes")
 }
@@ -39,9 +39,9 @@ fn presets_dir(root: &Path) -> PathBuf {
 /// harness — driving a real window is the same job either way — and because
 /// the host has nothing to host without a plugin.
 fn suites(root: &Path) -> Vec<(String, PathBuf)> {
-    let alongside = |project: &str| {
+    let in_tools = |project: &str| {
         root.parent()
-            .map(|parent| parent.join(project))
+            .map(|parent| parent.join("tools").join(project))
             .unwrap_or_else(|| root.to_path_buf())
             .join("src")
             .join("tools")
@@ -49,7 +49,7 @@ fn suites(root: &Path) -> Vec<(String, PathBuf)> {
     };
     vec![
         ("markdown-notes".to_string(), root.join("src").join("tools").join("uitests")),
-        ("mini-host".to_string(), alongside("mini-host")),
+        ("mini-host".to_string(), in_tools("mini-host")),
     ]
 }
 

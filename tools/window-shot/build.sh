@@ -6,8 +6,8 @@
 set -e
 
 here=$(cd "$(dirname "$0")" && pwd)
-dist=$here/../../dist
-app="$dist/Window Shot.app"
+binaries=$here/../../binaries
+app="$binaries/Window Shot.app"
 
 cargo build --release
 
@@ -28,4 +28,4 @@ codesign --force --sign - "$app"
 # stale to clear, and tccutil saying so is not a build failure.
 tccutil reset ScreenCapture com.markdown-notes.window-shot || true
 
-echo "dist:   $app"
+echo "binary: $app"

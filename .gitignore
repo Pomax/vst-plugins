@@ -2,7 +2,7 @@
 
 .idea
 .vscode
-dist
+binaries
 
 .DS_Store
 desktop.ini

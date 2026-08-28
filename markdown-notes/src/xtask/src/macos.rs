@@ -539,7 +539,7 @@ fn ask_to_close(pid: u32) -> Result<(), String> {
 /// Start the window photographer on a task and wait for what it writes.
 ///
 /// Reading the screen is a permission macOS grants to one application,
-/// wholesale. `dist/Window Shot.app` is the application that holds it for
+/// wholesale. `binaries/Window Shot.app` is the application that holds it for
 /// these tests: it can photograph a window of a named process or record a
 /// region during a drag, and nothing else, so nothing running the tests can
 /// read the screen in general. It is started through the launcher so the
@@ -620,7 +620,7 @@ fn photographer() -> Result<PathBuf, String> {
         .nth(3)
         .ok_or("no directory above this project")?
         .to_path_buf();
-    let app = root.join("dist").join("Window Shot.app");
+    let app = root.join("binaries").join("Window Shot.app");
     if app.exists() {
         return Ok(app);
     }
@@ -704,7 +704,7 @@ fn finder() -> Result<PathBuf, String> {
         .nth(3)
         .ok_or("no directory above this project")?
         .to_path_buf();
-    let tool = root.join("dist").join("find-text");
+    let tool = root.join("binaries").join("find-text");
     if tool.exists() {
         return Ok(tool);
     }

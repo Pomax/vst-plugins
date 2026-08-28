@@ -1,12 +1,10 @@
 # The plugin's window fills the host's, at whatever size the host is.
 #
-# The plugin is a window of its own inside the host's, and the host used to put
-# it right on the next frame of its own drawing loop. That is a frame late for
-# every frame of a drag: the host paints its new shape while the plugin still
-# has the old one, so the edge of the window shows the host's background where
-# the plugin has not caught up. Now the plugin's window is moved from inside
-# the resize itself, so no size the host is ever set to can leave the two
-# disagreeing.
+# The plugin is a window of its own inside the host's, and it is moved from
+# inside the resize itself. Putting it right on the next frame of the host's
+# drawing loop is a frame late for every frame of a drag: the host paints its
+# new shape while the plugin still has the old one, so the edge of the window
+# shows the host's background where the plugin has not caught up.
 #
 # The strip across the top is 26 points tall, so the plugin gets everything
 # below that: the same width, and the height less 26.

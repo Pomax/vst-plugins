@@ -14,12 +14,12 @@ complete VST3 bindings with no C++ SDK dependency, and supports both
 |---|---|
 | `src/crates/markdown-notes-core` | The editor: a document, WYSIWYG layout, as-you-type conversion, plugin state, file I/O. No UI, no plugin dependencies. The buffer, caret, selection and undo are [`kode-markdown`](https://crates.io/crates/kode-markdown)'s; see [EDITOR_CHOICE.md](EDITOR_CHOICE.md). |
 | `src/crates/markdown-notes-plugin` | The VST3 plugin, plus the egui GUI. |
-| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../mini-host`. |
+| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../tools/mini-host`. |
 | `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite. |
 | `src/tools` | Screenshot helpers for the real editor window. |
 
-The VST3 host this project tests against is a separate project: `../mini-host`,
-documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
+The VST3 host this project tests against is a separate project:
+`../tools/mini-host`, documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
 
 ## Building
 
@@ -27,10 +27,10 @@ documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
 cargo dist
 ```
 
-That leaves the installable plugin in `dist/`, and nothing else:
+That leaves the installable plugin in `binaries/`, beside the tools:
 
 ```text
-dist/
+binaries/
   Markdown Notes.vst3
 ```
 
@@ -41,11 +41,11 @@ is what gets copied into the VST3 folder:
 - Windows: `C:\Program Files\Common Files\VST3\`
 - macOS: `~/Library/Audio/Plug-Ins/VST3/`
 
-`dist/` is deleted and recreated by every build, so it only ever holds the
-current one.
+This project's own result in `binaries/` is replaced by every build, so it only
+ever holds the current one.
 
 **A successful build deletes `target/`.** Everything worth keeping has been
-copied to `dist/`; what remains only helps when something went wrong, so it
+copied to `binaries/`; what remains only helps when something went wrong, so it
 survives a *failed* build and not a successful one. The trade is that the next
 build is a cold one.
 
@@ -68,7 +68,8 @@ cargo run -p xtask -- test
 ```
 
 That builds the plugin, then runs the unit tests and the scenario suite in that
-order, and — since it too is a build — clears `dist/` first and deletes
+order, and, since it too is a build, clears this project's result from
+`binaries/` first and deletes
 `target/` when everything passes. `--keep-target` leaves the build output in
 place for a faster next run. The order is the point: the scenario runner loads the plugin binary at
 runtime rather than linking it, so cargo has no idea the two are related and
@@ -101,7 +102,7 @@ test.bat
 ./test.sh
 ```
 
-Both open `../dist/Markdown Notes.vst3` in the mini host, which lives alongside this project in `../mini-host` and must be built there first.
+Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first.
 
 To look at the editor's drawing code alone, without going through VST3 at all:
 
@@ -165,10 +166,10 @@ The host is also a standalone tool that loads **any** VST3 plugin, not just
 this one:
 
 ```bash
-cd ../mini-host && cargo run --bin vst3-host -- ../dist/Markdown Notes.vst3
+cd ../tools/mini-host && cargo run --bin vst3-host -- ../../binaries/Markdown Notes.vst3
 ```
 
-See [the mini host guide](../mini-host/USING.md) for how to use it and how a
+See [the mini host guide](../mini-host/DEVELOPERS.md) for how to use it and how a
 VST3 plugin is loaded.
 
 ## CI
