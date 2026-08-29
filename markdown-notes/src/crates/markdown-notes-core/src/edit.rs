@@ -293,6 +293,10 @@ impl Editor {
             return;
         }
         self.active = index;
+        // A section is opened the way it is meant to be read. The source view
+        // is for working on the one that is in front, not a setting the
+        // document carries around.
+        self.mode = ViewMode::Wysiwyg;
     }
 
     /// Add an empty section after the last one and switch to it.
@@ -610,17 +614,21 @@ impl Editor {
         if !self.has_caret() {
             return KeyResult { handled: false, changed: false, command: None };
         }
+        // The source view is a plain text field: what is typed is what is
+        // there, and markdown is text like any other text.
+        let source = self.mode == ViewMode::Raw;
         let before = self.live().version();
         match key {
             Key::Char(c) => {
                 let mut buffer = [0u8; 4];
                 self.live_mut().insert(c.encode_utf8(&mut buffer));
                 match c {
-                    ' ' => self.normalise_bullet(),
-                    ']' => self.expand_checkbox(),
+                    ' ' if !source => self.normalise_bullet(),
+                    ']' if !source => self.expand_checkbox(),
                     _ => {}
                 }
             }
+            Key::Enter if source => self.live_mut().insert_newline(),
             Key::Enter => {
                 // The engine's rule first: Enter inside a list continues it,
                 // and on an empty item ends it.
@@ -632,7 +640,8 @@ impl Editor {
                 }
             }
             Key::Backspace => {
-                if kode_markdown::InputRules::handle_backspace_at_prefix(self.live_mut()) {
+                if !source && kode_markdown::InputRules::handle_backspace_at_prefix(self.live_mut())
+                {
                     // The rule took it: a marker was removed, not a character.
                 } else if mods.ctrl {
                     self.live_mut().delete_word_back();
@@ -648,7 +657,9 @@ impl Editor {
                 }
             }
             Key::Tab => {
-                let handled = if mods.shift {
+                let handled = if source {
+                    false
+                } else if mods.shift {
                     kode_markdown::InputRules::handle_shift_tab(self.live_mut())
                 } else {
                     kode_markdown::InputRules::handle_tab(self.live_mut())
@@ -717,6 +728,12 @@ impl Editor {
         // work whether or not there is a caret. The rest are the document's.
         let window = matches!(c, 'o' | 's' | '/' | 't');
         if !window && !self.has_caret() {
+            return Some(KeyResult { handled: false, changed: false, command: None });
+        }
+        // The shortcuts that write markdown are formatting, and the source
+        // view does none of it. Selecting, undo and the clipboard are text
+        // editing and stay.
+        if self.mode == ViewMode::Raw && matches!(c, 'b' | 'i' | 'd' | 'e' | '`' | 'k') {
             return Some(KeyResult { handled: false, changed: false, command: None });
         }
         let before = self.live().version();
@@ -1053,6 +1070,102 @@ mod typing_tests {
         e.handle_key(Key::End, Mods::CTRL);
         e.handle_key(Key::Enter, Mods::NONE);
         assert_eq!(e.text(), "```rust\n\n```\n");
+    }
+}
+
+/// Typing in the source view, which does none of the above: the markdown is
+/// text like any other text, and what is typed is what is there.
+#[cfg(test)]
+mod source_typing_tests {
+    use super::*;
+
+    fn typed(s: &str) -> Editor {
+        let mut e = Editor::with_text("");
+        e.mode = ViewMode::Raw;
+        for c in s.chars() {
+            if c == '\n' {
+                e.handle_key(Key::Enter, Mods::NONE);
+            } else {
+                e.handle_key(Key::Char(c), Mods::NONE);
+            }
+        }
+        e
+    }
+
+    #[test]
+    fn enter_after_a_paragraph_is_one_newline() {
+        assert_eq!(typed("a line\n").text(), "a line\n");
+        assert_eq!(typed("a line\nanother\n").text(), "a line\nanother\n");
+    }
+
+    #[test]
+    fn a_list_does_not_continue_itself() {
+        assert_eq!(typed("- milk\n").text(), "- milk\n");
+    }
+
+    #[test]
+    fn a_star_bullet_stays_a_star() {
+        assert_eq!(typed("* milk").text(), "* milk");
+    }
+
+    #[test]
+    fn the_checkbox_shorthand_is_left_as_typed() {
+        assert_eq!(typed("-[] milk").text(), "-[] milk");
+    }
+
+    #[test]
+    fn a_fence_does_not_close_itself() {
+        assert_eq!(typed("```rust\n").text(), "```rust\n");
+    }
+
+    #[test]
+    fn backspace_takes_one_character_off_a_marker() {
+        let mut e = Editor::with_text("- milk");
+        e.mode = ViewMode::Raw;
+        e.set_caret(2);
+        e.handle_key(Key::Backspace, Mods::NONE);
+        assert_eq!(e.text(), "-milk");
+    }
+
+    /// The shortcuts that write markdown write none of it here.
+    #[test]
+    fn the_markdown_shortcuts_do_nothing() {
+        for key in ['b', 'i', 'd', 'e', 'k'] {
+            let mut e = Editor::with_text("milk");
+            e.mode = ViewMode::Raw;
+            e.select(0..4);
+            let result = e.handle_key(Key::Char(key), Mods::CTRL);
+            assert_eq!(e.text(), "milk", "ctrl+{key} wrote markdown into the source");
+            assert!(!result.changed, "ctrl+{key} reported an edit");
+        }
+    }
+
+    /// Selecting, undoing and the clipboard are text editing, and stay.
+    #[test]
+    fn the_plain_shortcuts_still_work() {
+        let mut e = Editor::with_text("milk");
+        e.mode = ViewMode::Raw;
+        e.handle_key(Key::Char('a'), Mods::CTRL);
+        assert_eq!(e.selected_text(), "milk", "ctrl+A did not select the line");
+
+        e.set_caret(4);
+        e.handle_key(Key::Char('!'), Mods::NONE);
+        assert_eq!(e.text(), "milk!");
+        e.handle_key(Key::Char('z'), Mods::CTRL);
+        assert_eq!(e.text(), "milk", "ctrl+Z did not undo the typing");
+    }
+
+    /// The formatted view still does all of it, so this is the view talking
+    /// and not the rules going away.
+    #[test]
+    fn the_formatted_view_still_helps() {
+        let mut e = Editor::with_text("");
+        for c in "* milk".chars() {
+            e.handle_key(Key::Char(c), Mods::NONE);
+        }
+        assert_eq!(e.text(), "- milk");
+        e.handle_key(Key::Enter, Mods::NONE);
+        assert_eq!(e.text(), "- milk\n- ");
     }
 }
 

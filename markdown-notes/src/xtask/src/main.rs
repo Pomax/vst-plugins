@@ -663,9 +663,13 @@ fn test(args: &[String]) -> Result<(), String> {
                 "--test",
                 "selection_rendering",
                 "--test",
+                "source_view",
+                "--test",
                 "text_area",
                 "--test",
                 "title_field",
+                "--test",
+                "view_mode_button",
             ],
         )?;
     }

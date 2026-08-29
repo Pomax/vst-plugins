@@ -87,3 +87,11 @@ required-features = ["snapshots"]
 name = "caret_in_view"
 required-features = ["snapshots"]
 
+[[test]]
+name = "view_mode_button"
+required-features = ["snapshots"]
+
+[[test]]
+name = "source_view"
+required-features = ["snapshots"]
+

@@ -147,10 +147,11 @@ struct Gui {
     /// Whether the document is what keystrokes go to. Set by clicking into it,
     /// cleared when a field takes the keyboard.
     document_focused: bool,
-    /// Which section the caret was in and where, as of last frame. The caret
-    /// is painted rather than allocated, so the scroll area has nothing of its
-    /// own to follow: the document is scrolled to it when this changes.
-    caret_was: Option<(usize, usize)>,
+    /// Which section the caret was in, where, and in which view, as of last
+    /// frame. The caret is painted rather than allocated, so the scroll area
+    /// has nothing of its own to follow: the document is scrolled to it when
+    /// this changes.
+    caret_was: Option<(usize, usize, ViewMode)>,
     /// When the caret last moved. The blink starts from there, so a caret
     /// being driven along by typing stays solid instead of flickering.
     caret_moved_at: f64,
@@ -627,13 +628,16 @@ fn toolbar_buttons(
             }
         }
 
-        let label = match mode {
-            ViewMode::Wysiwyg => "Markdown source",
-            ViewMode::Raw => "Formatted",
-        };
-        let mode_width = fixed_width(ui, &["Markdown source", "Formatted"]);
+        // One label, held down while the source is showing: a button whose
+        // label changes is a different button, and which view is on is what
+        // the highlight says.
+        let mode_width = fixed_width(ui, &["Markdown source"]);
         if ui
-            .add(egui::Button::new(label).min_size(mode_width))
+            .add(
+                egui::Button::new("Markdown source")
+                    .min_size(mode_width)
+                    .selected(mode == ViewMode::Raw),
+            )
             .on_hover_text("Ctrl+/")
             .clicked()
         {
@@ -1256,7 +1260,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             bottom: index + 1 == rows.len() || !is_code(rows[index + 1]),
         };
 
-        if let Some(previous) = previous {
+        // The space between elements is formatting. Source is lines, evenly
+        // spaced, with the blank ones the file holds standing for themselves.
+        if let Some(previous) = previous.filter(|_| !raw) {
             ui.add_space(block_gap(previous, block, em));
         }
         previous = Some(block);
@@ -1264,17 +1270,22 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
 
-            // Blockquote bars and list indentation.
-            // Painted rather than drawn as a "▌" glyph: that character is not
-            // in egui's default font and rendered as a tofu box.
-            for _ in 0..block.quote_depth {
-                let height = ui.text_style_height(&egui::TextStyle::Body);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, height), Sense::hover());
-                let colour = palette.quote_bar;
-                ui.painter().rect_filled(rect, 1.0, colour);
-                ui.add_space(6.0);
+            // Blockquote bars and list indentation, neither of which the
+            // source view has: the line already carries its own `>` and its
+            // own spaces, and drawing them as well would say it twice.
+            // The bars are painted rather than drawn as a "▌" glyph: that
+            // character is not in egui's default font and rendered as a tofu
+            // box.
+            if !raw {
+                for _ in 0..block.quote_depth {
+                    let height = ui.text_style_height(&egui::TextStyle::Body);
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, height), Sense::hover());
+                    let colour = palette.quote_bar;
+                    ui.painter().rect_filled(rect, 1.0, colour);
+                    ui.add_space(6.0);
+                }
+                ui.add_space(block.kind.indent() as f32 * 14.0);
             }
-            ui.add_space(block.kind.indent() as f32 * 14.0);
 
             // The list glyph replaces the hidden marker. In raw mode the marker
             // text itself is shown instead, so no glyph is drawn.
@@ -1301,7 +1312,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             }
 
             drawn.push(line_body(
-                ui, block, &src, caret, &selection, &palette, pad,
+                ui, block, &src, caret, &selection, raw, &palette, pad,
             ));
         });
     }
@@ -1392,13 +1403,32 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     // Writing past the bottom of the window has to bring what is being written
     // into view. Only when the caret moves: doing it every frame would fight
     // the scrollbar and the wheel, which are how a reader looks elsewhere.
-    let now = caret.map(|at| (editor.active_section(), at));
+    // The view is part of it: changing it lays every line out at a different
+    // height, so the caret is somewhere else on screen without having moved
+    // through the document at all.
+    let now = caret.map(|at| (editor.active_section(), at, editor.mode));
     let spot = drawn.iter().find_map(|line| line.caret);
     if now != gui.caret_was {
         gui.caret_was = now;
         gui.caret_moved_at = ui.input(|i| i.time);
         if let Some(spot) = spot {
-            ui.scroll_to_rect(spot.expand2(egui::vec2(0.0, CARET_MARGIN)), None);
+            // At once, not slid into place: egui's default animation takes up
+            // to a third of a second, which is a lurch across the document
+            // every time the caret leaves the window.
+            ui.scroll_to_rect_animation(
+                spot.expand2(egui::vec2(0.0, CARET_MARGIN)),
+                None,
+                egui::style::ScrollAnimation::none(),
+            );
+            // The scroll area reads that target after its contents have been
+            // laid out, so this pass is drawn at the offset the caret has just
+            // left. Discarded and done again, the first pass shown is the one
+            // with the caret in it.
+            ui.ctx().request_discard("scrolled to the caret");
+            // The scroll area reads that target after its contents have been
+            // laid out, so this pass is already drawn at the offset the caret
+            // has just left. Thrown away and done again, the first thing shown
+            // is the document where the caret is.
         }
     }
     if let Some(spot) = spot {
@@ -1513,14 +1543,16 @@ fn line_body(
     src: &str,
     caret: Option<usize>,
     selection: &std::ops::Range<usize>,
+    raw: bool,
     palette: &Palette,
     pad: Padding,
 ) -> DrawnLine {
-    let base = base_format(block, palette);
+    let base = if raw { source_format(palette) } else { base_format(block, palette) };
     let bold = crate::fonts::bold_family(ui);
     // A fence and the lines inside it are one block, not text that happens to
     // be coloured. Every row of it is painted, so consecutive rows join up.
-    let fenced = matches!(block.kind, BlockKind::Code | BlockKind::Fence { .. });
+    // The source view has no blocks, only lines, so nothing is painted there.
+    let fenced = !raw && matches!(block.kind, BlockKind::Code | BlockKind::Fence { .. });
 
 
     let mut job = LayoutJob::default();
@@ -1532,26 +1564,20 @@ fn line_body(
     // when the whole document is in raw mode.
     if block.marker_visible && !block.marker.is_empty() {
         let text = &src[block.marker.clone()];
-        push(
-            &mut job,
-            &mut map,
-            text,
-            block.marker.start,
-            marker_format(&base, &palette),
-        );
+        let fmt = if raw { base.clone() } else { marker_format(&base, &palette) };
+        push(&mut job, &mut map, text, block.marker.start, fmt);
     }
 
     for span in &block.spans {
         if !span.visible {
             continue;
         }
-        push(
-            &mut job,
-            &mut map,
-            span.text(src),
-            span.range.start,
-            span_format(span, &base, &palette, &bold, fenced),
-        );
+        let fmt = if raw {
+            base.clone()
+        } else {
+            span_format(span, &base, &palette, &bold, fenced)
+        };
+        push(&mut job, &mut map, span.text(src), span.range.start, fmt);
     }
 
     // An empty line still needs height and a click target.
@@ -1705,6 +1731,16 @@ fn push(job: &mut LayoutJob, map: &mut Vec<usize>, text: &str, source_start: usi
         map.push(source_start + i);
     }
     job.append(text, 0.0, fmt);
+}
+
+/// One face, one size, one colour: what every line is drawn in while the
+/// source is showing.
+fn source_format(palette: &Palette) -> TextFormat {
+    TextFormat {
+        font_id: FontId::new(15.0, FontFamily::Monospace),
+        color: palette.body,
+        ..Default::default()
+    }
 }
 
 fn base_format(block: &Block, palette: &Palette) -> TextFormat {

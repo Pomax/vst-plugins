@@ -63,6 +63,83 @@ fn caret_row(image: &image::RgbaImage) -> Option<u32> {
         .map(|(_, y, _)| y)
 }
 
+/// The same window, kept, so the view can be changed with the button and the
+/// document looked at again afterwards.
+fn open(text: &str, caret: usize, mode: markdown_notes_core::ViewMode) -> Harness<'static> {
+    let editor = Arc::new(Mutex::new(Editor::with_text(text)));
+    if let Ok(mut e) = editor.lock() {
+        e.theme = Theme::Light;
+        e.colours.light.caret = Rgba::rgba(255, 0, 0, 255);
+        e.mode = mode;
+        e.set_caret(caret);
+    }
+    let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(WIDTH, HEIGHT))
+        .wgpu()
+        .build_ui(move |ui| markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state));
+
+    markdown_notes_plugin::gui::TestGui::install_fonts(&harness.ctx);
+    harness.run_steps(3);
+    harness
+}
+
+/// Press and release, then one frame: the view that comes up is the one the
+/// user sees, and it is already at the caret. A frame that has to be waited
+/// for is a scroll the eye follows across the document.
+fn click(harness: &mut Harness<'static>, at: egui::Pos2) {
+    harness.input_mut().events.push(egui::Event::PointerMoved(at));
+    harness.run_steps(2);
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+    }
+}
+
+/// Changing the view redraws every line at a different height, so where the
+/// caret was on screen means nothing afterwards: the document is scrolled to
+/// it again, in whichever view is being entered.
+///
+/// From source to formatted is the direction that says so: the formatted
+/// document is the taller of the two, so the offset the source view was at
+/// lands in the middle of it and the caret would be nowhere on screen.
+///
+/// Whether the caret is there on the *first* frame is not something this can
+/// see: the harness runs a second pass per step, which is the pass that would
+/// correct a scroll made too late. Only a real window shows that.
+#[test]
+fn changing_the_view_arrives_at_the_caret() {
+    use egui_kittest::kittest::Queryable;
+    use markdown_notes_core::ViewMode;
+
+    let text = tall_document();
+    let mut harness = open(&text, text.len(), ViewMode::Raw);
+    assert!(
+        caret_row(&harness.render().expect("rendering failed")).is_some(),
+        "the caret is not in view to begin with"
+    );
+
+    let button = harness.get_by_label("Markdown source").rect().center();
+
+    click(&mut harness, button);
+    assert!(
+        caret_row(&harness.render().expect("rendering failed")).is_some(),
+        "the formatted view is not at the caret"
+    );
+
+    click(&mut harness, button);
+    assert!(
+        caret_row(&harness.render().expect("rendering failed")).is_some(),
+        "the source view is not at the caret"
+    );
+}
+
 #[test]
 fn the_caret_at_the_end_of_a_tall_document_is_in_view() {
     let text = tall_document();
