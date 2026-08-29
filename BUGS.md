@@ -1,0 +1,1 @@
+- dow markdown position on source view work across window resize?

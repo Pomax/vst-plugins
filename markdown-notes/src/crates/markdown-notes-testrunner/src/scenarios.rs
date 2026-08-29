@@ -45,7 +45,7 @@ pub fn all() -> Vec<Scenario> {
             "enter on an empty bullet ends the list",
             vec![
                 Type("- one\n\nback to prose"),
-                ExpectSource("- one\nback to prose"),
+                ExpectSource("- one\n\nback to prose"),
             ],
         ),
         scenario(

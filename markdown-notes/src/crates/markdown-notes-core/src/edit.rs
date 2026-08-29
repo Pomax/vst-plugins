@@ -632,11 +632,17 @@ impl Editor {
             Key::Enter => {
                 // The engine's rule first: Enter inside a list continues it,
                 // and on an empty item ends it.
+                let ending = self.on_an_empty_item();
                 if self.close_fence() {
                     // An opened fence gets its closing line, and the caret is
                     // left on the empty line between the two.
                 } else if !kode_markdown::InputRules::handle_enter(self.live_mut()) {
                     self.end_block();
+                } else if ending {
+                    // The item's marker went, and the line it was on is the
+                    // blank one between this block and whatever is written
+                    // next.
+                    self.live_mut().insert_newline();
                 }
             }
             Key::Backspace => {
@@ -874,6 +880,22 @@ impl Editor {
     ///
     /// Reports whether it did, so Enter can fall through to the other rules.
     /// A fence with nothing to close it swallows the rest of the document.
+    /// Whether Enter here ends a list or a quote rather than carrying it on,
+    /// which is the case when the line holds a marker and nothing else.
+    fn on_an_empty_item(&self) -> bool {
+        let text = self.text();
+        let Some((start, end)) = text::line_range(&text, self.caret_line()) else {
+            return false;
+        };
+        let content = &text[start..end];
+        let (quote_len, depth) = block::quote_prefix(content);
+        let body = &content[quote_len..];
+        match block::list_marker(body) {
+            Some((len, _)) => body[len..].trim().is_empty(),
+            None => depth > 0 && body.trim().is_empty(),
+        }
+    }
+
     fn close_fence(&mut self) -> bool {
         let text = self.text();
         let line = self.caret_line();
@@ -1070,6 +1092,60 @@ mod typing_tests {
         e.handle_key(Key::End, Mods::CTRL);
         e.handle_key(Key::Enter, Mods::NONE);
         assert_eq!(e.text(), "```rust\n\n```\n");
+    }
+}
+
+/// What the formatted view writes: one blank line between blocks, which is
+/// how the source reads when it is looked at.
+#[cfg(test)]
+mod block_separation_tests {
+    use super::*;
+
+    fn typed(s: &str) -> Editor {
+        let mut e = Editor::with_text("");
+        for c in s.chars() {
+            if c == '\n' {
+                e.handle_key(Key::Enter, Mods::NONE);
+            } else {
+                e.handle_key(Key::Char(c), Mods::NONE);
+            }
+        }
+        e
+    }
+
+    #[test]
+    fn a_heading_after_a_paragraph() {
+        assert_eq!(typed("some words\n# Heading").text(), "some words\n\n# Heading");
+    }
+
+    #[test]
+    fn a_paragraph_after_a_heading() {
+        assert_eq!(typed("# Heading\nsome words").text(), "# Heading\n\nsome words");
+    }
+
+    /// Enter on the empty item ends the list, and what follows is a block of
+    /// its own.
+    #[test]
+    fn a_heading_after_a_list() {
+        assert_eq!(typed("- milk\n\n# Heading").text(), "- milk\n\n# Heading");
+    }
+
+    #[test]
+    fn a_paragraph_after_a_list() {
+        assert_eq!(typed("- milk\n\nsome words").text(), "- milk\n\nsome words");
+    }
+
+    #[test]
+    fn a_heading_after_a_quote() {
+        assert_eq!(typed("> said so\n\n# Heading").text(), "> said so\n\n# Heading");
+    }
+
+    /// Inside a list, the items are one block and stay one line apart.
+    /// Inside a list, the items are one block and stay one line apart. Enter
+    /// writes the next item's marker, so only the words are typed.
+    #[test]
+    fn items_of_one_list_are_not_separated() {
+        assert_eq!(typed("- milk\neggs").text(), "- milk\n- eggs");
     }
 }
 
