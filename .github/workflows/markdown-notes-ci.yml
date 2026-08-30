@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14]
+        os: [windows-latest, macos-14, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -37,6 +37,14 @@ jobs:
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Install the libraries the window, the fonts and the renderer need
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev \
+            libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
 
       - name: Unit tests, scenarios and rendering tests
         run: cargo run -p xtask -- test --snapshots

@@ -1,10 +1,10 @@
 # VST Plugins
 
-This is a repository of proof-of-concept VST3 plugins that I needed and couldn't find a decent free or paid version for already.
+This is a repository of Proof-of-Concept VST3 plugins that I wish existed, but haven't been able to find anywhere. As well as some tools for testing said PoC plugins.
 
-## Plugins
+## Plugin List
 
-There is currently one plugin here, aimed at project management.
+There is currently only one plugin here, aimed at project management.
 
 ### Markdown Notes
 
