@@ -244,40 +244,47 @@ mod platform {
         let_editor_draw_in_drags(host);
     }
 
-    /// Let the plugin draw while the window is being dragged.
+    /// Let the plugin draw for every step of a drag.
     ///
     /// The plugin draws on a run loop timer that lives in the default mode,
-    /// and a live drag runs the loop in event tracking mode, where that
-    /// timer never fires: the picture freezes and is stretched with the
-    /// view. This timer runs in the common modes, which a drag does run, and
-    /// while the window is being resized it gives the default mode one
-    /// non-blocking pass, so the plugin's own timer gets to fire. It has to
-    /// be a timer of its own: run from inside the host's frame, that pass
-    /// re-enters the host's event handling, which is not allowed to happen.
+    /// and a live drag runs the loop in event tracking mode, where that timer
+    /// never fires: the picture freezes and is stretched with the view.
+    ///
+    /// AppKit announces each new size of the host's view as it happens, in
+    /// tracking mode, so that is where the plugin is given its frame: one
+    /// non-blocking pass of the default mode per announcement, which lets its
+    /// own timer fire. A pass on a clock of its own draws for the ticks
+    /// rather than for the sizes, and the sizes are what is on screen.
     fn let_editor_draw_in_drags(host: &NSView) {
+        use objc2::rc::Retained;
+        use objc2::runtime::AnyObject;
         use objc2::Message;
-        use objc2_core_foundation::{
-            kCFAllocatorDefault, kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop,
-            CFRunLoopTimer,
-        };
+        use objc2_app_kit::NSViewFrameDidChangeNotification;
+        use objc2_core_foundation::{kCFRunLoopDefaultMode, CFRunLoop};
+        use objc2_foundation::{NSNotification, NSNotificationCenter};
+
+        host.setPostsFrameChangedNotifications(true);
 
         let watched = host.retain();
-        let block = block2::RcBlock::new(move |_: *mut CFRunLoopTimer| {
+        let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
             if watched.inLiveResize() {
                 let mode = unsafe { kCFRunLoopDefaultMode };
                 CFRunLoop::run_in_mode(mode, 0.0, false);
             }
         });
-        let allocator = unsafe { kCFAllocatorDefault };
-        let timer =
-            unsafe { CFRunLoopTimer::with_handler(allocator, 0.0, 0.015, 0, 0, Some(&block)) };
-        if let (Some(run_loop), Some(timer)) = (CFRunLoop::current(), timer) {
-            let mode = unsafe { kCFRunLoopCommonModes };
-            run_loop.add_timer(Some(&timer), mode);
-            // The timer watches for the life of the window, which is the
-            // life of the process.
-            std::mem::forget(timer);
-        }
+
+        let object: *const AnyObject = (host as *const NSView).cast();
+        let observer: Retained<_> = unsafe {
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(NSViewFrameDidChangeNotification),
+                Some(&*object),
+                None,
+                &block,
+            )
+        };
+        // The observer watches for the life of the window, which is the life
+        // of the process.
+        std::mem::forget(observer);
     }
 
     /// Push the plugin's own view down, leaving `top` points for the host's
