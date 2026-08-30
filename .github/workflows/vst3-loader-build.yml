@@ -73,9 +73,33 @@ jobs:
           path: tools/vst3-loader/vst3-loader-macos-arm64.zip
           if-no-files-found: error
 
+  linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Zip
+        run: zip -j vst3-loader-linux-x86_64.zip ../../binaries/vst3-loader
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vst3-loader-linux-x86_64
+          path: tools/vst3-loader/vst3-loader-linux-x86_64.zip
+          if-no-files-found: error
+
   release:
     name: Publish release
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write # uploads the release assets
@@ -106,4 +130,5 @@ jobs:
           files: |
             artifacts/vst3-loader-windows-x86_64.zip
             artifacts/vst3-loader-macos-arm64.zip
+            artifacts/vst3-loader-linux-x86_64.zip
           fail_on_unmatched_files: true
