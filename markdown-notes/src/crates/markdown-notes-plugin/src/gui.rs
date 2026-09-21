@@ -154,7 +154,23 @@ struct Gui {
     /// When the caret last moved. The blink starts from there, so a caret
     /// being driven along by typing stays solid instead of flickering.
     caret_moved_at: f64,
+    /// The mermaid blocks currently drawn as pictures.
+    gallery: crate::diagram::Gallery,
+    /// Where each picture was drawn this frame, top one first.
+    pictures: Pictures,
 }
+
+/// A mermaid block as it was drawn: where, and whether what was drawn there is
+/// the diagram or the error standing in for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnPicture {
+    pub rect: egui::Rect,
+    pub failed: bool,
+}
+
+/// The document's pictures as of the last frame, shared so they can be read
+/// from outside the frame that drew them.
+pub type Pictures = Arc<std::sync::Mutex<Vec<DrawnPicture>>>;
 
 impl Gui {
     fn new(editor: Shared) -> Gui {
@@ -176,6 +192,8 @@ impl Gui {
             document_focused: true,
             caret_was: None,
             caret_moved_at: 0.0,
+            gallery: crate::diagram::Gallery::default(),
+            pictures: Pictures::default(),
         }
     }
 
@@ -397,6 +415,12 @@ impl TestGui {
     /// bound before anything is laid out in them.
     pub fn install_fonts(ctx: &egui::Context) {
         crate::fonts::install_base(ctx);
+    }
+
+    /// Where the mermaid blocks drawn as pictures were put, as of the last
+    /// frame. Empty when every one of them is showing its code.
+    pub fn pictures(&self) -> Pictures {
+        Arc::clone(&self.0.pictures)
     }
 }
 
@@ -1233,6 +1257,33 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     let em = egui::TextStyle::Body.resolve(ui.style()).size;
     let mut previous: Option<&Block> = None;
 
+    // A mermaid block the caret is not in is a picture of what it describes,
+    // and takes one row, which its opening fence stands in for. Code mermaid
+    // cannot read gets a picture too, one that says so. The source view shows
+    // source, so nothing is a picture there.
+    let page = editor.colours.for_mode(ui.visuals().dark_mode).window_background;
+    let look = crate::diagram::Look::new(
+        ui.visuals().dark_mode,
+        [page.r, page.g, page.b],
+        ui.ctx().pixels_per_point(),
+    );
+    let mut pictured: Vec<(markdown_notes_core::Diagram, crate::diagram::Shown)> = Vec::new();
+    if !raw {
+        for diagram in doc.diagrams() {
+            if caret.is_some_and(|at| diagram.holds(at)) {
+                continue;
+            }
+            let code = &src[diagram.code.clone()];
+            if let Some(shown) = gui.gallery.picture(ui.ctx(), code, look) {
+                pictured.push((diagram, shown));
+            }
+        }
+    }
+    gui.gallery.end_frame();
+    let picture_at = |line: usize| pictured.iter().find(|(d, _)| d.lines.start == line);
+    let in_a_picture = |line: usize| pictured.iter().any(|(d, _)| d.lines.contains(&line));
+    let mut picture_rects: Vec<DrawnPicture> = Vec::new();
+
     // The fence lines are the block's edges, not lines of it. They take no row
     // of their own unless the caret is on one, where the backticks and the
     // language have to be there to edit.
@@ -1240,6 +1291,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         .blocks
         .iter()
         .filter(|block| {
+            if in_a_picture(block.line) {
+                return picture_at(block.line).is_some();
+            }
             let editing_fence = caret
                 .is_some_and(|at| at >= block.range.start && at <= block.range.end);
             raw || !matches!(block.kind, BlockKind::Fence { .. }) || editing_fence
@@ -1250,16 +1304,33 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         // A code block is padded at the top and bottom, and the rows that get
         // that padding are the ones drawn at its edges, which is not the same
         // as the lines at its edges: the fences may not be among them.
-        let is_code = |b: &Block| matches!(b.kind, BlockKind::Code | BlockKind::Fence { .. });
+        let is_code = |b: &Block| {
+            matches!(b.kind, BlockKind::Code | BlockKind::Fence { .. }) && !in_a_picture(b.line)
+        };
         let pad = Padding {
             top: index == 0 || !is_code(rows[index - 1]),
             bottom: index + 1 == rows.len() || !is_code(rows[index + 1]),
         };
 
         if let Some(previous) = previous {
-            ui.add_space(block_gap(previous, block, em));
+            // A picture is an element of its own, whatever it is next to.
+            let beside_a_picture = in_a_picture(previous.line) || in_a_picture(block.line);
+            let blank = matches!(previous.kind, BlockKind::Blank)
+                || matches!(block.kind, BlockKind::Blank);
+            ui.add_space(if beside_a_picture && !blank {
+                em
+            } else {
+                block_gap(previous, block, em)
+            });
         }
         previous = Some(block);
+
+        if let Some((diagram, shown)) = picture_at(block.line) {
+            let line = picture_row(ui, diagram, shown, &selection, &palette);
+            picture_rects.push(DrawnPicture { rect: line.rect, failed: shown.failed });
+            drawn.push(line);
+            continue;
+        }
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -1304,6 +1375,10 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                 ui, block, &src, caret, &selection, &palette, pad,
             ));
         });
+    }
+
+    if let Ok(mut pictures) = gui.pictures.lock() {
+        *pictures = picture_rects;
     }
 
     if let Some(line) = toggled {
@@ -1505,6 +1580,50 @@ struct DrawnLine {
 struct Padding {
     top: bool,
     bottom: bool,
+}
+
+/// Draw a mermaid block as its picture, on a row the width of the document.
+///
+/// The picture is shown at its own size, and scaled down when the window is
+/// narrower than it is. The row answers the pointer like any other line: all
+/// of it maps to the start of the block's code, so a click puts the caret in
+/// the block and the code comes back to be edited.
+fn picture_row(
+    ui: &mut egui::Ui,
+    diagram: &markdown_notes_core::Diagram,
+    shown: &crate::diagram::Shown,
+    selection: &std::ops::Range<usize>,
+    palette: &Palette,
+) -> DrawnLine {
+    let across = ui.available_width();
+    let fit = (across / shown.size.x).min(1.0);
+    let size = shown.size * fit;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(across.max(size.x), size.y), Sense::hover());
+
+    let picture = egui::Rect::from_min_size(rect.min, size);
+    ui.painter().image(
+        shown.texture.id(),
+        picture,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
+    );
+
+    // A selection running through the block covers the picture of it.
+    if selection.start < diagram.range.end && selection.end > diagram.range.start {
+        ui.painter().rect_filled(picture, 0.0, palette.selection);
+    }
+
+    let mut job = LayoutJob::default();
+    let mut map: Vec<usize> = Vec::new();
+    let format = TextFormat {
+        font_id: FontId::new(15.0, FontFamily::Monospace),
+        ..Default::default()
+    };
+    push(&mut job, &mut map, " ", diagram.code.start, format);
+    map.push(diagram.code.start);
+    let galley = ui.painter().layout_job(job);
+
+    DrawnLine { rect, origin: rect.min, galley, map, caret: None }
 }
 
 fn line_body(

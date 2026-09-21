@@ -23,11 +23,19 @@ raw-window-handle = "0.6"
 dark-light = "2.0.0"
 
 # Headless pixel rendering. Optional because it drags in the whole wgpu/naga
-# stack — gigabytes of build output for a plugin that ships as 5 MB — and
+# stack (gigabytes of build output for a plugin that ships as 14 MB) and
 # nothing but the snapshot tooling needs it.
 egui_kittest = { version = "0.35.0", features = ["wgpu"], optional = true }
 image = { version = "0.25.10", optional = true }
 font-kit = "0.14.3"
+# Mermaid code to SVG.
+merman = { version = "0.7.0", features = ["render"] }
+# merman takes mermaid's configuration as JSON, and keeps each edge's layout
+# points in its SVG as base64 JSON, which elbows.rs reads.
+serde_json = "1"
+base64 = "0.22"
+# SVG to pixels.
+resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts"] }
 
 # The editor's renderer, chosen per platform.
 #
@@ -45,6 +53,9 @@ egui-baseview = { version = "0.6.0", default-features = false, features = ["wgpu
 # The roles the headless tests query by. Already in the tree under
 # egui_kittest; named here so a test can say which role it means.
 accesskit = "0.24"
+# The renderer merman was chosen over, kept so tests/mermaid_renderers.rs can
+# draw the same diagram with both.
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 
 [features]
 # Enables the headless renderer:
@@ -85,5 +96,13 @@ required-features = ["snapshots"]
 
 [[test]]
 name = "caret_in_view"
+required-features = ["snapshots"]
+
+[[test]]
+name = "mermaid_blocks"
+required-features = ["snapshots"]
+
+[[test]]
+name = "mermaid_renderers"
 required-features = ["snapshots"]
 
