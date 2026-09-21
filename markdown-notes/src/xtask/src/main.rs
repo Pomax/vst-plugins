@@ -70,16 +70,19 @@ fn main() -> ExitCode {
             println!(
                 "tasks:\n  \
                  bundle [--release] [--target <triple>]   assemble the VST3 bundle\n  \
-                 test [--release] [--snapshots] [--full]  unit tests and scenarios\n  \
+                 test [--release] [--full]                every test but the UI tests\n  \
+                 test --only <name>                       one test and nothing else\n  \
                  uitest [name]                            drive the real window\n  \
                  clean                                    empty the build cache\n  \
                  \n  \
                  Build output goes to .cache/ and stays there, so a run only\n  \
                  recompiles what changed. `clean` empties it.\n  \
-                 --snapshots also runs the headless pixel tests, which need the\n  \
-                 wgpu stack: correct, but gigabytes of build output.\n  \
-                 --full runs those and the UI tests, which drive a real window\n  \
-                 and so need a desktop to run on."
+                 test runs the unit tests, the scenarios and the headless pixel\n  \
+                 tests. --full also runs the UI tests, which drive a real\n  \
+                 window and so need a desktop to run on.\n  \
+                 --only takes the name of a pixel test file, optionally with\n  \
+                 ::<test> after it, or a filter on the unit tests. It builds\n  \
+                 nothing else and leaves binaries/ alone."
             );
             ExitCode::SUCCESS
         }
@@ -611,11 +614,6 @@ fn test(args: &[String]) -> Result<(), String> {
     let opts = parse(args);
     let root = workspace_root();
 
-    // A test run compiles the plugin but is not a build of it, so anything in
-    // binaries/ is now describing older code. Remove it rather than leave
-    // something stale that looks current.
-    remove_binary(&root);
-
     let run = |what: &str, extra: &[&str]| -> Result<(), String> {
         let mut cmd = Command::new(env!("CARGO"));
         cmd.current_dir(&root);
@@ -631,48 +629,31 @@ fn test(args: &[String]) -> Result<(), String> {
         }
     };
 
+    if let Some(at) = args.iter().position(|a| a == "--only") {
+        let name = args
+            .get(at + 1)
+            .ok_or("--only needs the name of a test")?;
+        return test_only(&root, name, opts.release);
+    }
+
+    // A test run compiles the plugin but is not a build of it, so anything in
+    // binaries/ is now describing older code. Remove it rather than leave
+    // something stale that looks current.
+    remove_binary(&root);
+
     run("building the plugin", &["build", "-p", "markdown-notes-plugin"])?;
     run("unit tests", &["test", "--workspace"])?;
     run("scenarios", &["run", "-q", "-p", "markdown-notes-testrunner"])?;
 
     let full = args.iter().any(|a| a == "--full");
 
-    // The pixel tests need the wgpu stack, which is gigabytes of build output,
-    // so they are opt-in rather than part of every run.
-    if full || args.iter().any(|a| a == "--snapshots") {
-        run(
-            "rendering tests",
-            &[
-                "test",
-                "-p",
-                "markdown-notes-plugin",
-                "--features",
-                "snapshots",
-                "--test",
-                "theme_rendering",
-                "--test",
-                "caret_in_view",
-                "--test",
-                "caret_rendering",
-                "--test",
-                "clicking_the_document",
-                "--test",
-                "block_spacing",
-                "--test",
-                "section_dragging",
-                "--test",
-                "selection_rendering",
-                "--test",
-                "source_view",
-                "--test",
-                "text_area",
-                "--test",
-                "title_field",
-                "--test",
-                "view_mode_button",
-            ],
-        )?;
+    // The pixel tests are behind a feature because they need the wgpu stack,
+    // which the plugin itself does not.
+    let mut rendering = vec!["test", "-p", PLUGIN_CRATE, "--features", "snapshots"];
+    for name in RENDERING_TESTS {
+        rendering.extend(["--test", name]);
     }
+    run("rendering tests", &rendering)?;
 
     // The UI tests drive a real window with real clicks and keystrokes, so
     // they need a desktop to do it on. GitHub's hosted Windows runners have
@@ -683,6 +664,62 @@ fn test(args: &[String]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// The headless pixel tests: one file each under the plugin's `tests/`, all of
+/// them behind the `snapshots` feature.
+const RENDERING_TESTS: &[&str] = &[
+    "theme_rendering",
+    "caret_in_view",
+    "caret_rendering",
+    "clicking_the_document",
+    "block_spacing",
+    "mermaid_blocks",
+    "mermaid_renderers",
+    "section_dragging",
+    "selection_rendering",
+    "source_view",
+    "text_area",
+    "title_field",
+    "view_mode_button",
+];
+
+/// Run one test and nothing else: no build of the plugin, no clearing of
+/// `binaries/`, no scenarios.
+///
+/// `name` is one of [`RENDERING_TESTS`], optionally followed by `::` and the
+/// name of a test inside it, or else a filter on the workspace's unit tests,
+/// such as `block::tests` or the name of a single test.
+fn test_only(root: &Path, name: &str, release: bool) -> Result<(), String> {
+    let (file, inside) = match name.split_once("::") {
+        Some((file, inside)) if RENDERING_TESTS.contains(&file) => (Some(file), Some(inside)),
+        _ if RENDERING_TESTS.contains(&name) => (Some(name), None),
+        _ => (None, Some(name)),
+    };
+
+    let mut cmd = Command::new(env!("CARGO"));
+    cmd.current_dir(root).arg("test");
+    match file {
+        Some(file) => {
+            cmd.args(["-p", PLUGIN_CRATE, "--features", "snapshots", "--test", file]);
+        }
+        None => {
+            cmd.args(["--workspace", "--lib"]);
+        }
+    }
+    if release {
+        cmd.arg("--release");
+    }
+    if let Some(inside) = inside {
+        cmd.args(["--", inside]);
+    }
+
+    let status = cmd.status().map_err(|e| format!("running cargo: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{name} failed"))
+    }
 }
 
 fn copy(from: &Path, to: &Path) -> Result<(), String> {

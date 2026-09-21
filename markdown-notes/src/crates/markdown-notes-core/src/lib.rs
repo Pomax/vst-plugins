@@ -36,7 +36,7 @@ pub mod state;
 pub mod sections;
 pub mod text;
 
-pub use block::{parse_document, Block, BlockKind, RenderDoc};
+pub use block::{parse_document, Block, BlockKind, Diagram, RenderDoc, DIAGRAM_LANG};
 pub use colours::{ColourScheme, Colours, Rgba};
 pub use edit::{
     Command, Editor, Key, KeyResult, Mods, Theme, ViewMode, DEFAULT_HEIGHT, DEFAULT_TITLE,
