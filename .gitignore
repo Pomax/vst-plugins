@@ -1,8 +1,6 @@
 **/.cache
 .claude/state
 
-.claude/state
-
 .idea
 .vscode
 binaries

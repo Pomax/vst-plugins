@@ -185,8 +185,8 @@ mod macos {
     use objc2::runtime::ProtocolObject;
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{
-        NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSPasteboardTypeFileURL,
-        NSView, NSViewHeightSizable, NSViewWidthSizable,
+        NSAutoresizingMaskOptions, NSDragOperation, NSDraggingDestination, NSDraggingInfo,
+        NSPasteboardTypeFileURL, NSView,
     };
     use objc2_foundation::{NSArray, NSObjectProtocol, NSPoint, NSURL};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -211,7 +211,7 @@ mod macos {
         unsafe impl NSObjectProtocol for DropView {}
 
         impl DropView {
-            #[unsafe(method(hitTest:))]
+            #[unsafe(method_id(hitTest:))]
             fn hit_test(&self, _point: NSPoint) -> Option<Retained<NSView>> {
                 None
             }
@@ -244,17 +244,18 @@ mod macos {
 
     /// The files a drag is carrying, as paths.
     fn files_in(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<PathBuf> {
-        let pasteboard = unsafe { info.draggingPasteboard() };
-        let Some(items) = (unsafe { pasteboard.pasteboardItems() }) else {
+        let pasteboard = info.draggingPasteboard();
+        let Some(items) = pasteboard.pasteboardItems() else {
             return Vec::new();
         };
         let mut paths = Vec::new();
         for item in items.iter() {
-            let Some(url) = (unsafe { item.stringForType(NSPasteboardTypeFileURL) }) else {
+            // The pasteboard type is an extern static, which is what the
+            // unsafe is for: the call itself is safe.
+            let Some(url) = item.stringForType(unsafe { NSPasteboardTypeFileURL }) else {
                 continue;
             };
-            let url = unsafe { NSURL::URLWithString(&url) };
-            let Some(path) = url.and_then(|url| unsafe { url.path() }) else {
+            let Some(path) = NSURL::URLWithString(&url).and_then(|url| url.path()) else {
                 continue;
             };
             paths.push(PathBuf::from(path.to_string()));
@@ -267,29 +268,31 @@ mod macos {
             return None;
         };
         let mtm = MainThreadMarker::new()?;
+        // The host's view, from the pointer it handed over.
         let parent: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
         // The editor is the one view baseview put in the host's.
-        let editor = unsafe { parent.subviews() }.firstObject()?;
+        let editor = parent.subviews().firstObject()?;
 
         // baseview's view stops taking drags, so nothing under the overlay
         // answers for them.
-        unsafe { editor.unregisterDraggedTypes() };
+        editor.unregisterDraggedTypes();
 
         let overlay = DropView::alloc(mtm).set_ivars(Ivars { incoming });
         let overlay: Retained<DropView> =
             unsafe { msg_send![super(overlay), initWithFrame: editor.bounds()] };
-        unsafe {
-            overlay.setAutoresizingMask(NSViewWidthSizable | NSViewHeightSizable);
-            let types = NSArray::from_slice(&[NSPasteboardTypeFileURL]);
-            overlay.registerForDraggedTypes(&types);
-            editor.addSubview(&overlay);
-        }
+        overlay.setAutoresizingMask(
+            NSAutoresizingMaskOptions::NSViewWidthSizable
+                | NSAutoresizingMaskOptions::NSViewHeightSizable,
+        );
+        let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]);
+        overlay.registerForDraggedTypes(&types);
+        editor.addSubview(&overlay);
         Some(DropTarget { overlay })
     }
 
     impl Drop for DropTarget {
         fn drop(&mut self) {
-            unsafe { self.overlay.removeFromSuperview() };
+            self.overlay.removeFromSuperview();
         }
     }
 }
