@@ -1,0 +1,37 @@
+# Pictures in a note, through the real window: two pasted from the clipboard.
+# The clipboard holds a picture and no text, so Ctrl+V brings the picture in,
+# through the clipboard read the plugin does on that key.
+#
+# A file dragged onto the window goes the same way from the window's own drop
+# target, which nothing here drives: a drag needs a source outside the
+# plugin, and the driver has none.
+#
+# The picture is a PNG written here. The clipboard is left holding it.
+picture:%CACHE%\cat.png|40,30
+clipboard:%CACHE%\cat.png
+type:funky cake{TAB}
+showing:Section Title|140
+type:Drums{ENTER}kick on one
+
+# Pasted at the caret, after the line being typed: a reference on a line of
+# its own, the picture drawn there, and the images tab after the sections.
+shortcut:ctrl+v
+showing:images|100
+
+# Pasted again, as the second reference.
+shortcut:ctrl+v
+
+# The images tab reads as the definitions: data URLs, which is what the note
+# saves as its bottom. Back on the section afterwards, so the state written
+# is the document's.
+press:images|240,113
+showing:base64|140
+press:Drums|60,113
+showing:kick on one|140
+
+expect:title is funky cake
+expect:sections is 1
+expect:section 0 is # Drums\n\nkick on one\n\n![image][1]\n\n![image][2]
+expect:images is 2
+expect:image 1 is image/png
+expect:image 2 is image/png

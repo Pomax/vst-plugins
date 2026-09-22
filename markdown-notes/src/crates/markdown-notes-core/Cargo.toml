@@ -11,3 +11,5 @@ kode-core = "0.5.4"
 kode-markdown = "0.5.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Pictures dropped or pasted into a note are kept in it as data URLs.
+base64 = "0.22"

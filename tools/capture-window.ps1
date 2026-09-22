@@ -27,6 +27,8 @@ param(
     #   click:X,Y     left click at X,Y inside the window
     #   type:TEXT     send TEXT as key presses, one at a time
     #   remove:PATH   delete a file, so a save does not hit "already exists"
+    #   picture:PATH|W,H  write a PNG of that size to drop or paste
+    #   clipboard:PATH    put that picture on the clipboard
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
     #   moveto:X,Y    move the pointer there, at the speed a hand moves
@@ -1193,6 +1195,27 @@ try {
                     if (Test-Path -LiteralPath $value) {
                         Remove-Item -LiteralPath $value -Force
                     }
+                }
+                'picture' {
+                    # `picture:PATH|W,H` writes a PNG of that size, all one
+                    # colour, for a test to drop or paste.
+                    Add-Type -AssemblyName System.Drawing
+                    $p, $size = $value -split '\|', 2
+                    $w, $h = $size -split ','
+                    $bmp = New-Object System.Drawing.Bitmap ([int]$w), ([int]$h)
+                    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+                    $gfx.Clear([System.Drawing.Color]::FromArgb(255, 200, 40, 160))
+                    $gfx.Dispose()
+                    $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
+                    $bmp.Dispose()
+                }
+                'clipboard' {
+                    # `clipboard:PATH` puts that picture on the clipboard, as
+                    # a screenshot tool does, for a paste to find.
+                    Add-Type -AssemblyName System.Drawing
+                    $held = [System.Drawing.Image]::FromFile($value)
+                    [System.Windows.Forms.Clipboard]::SetImage($held)
+                    $held.Dispose()
                 }
                 'written' {
                     # `written:PATH|TEXT` checks a file in code, mid-test,

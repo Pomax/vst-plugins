@@ -31,6 +31,7 @@ pub mod block;
 pub mod colours;
 pub mod edit;
 pub mod file;
+pub mod images;
 pub mod inline;
 pub mod state;
 pub mod sections;
@@ -42,6 +43,7 @@ pub use edit::{
     Command, Editor, Key, KeyResult, Mods, Theme, ViewMode, DEFAULT_HEIGHT, DEFAULT_TITLE,
     DEFAULT_WIDTH, MAX_HEIGHT, MAX_WIDTH, MIN_HEIGHT, MIN_WIDTH,
 };
+pub use images::Image;
 pub use inline::{Span, SpanRole, Style};
 pub use state::{PluginState, STATE_VERSION};
 pub use sections::{split_document, MAX_TITLE_CHARS, UNTITLED};

@@ -229,9 +229,39 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
             .ok_or_else(|| format!("title is {:?}, expected {want:?}", state.title));
     }
     // The sections are not part of the state: they are cut from the document by
-    // its headings, the same way the plugin cuts them when it opens one.
-    let sections = markdown_notes_core::split_document(&state.notes);
+    // its headings, the same way the plugin cuts them when it opens one, after
+    // its images tail comes off the end.
+    let (body, images) = markdown_notes_core::images::split_off(&state.notes);
+    let sections = markdown_notes_core::split_document(&body);
 
+    if let Some(want) = expect.strip_prefix("images is") {
+        let want: usize = want
+            .trim()
+            .parse()
+            .map_err(|_| format!("not a number: {expect}"))?;
+        return (images.len() == want)
+            .then_some(())
+            .ok_or_else(|| format!("{} images, expected {want}", images.len()));
+    }
+    if let Some(rest) = expect.strip_prefix("image ") {
+        // `image 1 is image/png`: the kind of picture defined under a number.
+        let (number, want) = rest
+            .split_once(" is")
+            .ok_or_else(|| format!("cannot read: {expect}"))?;
+        let number: usize = number
+            .trim()
+            .parse()
+            .map_err(|_| format!("not an image number: {expect}"))?;
+        let want = want.trim();
+        let got = images
+            .iter()
+            .find(|image| image.number == number)
+            .map(|image| image.mime.as_str())
+            .ok_or_else(|| format!("there is no image {number}"))?;
+        return (got == want)
+            .then_some(())
+            .ok_or_else(|| format!("image {number} is {got}, expected {want}"));
+    }
     if let Some(want) = expect.strip_prefix("sections is") {
         let want: usize = want
             .trim()
@@ -646,6 +676,20 @@ mod tests {
         let test = parsed("type:one\nrestart:--preset|somewhere\nexpect:sections is 1\n");
 
         assert_eq!(test.steps, vec!["type:one", "restart:--preset|somewhere"]);
+    }
+
+    #[test]
+    fn the_images_tail_is_counted_apart_from_the_sections() {
+        let state = PluginState {
+            notes: "# One\n\n![a][1]\n\n# Two\n\n[1]: data:image/png;base64,AAAA\n".to_string(),
+            ..PluginState::default()
+        };
+        assert!(check("sections is 2", &state).is_ok());
+        assert!(check("section 1 is # Two", &state).is_ok());
+        assert!(check("images is 1", &state).is_ok());
+        assert!(check("image 1 is image/png", &state).is_ok());
+        assert!(check("image 2 is image/png", &state).is_err());
+        assert!(check("images is 0", &state).is_err());
     }
 
     #[test]

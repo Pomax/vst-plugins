@@ -686,6 +686,7 @@ const RENDERING_TESTS: &[&str] = &[
     "mermaid_blocks",
     "mermaid_renderers",
     "opening_focus",
+    "pictures_in_notes",
     "section_dragging",
     "selection_rendering",
     "source_view",
