@@ -72,6 +72,28 @@ impl Block {
     }
 }
 
+/// The language a fence has to name for its code to be drawn as a diagram.
+pub const DIAGRAM_LANG: &str = "mermaid";
+
+/// A fenced block whose code describes a diagram.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Diagram {
+    /// Lines of the block, from its opening fence to its closing one.
+    pub lines: Range<usize>,
+    /// Byte range of the whole block, fences included, excluding the newline
+    /// after the closing fence.
+    pub range: Range<usize>,
+    /// Byte range of the code between the fences.
+    pub code: Range<usize>,
+}
+
+impl Diagram {
+    /// Whether byte offset `pos` is anywhere in the block, fences included.
+    pub fn holds(&self, pos: usize) -> bool {
+        pos >= self.range.start && pos <= self.range.end
+    }
+}
+
 /// The whole document, laid out for rendering.
 #[derive(Clone, Debug)]
 pub struct RenderDoc {
@@ -79,6 +101,36 @@ pub struct RenderDoc {
 }
 
 impl RenderDoc {
+    /// Every closed fence that names [`DIAGRAM_LANG`], in document order.
+    ///
+    /// A fence nothing closes is left out: it runs to the end of the document,
+    /// and what it holds is whatever happens to follow it.
+    pub fn diagrams(&self) -> Vec<Diagram> {
+        let mut found = Vec::new();
+        let mut opened: Option<usize> = None;
+        for (index, block) in self.blocks.iter().enumerate() {
+            match &block.kind {
+                BlockKind::Fence { open: true, lang } => {
+                    let named = lang.split_whitespace().next().unwrap_or("");
+                    opened = named.eq_ignore_ascii_case(DIAGRAM_LANG).then_some(index);
+                }
+                BlockKind::Fence { open: false, .. } => {
+                    if let Some(first) = opened.take() {
+                        let start = self.blocks[first].range.end + 1;
+                        let end = block.range.start.saturating_sub(1).max(start);
+                        found.push(Diagram {
+                            lines: first..index + 1,
+                            range: self.blocks[first].range.start..block.range.end,
+                            code: start..end,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
     pub fn block_at_line(&self, line: usize) -> Option<&Block> {
         self.blocks.get(line)
     }
@@ -412,6 +464,55 @@ mod tests {
         assert!(matches!(d.blocks[3].kind, BlockKind::Fence { open: false, .. }));
         assert_eq!(d.blocks[4].kind, BlockKind::Paragraph);
         assert_eq!(d.blocks[2].visible_text(src), "# not a heading");
+    }
+
+    #[test]
+    fn a_mermaid_fence_is_a_diagram() {
+        let src = "before\n```mermaid\nflowchart LR\nA-->B\n```\nafter";
+        let found = doc(src).diagrams();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].lines, 1..5);
+        assert_eq!(&src[found[0].range.clone()], "```mermaid\nflowchart LR\nA-->B\n```");
+        assert_eq!(&src[found[0].code.clone()], "flowchart LR\nA-->B");
+    }
+
+    #[test]
+    fn a_diagram_holds_its_fences_and_nothing_beside_them() {
+        let src = "before\n```mermaid\nA-->B\n```\nafter";
+        let diagram = &doc(src).diagrams()[0];
+        assert!(!diagram.holds("before".len()));
+        assert!(diagram.holds("before\n".len()));
+        assert!(diagram.holds("before\n```mermaid\nA".len()));
+        assert!(diagram.holds("before\n```mermaid\nA-->B\n```".len()));
+        assert!(!diagram.holds("before\n```mermaid\nA-->B\n```\n".len()));
+    }
+
+    #[test]
+    fn other_languages_are_not_diagrams() {
+        assert!(doc("```rust\nlet x = 1;\n```").diagrams().is_empty());
+        assert!(doc("```\nA-->B\n```").diagrams().is_empty());
+    }
+
+    #[test]
+    fn a_fence_nothing_closes_is_not_a_diagram() {
+        assert!(doc("```mermaid\nflowchart LR\nA-->B").diagrams().is_empty());
+    }
+
+    #[test]
+    fn an_empty_mermaid_fence_has_no_code() {
+        let src = "```mermaid\n```";
+        let found = doc(src).diagrams();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].code.is_empty());
+    }
+
+    #[test]
+    fn each_mermaid_fence_is_its_own_diagram() {
+        let src = "```mermaid\nA-->B\n```\n\n```rust\nx\n```\n\n~~~Mermaid\nC-->D\n~~~";
+        let found = doc(src).diagrams();
+        assert_eq!(found.len(), 2);
+        assert_eq!(&src[found[0].code.clone()], "A-->B");
+        assert_eq!(&src[found[1].code.clone()], "C-->D");
     }
 
     #[test]

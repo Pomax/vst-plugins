@@ -4,12 +4,15 @@
 # each with its own confusing symptom, so this runs first, and a failure here
 # stops the run: nothing after it can mean anything.
 baseline:
+# A note nobody has named opens with the keyboard in its name. Enter leaves the
+# name as it is and goes to the document.
+type:{ENTER}
 # The document opens on a heading waiting to be named, with the name selected.
 # Three backspaces take the name and then the `# `, leaving nothing, which is
 # what the rest of this is about.
 type:{BS 3}
 type:typed straight into the document
-wait:500
+showing:typed straight into|140
 shot:%CACHE%\typing-goes-into-the-document.png
 
 expect:sections is 1

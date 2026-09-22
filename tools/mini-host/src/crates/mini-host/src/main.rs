@@ -36,15 +36,19 @@ struct Args {
     /// measure. The plugin's editor is a child window, and on macOS a child
     /// window is a subview, which nothing outside this process can measure.
     geometry: Option<PathBuf>,
+    /// A preset to restore before the plugin's window is opened, which is the
+    /// order a DAW opening a project does it in: `setState`, then the editor.
+    preset: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
-    let mut args = Args { plugin: None, state: None, geometry: None };
+    let mut args = Args { plugin: None, state: None, geometry: None, preset: None };
     let mut rest = std::env::args().skip(1);
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--state" => args.state = rest.next().map(PathBuf::from),
             "--geometry" => args.geometry = rest.next().map(PathBuf::from),
+            "--preset" => args.preset = rest.next().map(PathBuf::from),
             _ => args.plugin = Some(PathBuf::from(arg)),
         }
     }
@@ -400,6 +404,19 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(preset) = &args.preset {
+        let restored = presets::load(preset)
+            .map_err(|e| format!("could not read {}: {e}", preset.display()))
+            .and_then(|(_, state)| {
+                plugin
+                    .set_state(&state)
+                    .map_err(|e| format!("the plugin refused {}: {e}", preset.display()))
+            });
+        if let Err(e) = restored {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    }
     if let Err(e) = plugin.open_editor() {
         eprintln!("the plugin has no editor: {e}");
         return ExitCode::FAILURE;
@@ -425,14 +442,18 @@ fn main() -> ExitCode {
         // Where the window was left is the application's to remember, and
         // eframe already does it.
         persist_window: true,
-        // Under test, which is what --geometry marks, the memory is a scratch
-        // file beside the test's own files instead of the application's: a
-        // remembered size would start every test at whatever size the last
-        // run left the window, and a test's clicks are written against the
-        // size the plugin asked for. eframe restores a stored window whether
-        // or not it may store one, so the store itself has to be the fresh
-        // thing.
-        persistence_path: args.geometry.as_ref().map(|p| p.with_extension("memory")),
+        // Under test, which is what --geometry or --state marks, the memory is
+        // a scratch file beside the test's own files instead of the
+        // application's: a remembered size would start every test at whatever
+        // size the last run left the window, and a test's clicks are written
+        // against the size the plugin asked for. eframe restores a stored
+        // window whether or not it may store one, so the store itself has to
+        // be the fresh thing.
+        persistence_path: args
+            .geometry
+            .as_ref()
+            .or(args.state.as_ref())
+            .map(|p| p.with_extension("memory")),
         ..Default::default()
     };
 

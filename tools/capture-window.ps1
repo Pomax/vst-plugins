@@ -23,16 +23,9 @@ param(
     # `powershell -File`, only one token binds to a parameter.
     [string]$ExeArgs = '',
     [string]$Title = 'Markdown Notes',
-    # "x,y" inside the window to click before typing, so the keys go where a
-    # user's would.
-    [string]$ClickAt = '',
-    # Text to type into the window before the grab, so what the keyboard
-    # actually reaches can be seen rather than assumed.
-    [string]$Type = '',
     # A sequence of actions, run in order before the grab:
     #   click:X,Y     left click at X,Y inside the window
-    #   type:TEXT     send TEXT as key presses
-    #   wait:MS       pause
+    #   type:TEXT     send TEXT as key presses, one at a time
     #   remove:PATH   delete a file, so a save does not hit "already exists"
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
@@ -53,11 +46,7 @@ param(
     # Close the window by asking it to, rather than killing the process, so
     # the program runs its shutdown. A UI test needs this: the state it
     # asserts on is written on the way out.
-    [switch]$CloseCleanly,
-    # "x,y" inside the window to park the pointer on before the grab, for
-    # capturing a hover state.
-    [string]$HoverAt = '',
-    [int]$SettleMs = 500
+    [switch]$CloseCleanly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,7 +80,8 @@ public class Win32Capture {
             keybd_event(0x12, 0, 2, System.IntPtr.Zero);        // Alt up
             SetForegroundWindow(hWnd);
             if (GetForegroundWindow() == hWnd) return true;
-            System.Threading.Thread.Sleep(150);
+            // Not in front yet: look again shortly.
+            System.Threading.Thread.Sleep(25);
         }
         return false;
     }
@@ -133,6 +123,24 @@ public class Win32Capture {
         return input;
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern short VkKeyScanW(char c);
+
+    /// Type one character the way a keyboard does: the key it is on, with
+    /// Shift held for exactly as long as that key needs it. The shift is this
+    /// call's own, pressed and released here, so the case that arrives is the
+    /// case that was written and not whatever the keyboard was left in.
+    public static void TypeChar(char c) {
+        short found = VkKeyScanW(c);
+        if (found == -1) return;
+        ushort vk = (ushort)(found & 0xff);
+        bool shifted = (found & 0x100) != 0;
+        if (shifted) Send(KeyInput(0x10, false));   // Shift down
+        Send(KeyInput(vk, false));
+        Send(KeyInput(vk, true));
+        if (shifted) Send(KeyInput(0x10, true));    // Shift up
+    }
+
     // What the pointer looks like right now. A window says what it wants the
     // cursor to be, and the only way to check it from outside is to ask the
     // system which cursor is on screen and compare it with the stock ones.
@@ -168,30 +176,33 @@ public class Win32Capture {
     /// Hold a modifier, tap a key, let go, as a keyboard does it.
     public static void Shortcut(ushort modifier, ushort key) {
         Send(KeyInput(modifier, false));
-        System.Threading.Thread.Sleep(40);
+        System.Threading.Thread.Sleep(KEY_MS);
         Send(KeyInput(key, false));
-        System.Threading.Thread.Sleep(40);
+        System.Threading.Thread.Sleep(KEY_MS);
         Send(KeyInput(key, true));
-        System.Threading.Thread.Sleep(40);
+        System.Threading.Thread.Sleep(KEY_MS);
         Send(KeyInput(modifier, true));
-        System.Threading.Thread.Sleep(60);
     }
+
+    /// How long a hand takes between one key of a shortcut and the next.
+    const int KEY_MS = 30;
 
     static void Send(INPUT input) {
         var one = new INPUT[] { input };
         SendInput(1, one, Marshal.SizeOf(typeof(INPUT)));
     }
 
-    /// A click the UI can see: the pointer moves, settles, presses, and only
-    /// then releases. Sent back to back, the press and release can land in one
-    /// frame and be missed.
+    /// How long a finger holds a button down for a click. Sent back to back,
+    /// the press and the release can land in one frame and be missed.
+    const int HELD_MS = 60;
+
+    /// A click the UI can see: the pointer arrives, presses, and releases.
     public static void Click(int x, int y) {
         SetCursorPos(x, y);
-        System.Threading.Thread.Sleep(120);
+        System.Threading.Thread.Sleep(HELD_MS);
         mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
-        System.Threading.Thread.Sleep(120);
+        System.Threading.Thread.Sleep(HELD_MS);
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
-        System.Threading.Thread.Sleep(120);
     }
     /// Press at one point, move across, release at another: a drag.
     ///
@@ -222,56 +233,42 @@ public class Win32Capture {
     public static void TakeHold(int x, int y) {
         POINT from;
         GetCursorPos(out from);
-        Glide(from.X, from.Y, x, y, 200);
-        System.Threading.Thread.Sleep(150);
+        Glide(from.X, from.Y, x, y, 100);
         mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
-        System.Threading.Thread.Sleep(150);
     }
 
-    /// Move the pointer to a place, in the time a hand would take.
+    /// Move the pointer to a place, across the screen rather than in one jump,
+    /// so the window under it sees the pointer arrive.
     public static void MoveTo(int x, int y) {
         POINT from;
         GetCursorPos(out from);
-        Glide(from.X, from.Y, x, y, 400);
-        System.Threading.Thread.Sleep(150);
+        Glide(from.X, from.Y, x, y, 100);
     }
 
     public static void LetGo(int x, int y) {
         MoveTo(x, y);
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
-        System.Threading.Thread.Sleep(200);
     }
 
-    /// Drag a window's bottom right corner, slowly, and let go.
+    /// Drag a window's bottom right corner over `overMs`, and let go.
     public static void DragCorner(int x, int y, int dx, int dy, int overMs) {
         POINT from;
         GetCursorPos(out from);
         // From wherever the pointer is now, not from thin air.
-        Glide(from.X, from.Y, x, y, 250);
-        System.Threading.Thread.Sleep(100);
+        Glide(from.X, from.Y, x, y, 100);
         mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
-        System.Threading.Thread.Sleep(100);
         Glide(x, y, x + dx, y + dy, overMs);
-        System.Threading.Thread.Sleep(100);
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
-        System.Threading.Thread.Sleep(200);
     }
 
     public static void Drag(int fromX, int fromY, int toX, int toY) {
         SetCursorPos(fromX, fromY);
-        System.Threading.Thread.Sleep(120);
+        System.Threading.Thread.Sleep(HELD_MS);
         mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
-        System.Threading.Thread.Sleep(120);
-        const int steps = 8;
-        for (int i = 1; i <= steps; i++) {
-            SetCursorPos(
-                fromX + (toX - fromX) * i / steps,
-                fromY + (toY - fromY) * i / steps);
-            System.Threading.Thread.Sleep(40);
-        }
-        System.Threading.Thread.Sleep(120);
+        System.Threading.Thread.Sleep(HELD_MS);
+        Glide(fromX, fromY, toX, toY, 130);
+        System.Threading.Thread.Sleep(HELD_MS);
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
-        System.Threading.Thread.Sleep(120);
     }
 
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -370,6 +367,8 @@ public class Win32Capture {
     // comes back as just its first character.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int count);
 
 
 
@@ -404,6 +403,9 @@ public class Win32Capture {
     ///
     /// A file dialog is a window of the process that opened it, so a second
     /// window being there is a dialog being up. Zero when there is none.
+    ///
+    /// A program started from a console has that console as a visible window
+    /// of its own for as long as it runs, and that is not a dialog.
     public static IntPtr OtherWindow(uint targetPid, IntPtr notThis) {
         IntPtr found = IntPtr.Zero;
         long biggestArea = 0;
@@ -411,8 +413,14 @@ public class Win32Capture {
             uint pid;
             GetWindowThreadProcessId(h, out pid);
             if (pid != targetPid || h == notThis || !IsWindowVisible(h)) return true;
+            var kind = new StringBuilder(64);
+            GetClassNameW(h, kind, 64);
+            if (kind.ToString() == "ConsoleWindowClass") return true;
             RECT r;
             if (!GetWindowRect(h, out r)) return true;
+            // Nor is a helper window a few pixels across, which a program
+            // may keep for its own purposes: a dialog has room for a button.
+            if (r.Right - r.Left < 150 || r.Bottom - r.Top < 80) return true;
             long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
             if (area > biggestArea) { biggestArea = area; found = h; }
             return true;
@@ -580,16 +588,113 @@ $ROW_TOP = 3
 $ROW_HEIGHT = 21
 $BAR_WIDTH = 16
 
+# How long a look that found nothing is left before looking again.
+$POLL_MS = 25
+
+# Look for something until it is there, and hand it back, or hand back nothing
+# once TimeoutMs has gone by without it.
+#
+# This is the only waiting the driver does. No step pauses for a length of
+# time: a step that needs the window to have caught up says what it is waiting
+# to see, and carries on the moment it is there.
+function Wait-Until([scriptblock]$Look, [int]$TimeoutMs = 5000) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    while ($true) {
+        $found = & $Look
+        if ($found) { return $found }
+        if ([DateTime]::UtcNow -ge $deadline) { return $null }
+        Start-Sleep -Milliseconds $POLL_MS
+    }
+}
+
+# Whether a part of the screen has something drawn in it: a window that has
+# not drawn its first frame yet is one flat colour, and one that has is not.
+# A grid of points is looked at rather than every pixel.
+function Test-Drawn([Win32Capture+RECT]$area) {
+    Add-Type -AssemblyName System.Drawing
+    $w = $area.Right - $area.Left
+    $h = $area.Bottom - $area.Top
+    if ($w -le 0 -or $h -le 0) { return $false }
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $gfx.CopyFromScreen($area.Left, $area.Top, 0, 0,
+            (New-Object System.Drawing.Size $w, $h))
+        $seen = @{}
+        for ($x = 2; $x -lt $w; $x += [Math]::Max(1, [int]($w / 40))) {
+            for ($y = 2; $y -lt $h; $y += [Math]::Max(1, [int]($h / 20))) {
+                $seen[$bmp.GetPixel($x, $y).ToArgb()] = $true
+            }
+        }
+        return $seen.Count -ge 3
+    } finally {
+        $gfx.Dispose()
+        $bmp.Dispose()
+    }
+}
+
+# Wait for a window to have drawn itself: one that has just opened is blank
+# until its first frame, and there is nothing in a blank window to click or
+# type into.
+function Wait-Drawn([Win32Capture+RECT]$area) {
+    $drawn = Wait-Until { Test-Drawn $area } 15000
+    if (-not $drawn) { throw 'the window opened and never drew anything' }
+}
+
+# Wait for the plugin inside the host's window to be up, the way a person
+# does before touching it: until there is something to read below the host's
+# own strip, which is the plugin's toolbar. The host draws its strip and its
+# background long before the plugin has loaded and drawn its first frame, so
+# the window having colour in it says nothing about the plugin.
+function Wait-Loaded([Win32Capture+RECT]$area) {
+    $probe = if ($outDir) {
+        Join-Path $outDir 'capture-window-loaded.png'
+    } else {
+        Join-Path $env:TEMP 'capture-window-loaded.png'
+    }
+    $loaded = Wait-Until {
+        Save-Shot $area $probe
+        try {
+            @(Read-Text $probe | Where-Object { $_.Top -ge 40 }).Count -gt 0
+        } catch { $false }
+    } 30000
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    if (-not $loaded) { throw 'the plugin never drew anything to read in the host window' }
+    Start-Sleep -Milliseconds $HAND_MS
+}
+
+# How long a hand takes over one key, and how long it takes to go from the
+# mouse to the next thing. Input sent faster than a person can make it reaches
+# the plugin out of order: the pointer and the keyboard come in by different
+# roads, and keys sent in the same instant as a click overtake it.
+$KEY_MS = 12
+$HAND_MS = 150
+
+# Type what a `type:` step says, one key at a time. The text is in SendKeys
+# notation, where `{...}` is one named key (or one key repeated) and anything
+# else is a character of its own. A character goes as its key, with a shift
+# of its own when it needs one, so the case it arrives in is the case it was
+# written; a named key has no character and goes through SendKeys.
+function Send-Typing([string]$keys) {
+    foreach ($key in [regex]::Matches($keys, '\{[^}]*\}|.')) {
+        if ($key.Value.StartsWith('{')) {
+            [System.Windows.Forms.SendKeys]::SendWait($key.Value)
+        } else {
+            [Win32Capture]::TypeChar([char]$key.Value)
+        }
+        Start-Sleep -Milliseconds $KEY_MS
+    }
+}
+
 $proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
 
 try {
     # Wait for the editor window to exist.
-    $hwnd = [IntPtr]::Zero
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    while ($hwnd -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline) {
-        Start-Sleep -Milliseconds 200
-        $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
-    }
+    $hwnd = Wait-Until {
+        $seen = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
+        if ($seen -ne [IntPtr]::Zero) { $seen }
+    } 30000
+    if (-not $hwnd) { $hwnd = [IntPtr]::Zero }
     if ($hwnd -eq [IntPtr]::Zero) {
         # No window with that title turned up; take the largest one and say so.
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $false)
@@ -601,28 +706,14 @@ try {
         Write-Warning 'the window would not come to the front'
     }
 
-    # Let the GL context draw a few frames before grabbing pixels.
-    Start-Sleep -Milliseconds $SettleMs
-
     $rect = [Win32Capture]::VisibleRect($hwnd)
+    Wait-Loaded $rect
     # The screenshot is always of the window under test, whichever window the
     # steps were last clicking in.
     $hostRect = $rect
     # Which window the steps are addressing, for recording it.
     $currentTitle = $Title
     $currentHwnd = $hwnd
-
-    if ($ClickAt) {
-        $parts = $ClickAt -split ','
-        [Win32Capture]::Click($rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
-        Start-Sleep -Milliseconds 500
-    }
-
-    if ($Type) {
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.SendKeys]::SendWait($Type)
-        Start-Sleep -Milliseconds 500
-    }
 
     if ($StepFile) {
         $Steps = Get-Content -Path $StepFile |
@@ -631,6 +722,7 @@ try {
 
     if ($Steps.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
+        $restarts = 0
         foreach ($step in $Steps) {
             $kind, $value = $step -split ':', 2
             switch ($kind) {
@@ -638,7 +730,7 @@ try {
                     $parts = $value -split ','
                     [Win32Capture]::Click(
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
-                    Start-Sleep -Milliseconds 500
+                    Start-Sleep -Milliseconds $HAND_MS
                 }
                 'press' {
                     # `press:LABEL|X,Y` looks first and clicks second. X,Y is
@@ -654,26 +746,46 @@ try {
                     if ($parts.Count -ne 2) { throw "cannot read press: $value" }
                     $x = [int]$parts[0]
                     $y = [int]$parts[1]
-                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
-                    Save-Shot $rect $probe
-                    $found = Find-Label $probe $label @{ X = $x; Y = $y }
+                    $probe = if ($outDir) {
+                        Join-Path $outDir 'capture-window-press.png'
+                    } else {
+                        Join-Path $env:TEMP 'capture-window-press.png'
+                    }
+                    # A pointer left on the control by the run before draws it
+                    # highlighted, and a window that opened under a pointer
+                    # that never moves has not been told where the pointer is.
+                    # It is put on the title bar first, in one jump, and travels
+                    # to the control from there.
+                    if ($currentHwnd -eq $hwnd) {
+                        [Win32Capture]::SetCursorPos(
+                            $rect.Left + [int](($rect.Right - $rect.Left) / 2),
+                            $rect.Top + 12) | Out-Null
+                    }
+                    # Looked for until it is there: the control may be one the
+                    # step before has only just caused to be drawn.
+                    $found = Wait-Until {
+                        Save-Shot $rect $probe
+                        Find-Label $probe $label @{ X = $x; Y = $y }
+                    }
                     if (-not $found) {
-                        # The picture stays when the label is not in it: what
-                        # the window actually held is the only way to tell a
-                        # control drawn elsewhere from one that cannot be read.
-                        throw "no control labelled `"$label`" is in the window; it is in $probe"
+                        # The picture stays when the label is not in it, and
+                        # what was read in it is said: what the window actually
+                        # held is the only way to tell a control drawn
+                        # elsewhere from one that cannot be read.
+                        $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
+                        throw "no control labelled `"$label`" is in the window; it reads: $saw; it is in $probe"
                     }
                     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    [Win32Capture]::MoveTo(
+                        $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
                     [Win32Capture]::Click(
                         $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
-                    Start-Sleep -Milliseconds 500
+                    Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("press:  {0} at {1},{2}" -f $label, $found.X, $found.Y)
                 }
                 'type' {
-                    [System.Windows.Forms.SendKeys]::SendWait($value)
-                    Start-Sleep -Milliseconds 500
+                    Send-Typing $value
                 }
-                'wait' { Start-Sleep -Milliseconds ([int]$value) }
                 { $_ -in 'showing', 'hidden' } {
                     # `showing:TEXT|Y` reads the window below Y and fails
                     # unless TEXT is there; `hidden:` fails if it is. Below Y
@@ -686,19 +798,38 @@ try {
                     # The whole window is photographed and the answer filtered
                     # to what is below Y afterwards: a picture cut to a band is
                     # read worse than a whole window.
-                    $probe = Join-Path $env:TEMP 'capture-window-showing.png'
-                    Save-Shot $rect $probe
+                    $probe = if ($outDir) {
+                        Join-Path $outDir 'capture-window-showing.png'
+                    } else {
+                        Join-Path $env:TEMP 'capture-window-showing.png'
+                    }
                     try {
-                        $found = @(Find-All $probe $text |
-                            Where-Object { $_.Top -ge [int]$below }).Count -gt 0
+                        # Looked at until it is as the step says: what the step
+                        # before did may not have been drawn yet, and a tooltip
+                        # takes its time coming and going.
+                        $asSaid = Wait-Until {
+                            Save-Shot $rect $probe
+                            $there = @(Find-All $probe $text |
+                                Where-Object { $_.Top -ge [int]$below }).Count -gt 0
+                            $there -eq ($kind -eq 'showing')
+                        }
+                        $found = if ($asSaid) { $kind -eq 'showing' } else { $kind -ne 'showing' }
+                        # Only a step that is about to fail reads the window
+                        # again, to say what it holds instead.
+                        $saw = ''
+                        if (-not $asSaid) {
+                            $saw = (Read-Text $probe |
+                                Where-Object { $_.Top -ge [int]$below } |
+                                ForEach-Object { $_.Text }) -join ' | '
+                        }
                     } finally {
                         Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     }
                     if ($kind -eq 'showing' -and -not $found) {
-                        throw "the document does not show `"$text`""
+                        throw "the document does not show `"$text`"; below $below the window reads: $saw"
                     }
                     if ($kind -eq 'hidden' -and $found) {
-                        throw "the document still shows `"$text`""
+                        throw "the document still shows `"$text`"; below $below the window reads: $saw"
                     }
                     Write-Host ("{0}: {1}" -f $kind, $text)
                 }
@@ -712,39 +843,50 @@ try {
                     # itself: the title is the plugin's name on both of them,
                     # and only what is written inside says which.
                     $want = $value.Trim()
-                    $panel = [IntPtr]::Zero
-                    foreach ($try in 1..15) {
-                        $panel = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
-                        if ($panel -ne [IntPtr]::Zero -or $kind -eq 'nodialog') { break }
-                        Start-Sleep -Milliseconds 200
-                    }
                     if ($kind -eq 'nodialog') {
-                        if ($panel -ne [IntPtr]::Zero) { throw "a $want dialog is still open" }
+                        $closed = Wait-Until {
+                            [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd) -eq [IntPtr]::Zero
+                        } 3000
+                        if (-not $closed) { throw "a $want dialog is still open" }
                         Write-Host ("nodialog: {0}" -f $want)
                         break
                     }
-                    if ($panel -eq [IntPtr]::Zero) {
+                    $panel = Wait-Until {
+                        $seen = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
+                        if ($seen -ne [IntPtr]::Zero) { $seen }
+                    } 10000
+                    if (-not $panel) {
                         throw "no $want dialog is open, so the button did nothing"
                     }
-                    $probe = Join-Path $env:TEMP 'capture-window-dialog.png'
-                    Save-Shot ([Win32Capture]::VisibleRect($panel)) $probe
-                    if (-not (Find-Label $probe $want)) {
+                    $probe = if ($outDir) {
+                        Join-Path $outDir 'capture-window-dialog.png'
+                    } else {
+                        Join-Path $env:TEMP 'capture-window-dialog.png'
+                    }
+                    # The window is looked up again on every look: the first
+                    # second window to turn up need not be the dialog itself.
+                    $named = Wait-Until {
+                        $seen = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
+                        if ($seen -ne [IntPtr]::Zero) {
+                            Save-Shot ([Win32Capture]::VisibleRect($seen)) $probe
+                            Find-Label $probe $want
+                        }
+                    } 10000
+                    if (-not $named) {
                         throw "a dialog is open, but nothing on it says ""$want""; see $probe"
                     }
                     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dialog: {0}" -f $want)
                 }
                 'nowindow' {
                     # `nowindow:TITLE` fails while a window with that title is
                     # still there: what a dialog that closed cleanly leaves.
                     $want = $value.Trim()
-                    $gone = [IntPtr]::Zero
-                    foreach ($try in 1..15) {
-                        $gone = [Win32Capture]::FindWindow([uint32]$proc.Id, $want, $true)
-                        if ($gone -eq [IntPtr]::Zero) { break }
-                        Start-Sleep -Milliseconds 200
-                    }
-                    if ($gone -ne [IntPtr]::Zero) { throw "the window ""$want"" is still open" }
+                    $gone = Wait-Until {
+                        [Win32Capture]::FindWindow([uint32]$proc.Id, $want, $true) -eq [IntPtr]::Zero
+                    } 3000
+                    if (-not $gone) { throw "the window ""$want"" is still open" }
                     Write-Host ("nowindow: {0}" -f $want)
                 }
                 'dragtext' {
@@ -760,9 +902,13 @@ try {
                     $parts = $to -split ','
                     if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
                     $probe = Join-Path $env:TEMP 'capture-window-press.png'
-                    Save-Shot $rect $probe
-                    $found = @(Find-All $probe $text.Trim() |
-                        Where-Object { $_.Top -ge [int]$below })[0]
+                    # Looked for until it is there: the text may be what the
+                    # step before typed, and not drawn yet.
+                    $found = Wait-Until {
+                        Save-Shot $rect $probe
+                        @(Find-All $probe $text.Trim() |
+                            Where-Object { $_.Top -ge [int]$below })[0]
+                    }
                     if (-not $found) {
                         $read = @(Read-Text $probe | Where-Object { $_.Top -ge [int]$below })
                         # What was readable instead: a step that says only "not
@@ -779,7 +925,7 @@ try {
                         $rect.Left + [int]$found.Left,
                         $rect.Top + [int](($found.Top + $found.Bottom) / 2),
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
-                    Start-Sleep -Milliseconds 500
+                    Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dragtext: {0}" -f $text.Trim())
                 }
                 'hold' {
@@ -803,7 +949,7 @@ try {
                     if ($parts.Count -ne 2) { throw "cannot read letgo: $value" }
                     [Win32Capture]::LetGo(
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
-                    Start-Sleep -Milliseconds 400
+                    Start-Sleep -Milliseconds $HAND_MS
                 }
                 'cursor' {
                     # `cursor:X,Y|ibeam` parks the pointer and checks what the
@@ -812,10 +958,11 @@ try {
                     $parts = $where -split ','
                     [Win32Capture]::SetCursorPos(
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1]) | Out-Null
-                    # The window only changes it when it next redraws.
-                    Start-Sleep -Milliseconds 500
-                    $shown = [Win32Capture]::CursorNow()
-                    if ($shown -ne $want.Trim()) {
+                    # The window only changes it when it next redraws, so it is
+                    # looked at until it is what was asked for.
+                    $right = Wait-Until { [Win32Capture]::CursorNow() -eq $want.Trim() } 2000
+                    if (-not $right) {
+                        $shown = [Win32Capture]::CursorNow()
                         throw "cursor at $where is $shown, expected $($want.Trim())"
                     }
                 }
@@ -833,7 +980,6 @@ try {
                     if ($letter.Length -ne 1) { throw "unknown key: $letter" }
                     $key = [uint16][char]($letter.ToUpper())
                     [Win32Capture]::Shortcut([uint16]$modifier, $key)
-                    Start-Sleep -Milliseconds 300
                 }
                 'kill' {
                     # Force quit, for a test that ends with a native modal
@@ -855,23 +1001,37 @@ try {
                             Stop-Process -Id $proc.Id -Force
                         }
                     }
-                    # Throw away what the run that just ended wrote, so what is
-                    # asserted afterwards can only have come from the new one.
-                    # Otherwise a second run that dies quietly leaves the first
-                    # run's state behind and the test passes on it.
+                    # Put aside what the run that just ended wrote, as STATE.1
+                    # for the first run, STATE.2 for the second: the runner
+                    # checks it against the expectations written before this
+                    # step. It is moved rather than left, so what is asserted
+                    # afterwards can only have come from the new run. Otherwise
+                    # a second run that dies quietly leaves the first run's
+                    # state behind and the test passes on it.
+                    $restarts++
                     for ($i = 0; $i -lt $launchArgs.Count - 1; $i++) {
                         if ($launchArgs[$i] -eq '--state') {
-                            Remove-Item -LiteralPath $launchArgs[$i + 1] `
-                                -Force -ErrorAction SilentlyContinue
+                            $written = $launchArgs[$i + 1]
+                            if (Test-Path -LiteralPath $written) {
+                                Move-Item -LiteralPath $written `
+                                    -Destination "$written.$restarts" -Force
+                            }
                         }
                     }
-                    $proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
-                    $hwnd = [IntPtr]::Zero
-                    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-                    while ($hwnd -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline) {
-                        Start-Sleep -Milliseconds 200
-                        $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
+                    # `restart:ARG|ARG` starts it again with those arguments
+                    # after its own, for a program that is to come back up
+                    # differently from how it first started.
+                    $again = $launchLine
+                    if ($value) {
+                        $extra = ($value -split '\|' | ForEach-Object { '"{0}"' -f $_ }) -join ' '
+                        $again = "$launchLine $extra"
                     }
+                    $proc = Start-Process -FilePath $Exe -ArgumentList $again -PassThru
+                    $hwnd = Wait-Until {
+                        $seen = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
+                        if ($seen -ne [IntPtr]::Zero) { $seen }
+                    } 30000
+                    if (-not $hwnd) { $hwnd = [IntPtr]::Zero }
                     if ($hwnd -eq [IntPtr]::Zero) {
                         throw 'the window did not come back after a restart'
                     }
@@ -879,8 +1039,8 @@ try {
                     if (-not [Win32Capture]::BringToFront($hwnd)) {
                         Write-Warning 'the restarted window would not come to the front'
                     }
-                    Start-Sleep -Milliseconds $SettleMs
                     $rect = [Win32Capture]::VisibleRect($hwnd)
+                    Wait-Loaded $rect
                     $hostRect = $rect
                     $currentHwnd = $hwnd
                     $currentTitle = $Title
@@ -917,7 +1077,7 @@ try {
                     [Win32Capture]::Click(
                         $rect.Left + $ROW_X,
                         $rect.Top + $ROW_TOP + $showAt * $ROW_HEIGHT + [int]($ROW_HEIGHT / 2))
-                    Start-Sleep -Milliseconds 500
+                    Start-Sleep -Milliseconds $HAND_MS
                 }
                 'copies' {
                     # `copies:SRC|PREFIX|N` makes N copies of a file, named
@@ -942,13 +1102,11 @@ try {
                     # `window:` with no title goes back to the window under
                     # test, whose coordinates include its frame.
                     $wanted = if ($value.Trim() -eq '') { $Title } else { $value.Trim() }
-                    $target = [IntPtr]::Zero
-                    foreach ($try in 1..20) {
-                        $target = [Win32Capture]::FindWindow(
-                            [uint32]$proc.Id, $wanted, $true)
-                        if ($target -ne [IntPtr]::Zero) { break }
-                        Start-Sleep -Milliseconds 200
-                    }
+                    $target = Wait-Until {
+                        $seen = [Win32Capture]::FindWindow([uint32]$proc.Id, $wanted, $true)
+                        if ($seen -ne [IntPtr]::Zero) { $seen }
+                    } 4000
+                    if (-not $target) { $target = [IntPtr]::Zero }
                     if ($target -eq [IntPtr]::Zero) {
                         # Leave a picture of what was there instead: a step that
                         # opens no window is otherwise invisible.
@@ -964,6 +1122,12 @@ try {
                         [Win32Capture]::VisibleRect($target)
                     } else {
                         [Win32Capture]::ClientRect($target)
+                    }
+                    # A dialog that has only just opened has drawn nothing
+                    # yet, and has no field for the keys that follow to go to.
+                    if ($target -ne $hwnd) {
+                        Wait-Drawn $rect
+                        Start-Sleep -Milliseconds $HAND_MS
                     }
                     Write-Host ("window: $wanted at {0},{1} {2}x{3}" -f
                         $rect.Left, $rect.Top,
@@ -983,7 +1147,15 @@ try {
                     $area = [Win32Capture]::OuterRect($hwnd)
                     [Win32Capture]::DragCorner(
                         $area.Right - 3, $area.Bottom - 3, $dx, $dy, [int]$parts[2])
-                    Start-Sleep -Milliseconds 500
+                    # The window is still working through the last of the
+                    # pointer's moves when the button comes up, so it is looked
+                    # at until it is the size it was dragged to. One that never
+                    # gets there is left for the expectations to refuse.
+                    Wait-Until {
+                        $now = [Win32Capture]::ClientRect($hwnd)
+                        (($now.Right - $now.Left) -eq [int]$parts[0]) -and
+                            (($now.Bottom - $now.Top) -eq [int]$parts[1])
+                    } 2000 | Out-Null
                     $rect = [Win32Capture]::VisibleRect($hwnd)
                     $hostRect = $rect
                     Write-Host ("dragto: {0}x{1} over {2}ms" -f $parts[0], $parts[1], $parts[2])
@@ -992,6 +1164,15 @@ try {
                     # `geometry:PATH` writes down what the window under test and
                     # the plugin's window inside it actually measure, so a test
                     # can assert on it rather than on a picture of it.
+                    #
+                    # Measured once the plugin's window reaches the host's right
+                    # and bottom edges, which after a drag it is expected to,
+                    # or as it stands when it never does.
+                    Wait-Until {
+                        $c = [Win32Capture]::ClientRect($hwnd)
+                        $e = [Win32Capture]::EditorInHost($hwnd)
+                        ($e.Right -eq ($c.Right - $c.Left)) -and ($e.Bottom -eq ($c.Bottom - $c.Top))
+                    } 2000 | Out-Null
                     $client = [Win32Capture]::ClientRect($hwnd)
                     $editor = [Win32Capture]::EditorInHost($hwnd)
                     $w = $client.Right - $client.Left
@@ -1017,12 +1198,18 @@ try {
                     # `written:PATH|TEXT` checks a file in code, mid-test,
                     # right when the step before it claims to have written it.
                     $p, $want = $value -split '\|', 2
+                    $want = $want.Trim().Replace('\n', "`n")
+                    # The save runs off the plugin's drawing thread, so the file
+                    # is looked for until it is there and holds what it should.
+                    $there = Wait-Until {
+                        (Test-Path -LiteralPath $p) -and
+                            [System.IO.File]::ReadAllText($p).Contains($want)
+                    }
                     if (-not (Test-Path -LiteralPath $p)) {
                         throw "$p was not written"
                     }
-                    $want = $want.Trim().Replace('\n', "`n")
                     $got = [System.IO.File]::ReadAllText($p)
-                    if (-not $got.Contains($want)) {
+                    if (-not $there) {
                         throw "$p holds `"$got`", expected it to contain `"$want`""
                     }
                 }
@@ -1071,7 +1258,12 @@ try {
                     $psi.UseShellExecute = $false
                     $psi.CreateNoWindow = $true
                     $film = [System.Diagnostics.Process]::Start($psi)
-                    Start-Sleep -Milliseconds 400
+                    # Recording has begun once there is something in the file.
+                    $rolling = Wait-Until {
+                        (Test-Path -LiteralPath $filmVideo) -and
+                            ((Get-Item -LiteralPath $filmVideo).Length -gt 0)
+                    }
+                    if (-not $rolling) { throw "ffmpeg never started writing $filmVideo" }
                 }
                 'wiggle' {
                     # Drag the pointer across the window and off it. Flicker
@@ -1126,15 +1318,6 @@ try {
                 default { throw "unknown step: $step" }
             }
         }
-    }
-
-    if ($HoverAt) {
-        $parts = $HoverAt -split ','
-        $x = $rect.Left + [int]$parts[0]
-        $y = $rect.Top + [int]$parts[1]
-        [Win32Capture]::SetCursorPos($x, $y) | Out-Null
-        # The window redraws on the enter event, not before it.
-        Start-Sleep -Milliseconds 500
     }
 
     # The picture is always of the window under test, whichever window the

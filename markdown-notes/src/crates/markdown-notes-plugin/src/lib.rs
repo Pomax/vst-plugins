@@ -28,10 +28,14 @@
 
 #![allow(non_snake_case)]
 
+pub mod diagram;
+pub mod elbows;
 pub mod files;
+pub mod fit;
 pub mod fonts;
 pub mod gui;
 pub mod keys;
+pub mod node_widths;
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CString};

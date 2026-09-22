@@ -8,6 +8,9 @@
 #
 # The strip across the top is 26 points tall, so the plugin gets everything
 # below that: the same width, and the height less 26.
+# A note nobody has named opens with the keyboard in its name. Enter leaves the
+# name as it is and goes to the document.
+type:{ENTER}
 # The document opens on a heading waiting to be named, with the name selected.
 # Three backspaces take the name and then the `# `, leaving nothing: what has
 # to survive the resizing is the plain line below.
@@ -28,12 +31,10 @@ remove:%CACHE%\host-resize-grown.txt
 remove:%CACHE%\host-resize-shrunk.txt
 film:%CACHE%\host-resize-drag|1000,760
 dragto:880,600,1000
-wait:500
 geometry:%CACHE%\host-resize-grown.txt
 # Smaller as well as bigger: a window that only ever grows can hide the case
 # where the plugin is left overhanging the frame it is in.
 dragto:620,420,1000
-wait:500
 geometry:%CACHE%\host-resize-shrunk.txt
 endfilm:
 

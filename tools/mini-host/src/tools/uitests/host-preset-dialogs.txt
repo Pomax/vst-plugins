@@ -1,10 +1,16 @@
-# Escape closes a preset dialog and does nothing else.
+# The two preset dialogs, in one run: Escape closes either and does nothing
+# else, and a list longer than the dialog scrolls, with the row at the end of
+# it loading.
 #
 # Both dialogs commit on a single action. Enter or the Save button for one, a
 # click on a row for the other. So the only way out without committing is
 # Escape, and it has to be a way out that leaves no trace.
 remove:%PRESETS%\escape-test.preset
 remove:%PRESETS%\not-written.preset
+remove:%PRESETS%\zz-bulk.preset
+# A note nobody has named opens with the keyboard in its name. Enter leaves the
+# name as it is and goes to the document.
+type:{ENTER}
 # The document opens on a heading waiting to be named, with the name selected.
 # Three backspaces take the name and then the `# `, leaving nothing: what is
 # being carried through a preset here is the plain word below.
@@ -15,11 +21,9 @@ type:one
 # field opens with the last name saved or loaded in it, so it is cleared first.
 # Enter commits, so this dialog has to be gone too.
 press:Save preset|44,41
-wait:500
 window:Save preset
 type:{END}{BS 40}escape-test
 type:{ENTER}
-wait:500
 nowindow:Save preset
 window:
 
@@ -31,27 +35,22 @@ window:
 # depends on how big the window happens to be.
 plugin:400,128
 type: two
-wait:500
 
 # Load preset, then Escape. The dialog has to be gone afterwards, which is
 # what this test is about: the expectations at the end catch a dialog that
 # committed, and say nothing about one that simply stayed open.
 press:Load preset|128,41
-wait:500
 window:Load preset
 type:{ESC}
-wait:500
 nowindow:Load preset
 window:
 
 # Save preset with a name typed in, then Escape. No file by that name, and
 # again no dialog left behind.
 press:Save preset|44,41
-wait:500
 window:Save preset
 type:{END}{BS 40}not-written
 type:{ESC}
-wait:500
 nowindow:Save preset
 window:
 
@@ -60,18 +59,59 @@ window:
 # about the disk; this says it about what the dialog shows, which is what
 # somebody looking for their preset would see.
 press:Load preset|128,41
-wait:500
 window:Load preset
 showing:escape-test|0
 hidden:not-written|0
 type:{ESC}
-wait:500
 nowindow:Load preset
 window:
 
+# A list longer than the dialog scrolls, and the row at the end of it loads.
+#
+# With a handful of presets the scrollbar is a disabled one: heads greyed, no
+# thumb, nothing to scroll. Past the point where the list stops fitting it has
+# to become a working scrollbar, and the only way to reach the last preset is
+# through it.
+#
+# One real preset, saved the way any preset is saved, holding the document as
+# it stands: `one two`. Had either Escape above loaded `escape-test`, it would
+# hold `one` instead, and so would the document at the end.
+press:Save preset|44,41
+window:Save preset
+type:{END}{BS 40}zz-bulk
+type:{ENTER}
+nowindow:Save preset
+window:
+
+# Two dozen more, named so they sort after it: the last of them is the last row
+# of the list, which is the row that cannot be reached without scrolling. They
+# are copies: saving two dozen through the dialog would test the dialog two
+# dozen times and the scrollbar once.
+copies:%PRESETS%\zz-bulk.preset|%PRESETS%\zz-bulk|24
+
+# Change the document, so loading has something to undo, and see the change on
+# screen. Not the last word typed: the caret stands against it and is read as
+# part of it.
+plugin:400,128
+type: three more
+showing:three|140
+
+# Open the list and take the last row. Getting there means the scrollbar
+# worked: the heads are live and each click moves one row.
+press:Load preset|128,41
+window:Load preset
+shot:%CACHE%\host-preset-scrolling-list.png
+row:%PRESETS%|zz-bulk-24
+nowindow:Load preset
+window:
+hidden:three|140
+
 cleanup:%PRESETS%\escape-test.preset
 cleanup:%PRESETS%\not-written.preset
+cleanup:%PRESETS%\zz-bulk*
 
+# The document is what it was when `zz-bulk` was saved, so the row that was
+# clicked really was a preset and really did load.
 expect:file exists %PRESETS%\escape-test.preset
 expect:no file at %PRESETS%\not-written.preset
 expect:sections is 1

@@ -9,6 +9,9 @@
 # file of its own on the way. Saving a file is a copy going out; it is not
 # supposed to change the document or what a preset holds of it.
 remove:%PRESETS%\across-runs.preset
+# A note nobody has named opens with the keyboard in its name. Enter leaves the
+# name as it is and goes to the document.
+type:{ENTER}
 # A section opens on a heading waiting to be named, so this names it rather
 # than typing a `#` of its own.
 type:first
@@ -22,10 +25,10 @@ type:{ENTER}the second paragraph
 
 remove:%CACHE%\across-runs.md
 press:Save As|567,76
-wait:500
+dialog:Save
 type:%CACHE%\across-runs.md
 type:{ENTER}
-wait:500
+nodialog:Save
 # What that dialog wrote, checked here rather than assumed: a save that never
 # happened would otherwise only show up further down, as a document with a
 # file path typed into it.
@@ -34,21 +37,17 @@ written:%CACHE%\across-runs.md|# first\n\nthe first paragraph\n\n# second\n\nthe
 # The name field opens with the last name saved or loaded in it, so it is
 # cleared before this one is typed.
 press:Save preset|44,41
-wait:500
 window:Save preset
 shot:%CACHE%\host-presets-save.png
 type:{END}{BS 40}across-runs
 type:{ENTER}
-wait:500
 nowindow:Save preset
 window:
 
 # A new host, holding a plugin that starts empty.
 restart:
-wait:500
 
 press:Load preset|128,41
-wait:500
 window:Load preset
 shot:%CACHE%\host-presets-list.png
 # One click on a row is the whole interaction, and it goes by name: the list
@@ -65,7 +64,6 @@ shot:%CACHE%\host-presets-list.png
 #wiggle:3000
 #endfilm:
 row:%PRESETS%|across-runs
-wait:500
 nowindow:Load preset
 window:
 # What the restored document looks like, which is where this went wrong: the
@@ -76,11 +74,9 @@ shot:%CACHE%\across-runs-restored.png
 # cut the document into sections here, so they cannot tell two tabs from one
 # tab holding everything; reading each tab can.
 press:first|60,113
-wait:500
 showing:the first paragraph|140
 hidden:the second paragraph|140
 press:second|170,113
-wait:500
 showing:the second paragraph|140
 hidden:the first paragraph|140
 

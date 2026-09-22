@@ -128,7 +128,14 @@ fn ordered_tests(dir: &Path) -> Result<Vec<PathBuf>, String> {
 struct Test {
     name: String,
     steps: Vec<String>,
-    expects: Vec<String>,
+    /// What the plugin's state must say, and which run's state: 0 is the run
+    /// the test starts with, and each `restart:` step begins the next. An
+    /// expectation belongs to the run it is written in, so one written before
+    /// a `restart:` is checked against what that run wrote when it closed.
+    expects: Vec<(usize, String)>,
+    /// How many `restart:` steps there are, which is the number of the run
+    /// that is still going when the steps end.
+    restarts: usize,
     /// Files to take away once the expectations have been checked.
     ///
     /// A test that leaves a preset behind decides what the next one finds in
@@ -149,11 +156,16 @@ fn read_test(path: &Path) -> Result<Test, String> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    parse_test(name, &text)
+}
 
+/// A test as its file spells it out.
+fn parse_test(name: String, text: &str) -> Result<Test, String> {
     let mut steps = Vec::new();
     let mut expects = Vec::new();
     let mut cleanups = Vec::new();
     let mut baseline = false;
+    let mut restarts = 0;
     for line in text.lines() {
         let line = line.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -162,10 +174,13 @@ fn read_test(path: &Path) -> Result<Test, String> {
         if let Some(rest) = line.strip_prefix("cleanup:") {
             cleanups.push(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("expect:") {
-            expects.push(rest.trim().to_string());
+            expects.push((restarts, rest.trim().to_string()));
         } else if line.trim() == "baseline:" {
             baseline = true;
         } else {
+            if line.trim_start().starts_with("restart:") {
+                restarts += 1;
+            }
             steps.push(line.to_string());
         }
     }
@@ -187,7 +202,7 @@ fn read_test(path: &Path) -> Result<Test, String> {
     if expects.is_empty() && !asserts {
         return Err(format!("{name}: a test with nothing to assert is not a test"));
     }
-    Ok(Test { name, steps, expects, cleanups, baseline })
+    Ok(Test { name, steps, expects, restarts, cleanups, baseline })
 }
 
 /// A path as a test file writes it, as this platform spells it.
@@ -380,15 +395,29 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
             ))
         }
     };
-    let state = PluginState::from_bytes(&bytes);
+    let last = PluginState::from_bytes(&bytes);
+
+    // The state of each run before the last is where `restart:` put it aside:
+    // beside the state file, with the run's number after it, counted from 1.
+    let mut earlier: Vec<Option<PluginState>> = Vec::new();
+    for run in 0..test.restarts {
+        let mut aside = state_file.clone().into_os_string();
+        aside.push(format!(".{}", run + 1));
+        earlier.push(std::fs::read(&aside).ok().map(|bytes| PluginState::from_bytes(&bytes)));
+    }
 
     let mut failures = Vec::new();
-    for expect in &test.expects {
+    for (run, expect) in &test.expects {
         let expect = expect
             .replace("%CACHE%", &work.display().to_string())
             .replace("%PRESETS%", &presets_dir(root).display().to_string());
-        if let Err(e) = check(&expect, &state) {
-            failures.push(e);
+        let state = if *run == test.restarts { Some(&last) } else { earlier[*run].as_ref() };
+        let checked = match state {
+            Some(state) => check(&expect, state),
+            None => Err(format!("run {} wrote no state to check `{expect}` against", run + 1)),
+        };
+        if let Err(e) = checked {
+            failures.push(if test.restarts == 0 { e } else { format!("run {}: {e}", run + 1) });
         }
     }
 
@@ -462,7 +491,6 @@ fn drive(
         .arg(steps)
         .arg("-Out")
         .arg(shot)
-        .args(["-SettleMs", "500"])
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;
@@ -569,5 +597,59 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
         Ok(())
     } else {
         Err(format!("{} of {ran} UI tests failed", failed.len()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(text: &str) -> Test {
+        parse_test("a-test".to_string(), text).expect("the test did not parse")
+    }
+
+    #[test]
+    fn an_expectation_belongs_to_the_run_it_is_written_in() {
+        let test = parsed(
+            "type:one\n\
+             expect:section 0 is one\n\
+             restart:\n\
+             type:two\n\
+             expect:section 0 is two\n\
+             restart:--preset|somewhere\n\
+             expect:sections is 1\n\
+             expect:title is kept\n",
+        );
+
+        assert_eq!(test.restarts, 2);
+        assert_eq!(
+            test.expects,
+            vec![
+                (0, "section 0 is one".to_string()),
+                (1, "section 0 is two".to_string()),
+                (2, "sections is 1".to_string()),
+                (2, "title is kept".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_test_with_no_restart_has_one_run_and_every_expectation_is_of_it() {
+        let test = parsed("type:one\n\nexpect:sections is 1\nexpect:section 0 is one\n");
+
+        assert_eq!(test.restarts, 0);
+        assert!(test.expects.iter().all(|(run, _)| *run == 0));
+    }
+
+    #[test]
+    fn a_restart_is_still_a_step_the_driver_is_given() {
+        let test = parsed("type:one\nrestart:--preset|somewhere\nexpect:sections is 1\n");
+
+        assert_eq!(test.steps, vec!["type:one", "restart:--preset|somewhere"]);
+    }
+
+    #[test]
+    fn a_test_that_asserts_nothing_is_refused() {
+        assert!(parse_test("a-test".to_string(), "type:one\nrestart:\n").is_err());
     }
 }
