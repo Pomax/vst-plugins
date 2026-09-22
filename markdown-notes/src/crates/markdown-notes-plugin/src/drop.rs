@@ -281,8 +281,8 @@ mod macos {
         let overlay: Retained<DropView> =
             unsafe { msg_send![super(overlay), initWithFrame: editor.bounds()] };
         overlay.setAutoresizingMask(
-            NSAutoresizingMaskOptions::NSViewWidthSizable
-                | NSAutoresizingMaskOptions::NSViewHeightSizable,
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
         let types = NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]);
         overlay.registerForDraggedTypes(&types);
