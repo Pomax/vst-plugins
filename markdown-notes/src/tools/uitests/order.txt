@@ -11,3 +11,4 @@ typing-goes-into-the-document
 editing-the-document
 sections-and-files
 opening-a-note
+pictures-in-a-note

@@ -178,7 +178,15 @@ struct Gui {
     name_finished: bool,
     /// Who has the keyboard, written each frame.
     keyboard: KeyboardReport,
+    /// The note's pictures currently on screen.
+    album: crate::pictures::Album,
+    /// Pictures dropped on the window and not yet put into the note. The drop
+    /// arrives outside the frame, so it is queued for the next one.
+    incoming: Incoming,
 }
+
+/// Pictures on their way into the note, shared with whatever receives drops.
+pub type Incoming = Arc<std::sync::Mutex<Vec<crate::pictures::Incoming>>>;
 
 /// A mermaid block as it was drawn: where, and whether what was drawn there is
 /// the diagram or the error standing in for it.
@@ -233,6 +241,8 @@ impl Gui {
             name_wanted: false,
             name_finished: false,
             keyboard: KeyboardReport::default(),
+            album: crate::pictures::Album::default(),
+            incoming: Incoming::default(),
         }
     }
 
@@ -292,11 +302,22 @@ fn settings(width: i32, height: i32) -> EguiWindowSettings {
 }
 
 /// Open the editor window as a child of the host's window.
-pub fn open(parent: &ParentWindow, editor: Shared, width: i32, height: i32) -> WindowHandle {
+///
+/// `incoming` is where pictures dropped on the window are queued; the drop
+/// target is put on the window after this returns, see `crate::drop`.
+pub fn open(
+    parent: &ParentWindow,
+    editor: Shared,
+    incoming: Incoming,
+    width: i32,
+    height: i32,
+) -> WindowHandle {
+    let mut gui = Gui::new(editor);
+    gui.incoming = incoming;
     EguiWindow::open_parented(
         parent,
         settings(width, height),
-        Gui::new(editor),
+        gui,
         // Fonts before the first frame: `set_fonts` binds them for the pass
         // after the one it is called in, and the first pass already draws text
         // in every family the editor uses.
@@ -411,6 +432,8 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
             crate::files::perform_off_thread(&gui.editor, &gui.report, command);
         }
     }
+
+    take_in_pictures(ui, gui);
 
     // The bars and their rules stack with nothing between them. Scoped, so the
     // spacing everything else uses is untouched.
@@ -539,6 +562,53 @@ pub fn draw_frame_for_test(ui: &mut egui::Ui, state: &mut TestGui) {
 /// The window is the truth. The host owns the frame, and the editor is drawn
 /// into whatever it is given: a plugin that asks for a size of its own is a
 /// plugin arguing with its host.
+/// Put the pictures that arrived since last frame into the note, and keep the
+/// note's definitions in step with its references.
+///
+/// A picture comes from a file dropped on the window, whichever way the
+/// platform delivered it (egui's own dropped files, or the window's drop
+/// target), or from the clipboard on Ctrl+V when what was pasted was not
+/// text: egui-baseview turns a paste into a text event only when the
+/// clipboard holds text, so a picture paste arrives as the key alone.
+fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
+    let mut arrived: Vec<crate::pictures::Incoming> = Vec::new();
+    if let Ok(mut queue) = gui.incoming.lock() {
+        arrived.append(&mut queue);
+    }
+    let dropped = ui.input(|i| i.raw.dropped_files.clone());
+    for file in dropped {
+        if let Some(path) = file.path {
+            if let Some(picture) = crate::pictures::Incoming::from_file(&path) {
+                arrived.push(picture);
+            }
+        }
+    }
+    if gui.document_focused {
+        let pasted_a_key = ui.input(|i| {
+            let pasted = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. }
+                    if modifiers.ctrl || modifiers.command)
+            });
+            let text_came = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Text(_) | egui::Event::Paste(_))
+            });
+            pasted && !text_came
+        });
+        if pasted_a_key {
+            if let Some(picture) = crate::pictures::Incoming::from_clipboard() {
+                arrived.push(picture);
+            }
+        }
+    }
+
+    if let Ok(mut editor) = gui.editor.lock() {
+        for picture in arrived {
+            editor.insert_image(&picture.alt, &picture.bytes);
+        }
+        editor.tidy_images();
+    }
+}
+
 fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
     let size = ui.ctx().viewport_rect().size();
     let window = (size.x.round() as i32, size.y.round() as i32);
@@ -1132,15 +1202,18 @@ fn ghost_section(painter: &egui::Painter, ui: &egui::Ui, rect: egui::Rect, title
 }
 
 fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
-    let (count, active, titles) = match gui.editor.lock() {
+    let (count, active, titles, images) = match gui.editor.lock() {
         Ok(e) => {
             let titles: Vec<(String, String, bool)> = (0..e.section_count())
                 .map(|i| (e.section_display_title(i), e.section_title(i), e.section_title_is_truncated(i)))
                 .collect();
-            (e.section_count(), e.active_section(), titles)
+            let images = if e.has_images() { Some(e.viewing_images()) } else { None };
+            (e.section_count(), e.active_section(), titles, images)
         }
         Err(_) => return,
     };
+    // While the images tab is in front no section is the selected one.
+    let active = if images == Some(true) { usize::MAX } else { active };
 
     // Every section is the same width, that of the longest title allowed, so the
     // strip does not shuffle sideways while a heading is being typed.
@@ -1150,6 +1223,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
     let mut select: Option<usize> = None;
     let mut close: Option<usize> = None;
     let mut added = false;
+    let mut view_images = false;
     let mut drop_at: Option<(usize, usize)> = None;
     let mut rects: Vec<egui::Rect> = Vec::with_capacity(count);
 
@@ -1216,6 +1290,23 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
             }
             added = true;
         }
+
+        // The images tab is the note's pictures, and it is always last: it
+        // saves as the bottom of the document. It is read, not typed into,
+        // and it cannot be dragged, closed or moved past.
+        if let Some(in_front) = images {
+            ui.add_space(8.0);
+            let response = ui
+                .add(
+                    egui::Button::new(IMAGES_TAB)
+                        .selected(in_front)
+                        .min_size(egui::Vec2::new(section_width, 0.0)),
+                )
+                .on_hover_text("The pictures in this note, as they are saved");
+            if response.clicked() {
+                view_images = true;
+            }
+        }
     });
 
     // A drag ends over whichever section the pointer is on; that is where it
@@ -1245,7 +1336,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
     // The strip is part of the document, so touching it takes the keyboard
     // back from whatever field had it. Without this, adding a section after
     // renaming the note leaves the new section unable to receive anything.
-    let touched = drop_at.is_some() || select.is_some() || close.is_some() || added;
+    let touched = drop_at.is_some() || select.is_some() || close.is_some() || added || view_images;
     if touched {
         gui.document_focused = true;
     }
@@ -1255,12 +1346,17 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
             e.move_section(from, to);
         } else if let Some(index) = select {
             e.set_active_section(index);
+        } else if view_images {
+            e.view_images();
         }
         if let Some(index) = close {
             e.close_section(index);
         }
     }
 }
+
+/// What the images tab is called.
+pub const IMAGES_TAB: &str = "images";
 
 /// Every bound colour, named for the dialog.
 ///
@@ -1461,7 +1557,10 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         [page.r, page.g, page.b],
         ui.ctx().pixels_per_point(),
     );
-    let mut pictured: Vec<(markdown_notes_core::Diagram, crate::diagram::Shown)> = Vec::new();
+    // A picture of the note's own, `![alt][1]` on a line of its own, is drawn
+    // the same way, at the picture's size: the reference is what is edited
+    // when the caret is on the line.
+    let mut pictured: Vec<Placed> = Vec::new();
     if !raw {
         for diagram in doc.diagrams() {
             if caret.is_some_and(|at| diagram.holds(at)) {
@@ -1469,13 +1568,47 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             }
             let code = &src[diagram.code.clone()];
             if let Some(shown) = gui.gallery.picture(ui.ctx(), code, look) {
-                pictured.push((diagram, shown));
+                pictured.push(Placed {
+                    lines: diagram.lines.clone(),
+                    range: diagram.range.clone(),
+                    caret_to: diagram.code.start,
+                    texture: shown.texture.id(),
+                    size: shown.size,
+                    failed: shown.failed,
+                });
+            }
+        }
+        for block in &doc.blocks {
+            if !matches!(block.kind, BlockKind::Paragraph) {
+                continue;
+            }
+            let line = &src[block.range.clone()];
+            let Some((_, number)) = markdown_notes_core::images::reference_on(line) else {
+                continue;
+            };
+            let on_it = caret.is_some_and(|at| at >= block.range.start && at <= block.range.end);
+            if on_it {
+                continue;
+            }
+            let Some(image) = editor.image(number) else {
+                continue;
+            };
+            if let Some(shown) = gui.album.picture(ui.ctx(), image) {
+                pictured.push(Placed {
+                    lines: block.line..block.line + 1,
+                    range: block.range.clone(),
+                    caret_to: block.range.start,
+                    texture: shown.texture.id(),
+                    size: shown.size / ui.ctx().pixels_per_point(),
+                    failed: false,
+                });
             }
         }
     }
     gui.gallery.end_frame();
-    let picture_at = |line: usize| pictured.iter().find(|(d, _)| d.lines.start == line);
-    let in_a_picture = |line: usize| pictured.iter().any(|(d, _)| d.lines.contains(&line));
+    gui.album.end_frame();
+    let picture_at = |line: usize| pictured.iter().find(|p| p.lines.start == line);
+    let in_a_picture = |line: usize| pictured.iter().any(|p| p.lines.contains(&line));
     let mut picture_rects: Vec<DrawnPicture> = Vec::new();
 
     // The fence lines are the block's edges, not lines of it. They take no row
@@ -1521,9 +1654,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         }
         previous = Some(block);
 
-        if let Some((diagram, shown)) = picture_at(block.line) {
-            let line = picture_row(ui, diagram, shown, &selection, &palette);
-            picture_rects.push(DrawnPicture { rect: line.rect, failed: shown.failed });
+        if let Some(placed) = picture_at(block.line) {
+            let line = picture_row(ui, placed, &selection, &palette);
+            picture_rects.push(DrawnPicture { rect: line.rect, failed: placed.failed });
             drawn.push(line);
             continue;
         }
@@ -1810,26 +1943,25 @@ struct Padding {
 /// the block and the code comes back to be edited.
 fn picture_row(
     ui: &mut egui::Ui,
-    diagram: &markdown_notes_core::Diagram,
-    shown: &crate::diagram::Shown,
+    placed: &Placed,
     selection: &std::ops::Range<usize>,
     palette: &Palette,
 ) -> DrawnLine {
     let across = ui.available_width();
-    let fit = (across / shown.size.x).min(1.0);
-    let size = shown.size * fit;
+    let fit = (across / placed.size.x).min(1.0);
+    let size = placed.size * fit;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(across.max(size.x), size.y), Sense::hover());
 
     let picture = egui::Rect::from_min_size(rect.min, size);
     ui.painter().image(
-        shown.texture.id(),
+        placed.texture,
         picture,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         Color32::WHITE,
     );
 
     // A selection running through the block covers the picture of it.
-    if selection.start < diagram.range.end && selection.end > diagram.range.start {
+    if selection.start < placed.range.end && selection.end > placed.range.start {
         ui.painter().rect_filled(picture, 0.0, palette.selection);
     }
 
@@ -1839,11 +1971,28 @@ fn picture_row(
         font_id: FontId::new(15.0, FontFamily::Monospace),
         ..Default::default()
     };
-    push(&mut job, &mut map, " ", diagram.code.start, format);
-    map.push(diagram.code.start);
+    push(&mut job, &mut map, " ", placed.caret_to, format);
+    map.push(placed.caret_to);
     let galley = ui.painter().layout_job(job);
 
     DrawnLine { rect, origin: rect.min, galley, map, caret: None }
+}
+
+/// A picture standing in for lines of the document: a mermaid block, or a
+/// reference to one of the note's own pictures.
+struct Placed {
+    /// The lines it stands in for.
+    lines: std::ops::Range<usize>,
+    /// Their byte range.
+    range: std::ops::Range<usize>,
+    /// Where a click on the picture puts the caret, which brings the text
+    /// back to be edited.
+    caret_to: usize,
+    texture: egui::TextureId,
+    /// Its natural size, in points.
+    size: egui::Vec2,
+    /// Whether what is drawn is the error picture rather than the thing.
+    failed: bool,
 }
 
 fn line_body(

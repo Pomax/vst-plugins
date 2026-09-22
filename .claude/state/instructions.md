@@ -1,371 +1,6 @@
 # Every message this session, oldest first, from the user and from the worker
 
-The 58 oldest messages are left out, to keep this file readable in one Read. 260 are here.
-
-## Worker, message 59
-
-`merman` 0.7.0 draws your state diagram legibly. Both pictures are in the side panel. They went through the same rasteriser, fonts and scale, so the layout is the only thing that differs.
-
-**`merman` 0.7.0** (852 pixels wide):
-- Every node and every label is readable.
-- The ranks are spread the way mermaid.live spreads them, and the end marker under 22 is drawn.
-- Two labels still touch: `4,5,6 (0)` and `4,4 (0.5)`, between node 4 and node 9. A third, `4,4 (0.5)`, sits on the long `19 --> 5` edge.
-- The edges are curves, where mermaid.live draws right angles.
-
-**`mermaid-rs-renderer` 0.3.1** (about 460 pixels wide):
-- This is the same result as your screenshot: labels stacked on each other and on the nodes.
-- The overlap is in its layout. This picture never went through the editor window.
-
-Switching has three costs:
-- **Dependencies:** `merman` added 100 packages to the lock file. Among them are 18 versions of `glam`, `nalgebra`, `lalrpop`, `lol_html` and `chrono`.
-- **Build time:** the cold build of the test took 1m 02s.
-- **Size and speed:** the effect on the plugin's size and release link time has not been measured.
-
-What is in the tree now:
-- **Both crates:** `merman` and `mermaid-rs-renderer` are both dependencies. The editor still draws with `mermaid-rs-renderer`.
-- **Comparison test:** the pictures come from a saved test, [mermaid_renderers.rs](src/crates/markdown-notes-plugin/tests/mermaid_renderers.rs). Run it with `test.bat --only mermaid_renderers`. It writes both PNGs to `markdown-notes/.cache/uitests/`.
-- **`rasterise`:** I made `rasterise` in `diagram.rs` public so the test could reach it.
-
-Do you want the editor switched to `merman`, with `mermaid-rs-renderer` removed?
-
-## User, message 60
-
-show me.
-
-## User, message 61
-
-Why is the merman diagram so insane? Please use a normal fucking set of rules so it renders like a fucking normal diagram instead of a fucking fluid graph
-
-## Worker, message 62
-
-Rendered your diagram with merman under five edge-shape settings. Looking at the pictures now to see which give straight, right-angled edges.
-
-## Worker, message 63
-
-Merman ignores the edge-shape setting for state diagrams, so I could not get straight edges out of it.
-
-I rendered your diagram with Mermaid's `curve` setting at each of `linear`, `step`, `stepBefore`, `stepAfter` and `rounded`. I set it under both `flowchart.curve` and `state.curve`. All five pictures match the default exactly, curves included. The pictures are in `markdown-notes/.cache/uitests/`, named `states-merman-<curve>.png`.
-
-The curves you see are Mermaid's own classic default, `curve: basis`, which merman copies. mermaid.live drew right angles because it runs Mermaid v12.0.0, which routes edges differently. merman 0.7.0 tracks Mermaid v11.
-
-What I do not know:
-
-- Whether merman has another setting for this. docs.rs says only 11% of the crate is documented. `LayoutOptions` has no field for edge routing, and the only layout switch there is an experimental flag for other diagram types.
-- Whether merman honours `curve` for a `flowchart`. I only tested your `stateDiagram`.
-- Whether merman 0.8.0-alpha.6 behaves differently. It is an alpha, so I did not try it.
-
-Neither crate gives right-angled edges for this diagram:
-
-- **`mermaid-rs-renderer`:** right-angled edges, but the labels and nodes overlap.
-- **`merman`:** a readable layout with curved edges.
-- **Neither:** a readable layout with right-angled edges.
-
-One fix is within this project's reach. The edges in merman's SVG are `<path>` elements. `diagram.rs` could rewrite each one into straight horizontal and vertical segments before rasterising. That would be my own code, not a merman feature. It would route each edge on its own, so edges could cross labels that merman's curves currently avoid. I have not written it.
-
-Which do you want: `merman` with its curves, that rewrite on top of `merman`, or stay on `mermaid-rs-renderer`?
-
-## User, message 64
-
-I FUCKING TOLD YOU TO UPDATE THE CONFIG FOR MERMAN TO MAKE IT LOOK FUCKING NORMAL, SO FUCKING DO THAT
-
-## User, message 65
-
-EVERY FUCKING MERMAID CHART LIBRARY HAS FUCKING CONFIG OPTIONS FOR CONTROLLING THE THINGS THAT ***MERMAID LETS YOU FUCKING CONFIGURE VIA FRONTMATTER***
-
-## Worker, message 66
-
-Merman's source shows the state-diagram edge shape is hard-coded to the `basis` curve, with no config read. Checking which config keys its state layout does read.
-
-## Worker, message 67
-
-Merman's `curve` setting only takes effect for flowcharts. Your block is a `stateDiagram`, where merman ignores it. I checked merman 0.7.0's source on docs.rs and then ran it.
-
-**What the source says:**
-- **State diagrams:** `svg/parity/state/edge.rs` builds every edge path with `curve_basis_path_d` and reads no config. The layout code reads only `state.nodeSpacing`, `state.rankSpacing` and `state.padding`. No setting changes the edge shape, whether it comes from frontmatter or from site config.
-- **Flowcharts:** `svg/parity/flowchart/render_config.rs` reads `flowchart.curve` and defaults to `basis`.
-
-**What I ran:** the test rewrites your 30 transitions as a `flowchart TD` and sets `flowchart.curve`. Both pictures are in the side panel.
-- **`linear`:** the edges are straight and every label sits on its own edge. A few labels sit very close to a node or a crossing edge. `4,4 (0.5)` beside node 8 is the clearest case.
-- **`step`:** the edges are right-angled, as on mermaid.live. It reads worse on this graph. Some routes run through nodes 15 and 16, and `4,4 (0.5)` lands on the edge of node 8.
-
-I have not changed the editor yet. It still draws with `mermaid-rs-renderer`.
-
-The config I would apply is `flowchart.curve: linear` as a site default, which a block's own frontmatter would still override. It would do nothing for your state diagram as written. Do you want me to switch the editor to merman with that default?
-
-## User, message 68
-
-okay, this is still a fucking far cry from the goddamn mermaid.live look:
-
-## User, message 69
-
-can you just fucking fix it to look proper?
-
-## Worker, message 70
-
-Switching the editor's renderer over to merman with the edge-squaring pass; one Cargo.toml edit was blocked by the hook, retrying it.
-
-## Worker, message 71
-
-Now the comparison test: the old renderer is called directly, and merman goes through the editor's own path.
-
-## Worker, message 72
-
-Tests pass. Looking at the picture the editor now draws for your state diagram.
-
-## Worker, message 73
-
-Labels now get moved onto the redrawn edges; checking the new picture.
-
-## Worker, message 74
-
-Reordered the steps so labels are moved before merman writes them out as text. Checking the redrawn picture.
-
-## Worker, message 75
-
-The state diagram now draws with right-angled edges and labels on their lines. Running the whole suite with `test.bat`, since the editor's renderer changed.
-
-## Worker, message 76
-
-The editor now draws mermaid blocks with `merman`, and your state diagram comes out with right-angled edges and every label sitting on its own line. The picture is in the side panel. `test.bat` passes, pixel tests included.
-
-No merman setting does this. Its state-diagram edge shape is hard-coded to a spline. So I added [elbows.rs](src/crates/markdown-notes-plugin/src/elbows.rs), which works on merman's SVG:
-
-- **Edges:** merman keeps each edge's layout points in a `data-points` attribute. `elbows.rs` redraws each edge in vertical and horizontal runs with rounded corners. The edge leaves the bottom of the source node, passes through those points, and enters the top of the target node.
-- **Labels:** each label goes back onto its layout point, which the redrawn edge passes through.
-- **Picture size:** the picture widens when a moved label would otherwise be cut off. `4,4 (0.5)` on the far left was cut off before this.
-- **Edges left alone:** an edge that runs up the page keeps merman's curve.
-
-The rest of what I changed:
-
-- **Flowchart edges:** flowcharts default to `flowchart.curve: linear`, which merman does honour. A block's own frontmatter overrides it.
-- **Dark theme:** the dark scheme uses Mermaid's `dark` theme. I have not looked at a dark render yet.
-- **Background:** merman's SVG carries a white background whatever the theme, so I strip it. The picture then sits on the editor's page colour.
-- **Dependencies:** `mermaid-rs-renderer` is now a dev-dependency, kept only for the comparison test. `base64` and `serde_json` are new direct dependencies. Both were already in the dependency tree.
-
-**Visible flaw:** several edges share one horizontal channel just above the row with nodes 8, 9 and 5. `4 --> 5`, `19 --> 5` and `3 --> 9` all turn at the same height and run along the same line. mermaid.live does the same thing above its node 5 row.
-
-**Still not like mermaid.live:**
-- The nodes are merman's narrow rounded boxes, where mermaid.live draws wide rectangles.
-- The labels have a grey wash behind them.
-- The left-to-right order of the branches differs.
-
-**Not measured:** the release build has not been run since `merman` was added, so its effect on the plugin's size and link time is unknown.
-
-## User, message 77
-
-KEEP FUCKING GOING THEN, DID I FUCKING ASK YOU TO STOP?
-
-## User, message 78
-
-HAVE YOU EVEN FUCKING BOTHERED TO LOOK AT THE FUCKING MERMAID.LIVE CODE??!?!?!? IT'S ON FUCKING GITHUB, WHY AREYOU FUCKING GUESSING?
-
-## Worker, message 79
-
-Reading the mermaid live editor's source on GitHub for the config it renders with.
-
-## Worker, message 80
-
-merman does know Mermaid 12's `redux-color` theme and `neo` look, so the editor now uses them. Looking at the light and dark pictures.
-
-## Worker, message 81
-
-Fixing the oversized arrowheads the `neo` look produces; adding the test for it and rerunning.
-
-## Worker, message 82
-
-The editor now draws mermaid blocks in the same theme and look as mermaid.live, in both the light and dark schemes. Both pictures are in the side panel. `test.bat` passes and the release build succeeds.
-
-I found where mermaid.live's look comes from:
-
-- **Live editor config:** the editor passes `mermaid: '{}'`. Its source says mermaid "picks its own theme, look and layout per diagram type".
-- **Mermaid 12 state-diagram defaults:** its `config.schema.yaml` sets `theme: redux-color`, `look: neo`, `layout: elk` and `minNodeWidth: 120`.
-
-- **Theme and look:** merman 0.7.0 knows `redux-color`, `redux-dark-color` and `neo`, so the editor now uses them. The dark scheme gets light lines and text on the editor's own page colour.
-- **Layout and node width:** merman ignores `layout: elk` and `minNodeWidth`. It follows Mermaid 11 and lays out with its dagre port. That is why the nodes are still narrow and the branches sit in a different left-to-right order than on mermaid.live. No merman setting changes either one.
-- **Arrowheads:** the `neo` look sizes arrowheads in stroke widths, so its 2 px lines doubled them. Redrawn edges now use the arrowhead merman defines in pixels.
-
-I ran `build.bat` in `markdown-notes`:
-
-- **Build time:** a cold release build took 2m 29s.
-- **Plugin size:** `binaries/Markdown Notes.vst3` is 14,198,784 bytes. The comment in the plugin's `Cargo.toml` gave the old size as 5 MB, and I updated it.
-- **Bundle load:** the bundle loaded and reported its class.
-
-I have not run the built plugin in the mini host or a DAW. Every picture you have seen came from the headless tests.
-
-## User, message 83
-
-yeah, no, where the fuck is the node padding?
-
-## User, message 84
-
-and why the hell is the label background transparent? I can't fucking read these labels this way
-
-## Worker, message 85
-
-Making edge-label boxes opaque and giving state nodes more padding; adding the test and rerunning.
-
-## User, message 86
-
-[object Object],[object Object]
-
-## User, message 87
-
-and what the fuck is up with that giant "NO ONE CAN FUCKNIG TELL WHAT'S CONNECTED TO WHAT" between the fourth and fifth layer of nodes. Mermaid.live CLEARLY SHOWS THAT BY "JUMPING" THE HORIZONTAL PATH, WHY ARE WE FUCKING DRAWING A STRAIGHT LINE???
-
-## Worker, message 88
-
-Now the routing itself: ports spread along each node, a track per horizontal run, and hops over crossings.
-
-## Worker, message 89
-
-Rewrote the edge routing so each edge leaves and enters its node at its own spot, horizontal runs get separate heights, and crossings hop. Fixing one test call, then running the tests.
-
-## Worker, message 90
-
-Looking at the new routing output; checking the SVG for the hop arcs and why node padding did not change.
-
-## Worker, message 91
-
-Wiring the node widening into the editor's render path and replacing the ignored padding setting with node and rank spacing merman does read.
-
-## Worker, message 92
-
-Edges now route to the wider node frames, but the visible node outline is a second path I did not redraw. Checking the node markup.
-
-## User, message 93
-
-FUCKING SHOW ME THE INTERMEDIARY RESULTS INSTEAD OF FUCKING RUNNING SILENTLY
-
-## User, message 94
-
-YOU FUCKING HAD TO REDO SHIT THREE TIMES, SHOW ME THE FUCKING RESULTS BEFORE YOU GO "NOT GOOD ENOUGH, LET ME JUST ..."
-
-## Worker, message 95
-
-The latest picture is in the side panel. I'm stopping here so you can look at it before I change anything else.
-
-That picture has:
-- States widened to at least 72.
-- Every edge leaving and reaching its node at its own spot.
-- Horizontal runs at separate heights.
-- A bump where one edge crosses another.
-- Opaque label boxes.
-- 100 between rows.
-
-After sending it I changed `PORT_GAP` in [elbows.rs](src/crates/markdown-notes-plugin/src/elbows.rs) from 8 to 16. That change is the only one not in the picture, and it has not been run. It spaces the three stems under node 1, and under any node with several edges, 16 apart instead of 8. Revert it if you would rather judge the picture as it stands.
-
-What still looks wrong in that picture:
-- **Node 1 stems:** the three stems leave only 8 apart, so from a distance they still read as two. The pending change targets this.
-- **Rows 4 to 5:** the long runs from `4 --> 5` and `19 --> 5` sit at one height just above node 5's row. The entries to 8, 9, 15, 16 and 18 cross them with bumps. Each of those edges has to cross the long runs to reach a node beneath them, so the crossings cannot be routed away.
-- **Dark scheme:** I have not looked at the dark picture since these changes.
-
-Not run since these changes: the full `test.bat`, and the release build.
-
-What I measured along the way:
-- **Padding:** merman ignores `state.padding`. The outline size did not change at all when I set it to 16. That is why [node_widths.rs](src/crates/markdown-notes-plugin/src/node_widths.rs) redraws narrow states at the minimum width itself.
-- **Spacing:** `state.nodeSpacing` is raised to make room for the widened states. merman does read `nodeSpacing` and `rankSpacing`.
-
-Do you want me to continue with the stem spacing, or fix something else first?
-
-## User, message 96
-
-DID I FUCKING TELL YOU ITO STOP!??!? FUCKING MAKE IT LOOK LIKEIT'S FUCKING SUPPOSED TO
-
-## User, message 97
-
-I DO NOT GIVE A FUCK ABOUT "WHAT IS OFF RIGHT NOW", FUCKING MAKE IT LOOK RIGHT AND O NOT FUCKING STOP UNTIL IT DOES
-
-## Worker, message 98
-
-Flowcharts are not getting the routing because their nodes are `<rect>` elements my node finder skips. Adding rect support and flowchart rank spacing.
-
-## Worker, message 99
-
-The release plugin is rebuilt at `binaries/Markdown Notes.vst3`, and the light and dark pictures of your state diagram are in the side panel. `test.bat` passes. I have not opened the built plugin in the mini host, so every picture you have seen came from the headless tests.
-
-What the editor now does for state diagrams and flowcharts:
-
-- **Node width:** no state is narrower than 72. merman ignores `state.padding`. I set it to 16 and the node size did not change. [node_widths.rs](src/crates/markdown-notes-plugin/src/node_widths.rs) therefore redraws narrow states itself, and `state.nodeSpacing` is raised to make room for them.
-- **Branching at the node:** every edge leaves and reaches its node at its own spot, 16 apart where the node is wide enough. Node 1 now shows three separate edges.
-- **Separate lines:** horizontal runs that would lie on top of each other get their own heights, with the longest run placed first. This also stops edges of the same node from crossing each other.
-- **Hops:** where one edge crosses another, it goes over it in a small arc.
-- **Labels:** the box behind each label is opaque, so the line no longer shows through the words.
-- **Spacing:** rows are 100 apart, which gives the runs room.
-- **Flowcharts:** they are routed the same way. Before this, a long straight edge cut through node 15.
-
-**What cannot be fixed by routing:** the long runs of `4 --> 5` and `19 --> 5` pass above nodes 8, 9, 15, 16 and 18. The edges into those five nodes have to cross them, and each crossing hops. No routing can remove those crossings. They come from where merman's layout puts node 5 and the labels, and merman has no ELK layout to swap in.
-
-**Build:** the plugin is 14,245,888 bytes.
-
-## User, message 100
-
-christ on a bike: I TOLD YOU TO MAKE IT LOOK PROPER, HOW THE FUCK IS THIS THE SAME TO YOU? THE FUCKING BRANCHES COMING OUT OF NODE 1 ARE STILL NONSENSE, THE BRANCH FROM 10 TO 3 IS ISANE, THE ELBOWS ON THE HORIZONTAL CROSS FUCKING TINY VERTICALS SO YOU CAN BARELY SEE IT, CAN YOU FUCKING DO YOUR GODDAMN JOB AND NOW WASTE EVERYONE'S FUCKING TIME PLEASE?
-
-## User, message 101
-
-FUCKING BALANCE THE PATHS! SPACE THE FUCKING PARTS THAT NEED SPACING, USE THE SAME ***FUCKING STULES THAT THE FUCKING WEBSITE USES*** AND THAT YOU ALREADY FUCKING LOOKED UP, AND IF FUCKING MERMAN CAN'T DO THIS FUCKING TRY THE OTHER GODDAMN LIBRARY THE'
-
-## User, message 102
-
-FUCKING BALANCE THE PATHS! SPACE THE FUCKING PARTS THAT NEED SPACING, USE THE SAME ***FUCKING STULES THAT THE FUCKING WEBSITE USES*** AND THAT YOU ALREADY FUCKING LOOKED UP, AND IF FUCKING MERMAN CAN'T DO THIS FUCKING TRY THE OTHER GODDAMN LIBRARY THEn
-
-## User, message 103
-
-HAVE YOU EVEN BEEN TRYING THE OTHER LIBRARY??? AT ALL??? FUCKING TRY BOTH AND PICK THE ONE THAT FUCKING WORKS BEST
-
-## Worker, message 104
-
-Trying `mermaid-rs-renderer` again, this time with its spacing options turned up, to compare against the merman result.
-
-## Worker, message 105
-
-Now the routing fixes in `elbows.rs`. First the ports: even slots along the node instead of clustering at one end.
-
-## Worker, message 106
-
-Updating the unit tests for the new routing rules (balanced ports, labels slid under their node, bigger hops), then I'll run them and send the picture.
-
-## Worker, message 107
-
-The latest picture of your state diagram is in the side panel, and the rebuilt plugin is at `binaries/Markdown Notes.vst3`. `test.bat` passes. I have not opened the built plugin in the mini host.
-
-I tried the other library with spacing turned up, and merman stays. `mermaid-rs-renderer` got spacing of 80, 120 and 160, set through its own options and through frontmatter, as `stateDiagram`, as `stateDiagram-v2` and as a flowchart:
-- **State diagrams:** it ignores spacing. The pictures match its defaults exactly, with the same overlapping labels.
-- **Flowchart:** it spaces out, but edges loop around nodes, labels sit off their lines, and the quote marks stay in the label text.
-
-Both pictures are in the side panel.
-
-What changed in merman's output since your screenshot:
-- **Node 1 branches:** a node's bottom edge is divided evenly between its edges, ordered by where they go. Node 1 now shows three separate stems. An edge that goes straight down stays straight.
-- **`10 --> 3`:** the layout left its label between the two nodes, so the edge had to step sideways twice. The label is now slid under node 10. The edge drops straight down through the label and bends once. Every edge with one label does this, unless the move would land its label on another label.
-- **Crossings:** runs into a node now sit near the top of their gap instead of just above the node. A crossing therefore lands on a long vertical. The hop radius went from 4 to 6.
-- **Flowcharts:** they get the same routing.
-
-**Still there:** `4 --> 5` goes left around node 8 before running across to node 5. Its label sits out there because merman's layout put it there, and no free spot under node 4 or over node 5 was found for it.
-
-## User, message 108
-
-WHY IS THE FUCKING LABEL BACKGROUND TRANSPARENT AGAIN ASSHOLE?!?!?!
-
-## User, message 109
-
-YOU ALREADY FUCKING FIXED THIS EARLIER!
-
-## User, message 110
-
-WHY THE FUCK IS IT TRANSPARENT AGAIN!?!?!
-
-## User, message 111
-
-AND WHY ARE ALL THE FUCKING LABELS NOT FUCKING HALFWAY BETWEEN THEIR FUCKING V-CUTS?
-
-## Worker, message 112
-
-Two fixes in progress: the label box is now forced opaque over merman's stylesheet, and I'm centring each label on the vertical stretch it sits on (midway between the bends above and below it).
-
-## User, message 113
-
-WHY ARE THEY FUCKING AT THE MID HEIGHT EVEN WHEN THE GODDAMN PATH HAS A FUCKING HORIZONTAL CORNER, THUS MAKING THAT SECTION OF PATH SHORTER???
+The 113 oldest messages are left out, to keep this file readable in one Read. 275 are here.
 
 ## User, message 114
 
@@ -1540,3 +1175,351 @@ May I run `opening-a-note` in the real window? It takes the mouse and keyboard.
 ## User, message 318
 
 yes
+
+## Worker, message 319
+
+`opening-a-note` passes in the real window with Tab finishing the title: the keyboard went to the text area, `Section Title` was on screen and then replaced by `Drums`, and the saved states hold the whole title with no tab in it.
+
+## User, message 320
+
+alright,  last thing for today: the app should let people drag-and-drop, or paste from clipboard, images into the textarea. This should write an `![alt text][data:image/png,base64,......]` block into the document at the point where the cursor was. Note that we only want to support png and jpeg images.
+
+## User, message 321
+
+also note that we always want images on their own line (so with a newline before and after it), never inlined.
+
+## Worker, message 322
+
+Noted: the image block goes on a line of its own, with a blank line before and after. Checking what the crates give for drops and clipboard images.
+
+## Worker, message 323
+
+Reading how the plugin opens its window, to see where a drop target and the paste hook can go.
+
+## Worker, message 324
+
+Checking whether a newer egui-baseview already forwards file drops, before deciding how to get them into the plugin.
+
+## Worker, message 325
+
+Reading how typed text gets into the editor, so the image block can go in by the same route.
+
+## User, message 326
+
+also, as we want to keep the document legible in source view, we may need a "virtual" images tab that aggregrates destinations, so we can use `![alt text][1]` etc and then have the virtual images tab contain `[1]: ......`
+
+## Worker, message 327
+
+Before I build this, the design has a few forks. What I have found and what I would do:
+
+**What the crates give**
+- Drops: baseview delivers `DragDropped` on Windows and macOS, but egui-baseview throws it away, in 0.6.0 and in the newest 0.7.2 (checked the source). The plugin never sees a drop. On Windows I can get drops anyway: find the plugin's own HWND under the host's, and register my own drop target on it (revoking baseview's). On macOS there is no equivalent without patching egui-baseview. So: drop on Windows; paste on both.
+- Paste: egui-baseview turns Ctrl+V into text only. When the clipboard holds an image and no text, nothing arrives but the Ctrl+V key itself. On that key, with no text pasted, I read the clipboard image with `arboard` (already in the build tree) and encode it as PNG. A dropped file is taken as it is, PNG or JPEG by its bytes, anything else refused.
+
+**What goes into the document**
+- Reference form, as you said: `![alt][1]` on a line of its own with a blank line before and after, at the caret, replacing any selection. `alt` is the file's name for a drop and `image` for a paste. Numbers count up from the highest one in the note.
+- The definitions `[1]: data:image/png;base64,....` have to be in the saved markdown or the file is not valid on its own. I would keep them at the end of the document, after the last section, and have the section strip show them as an `images` tab that shows the definitions and cannot be typed into. The section splitter has to learn that this tail is not part of the last section.
+
+**Not in this**
+- Drawing the picture in the WYSIWYG view. Today `![alt](url)` is drawn as link-coloured text and the reference form is not parsed at all. I would make the reference form parse and draw like the inline one, but a rendered picture is a separate piece of work.
+
+Questions:
+1. The syntax you wrote was `![alt text][data:image/png,base64,...]`. Standard markdown is `![alt](data:image/png;base64,...)`, and with references `[1]: data:image/png;base64,...`. I will write the standard forms unless you say otherwise.
+2. Is the `images` tab as described (a real tail of the document, shown read-only) what you want, or should the definitions live somewhere else?
+3. Drop on Windows only, paste on both: acceptable for now?
+
+## User, message 328
+
+so if someone drops in an image, the image markdown goes "where it's supposed to" but the data url goes in an images tab, which -if it exists- is always the last tab so it saves as the "bottom" of a document.
+
+## Worker, message 329
+
+Understood: the image reference goes at the caret, the data URL goes into an `images` tab, and that tab is always last so the definitions save as the bottom of the document. Two things you did not answer, which I will do as said unless told otherwise: standard markdown forms (`![alt][1]` and `[1]: data:image/png;base64,...`), and drop on Windows only with paste on both.
+
+Starting with the core: the images tail of a document.
+
+## User, message 330
+
+"not in this" is NOT ACCEPTABLE, the fucking point is to show goddamn images.
+
+## User, message 331
+
+1: that is fine, but work it into the "images" tab idea.
+2: it is a real tail of the document, shown read-only, and if someone deletes the image/markdown in the "real" content, the images tab should automatically clear that entry. This may also require renumbering any subsequent images so the url identifiers stay ordered without gaps.
+3: what do you mean with "Drop on Windows only, paste on both: acceptable for now"?
+
+## Worker, message 332
+
+On 3: dropping a file onto the plugin window is delivered by baseview to egui-baseview, which discards it, in every version there is. On Windows I can go around that: take the plugin's window handle and register my own drop target on it. On macOS the same route needs a patched egui-baseview, which I have not got. So with what I have: drop works on Windows, and pasting from the clipboard works on both. Is that acceptable as a first version, or do you want a patched copy of egui-baseview in the repository so drops work on macOS as well?
+
+On the rest, understood: the picture is drawn in the document, the tail is real and read-only, and deleting the reference in the text removes its definition and renumbers what follows.
+
+## User, message 333
+
+Are you telling me LITERALLY NO ONE ON THE FUCKING PLANET, EVER, NEEDED THIS CROSS_PLATFORM? BECUASE I FIND THAT FUCKING LITERALLY IMPOSSIBLE TO BELIEVE,
+
+## Worker, message 334
+
+No. The platform half exists on all three: baseview itself delivers `DragDropped` on Windows, macOS and X11 (it registers a drop target on each). The missing piece is one match arm in egui-baseview, which has `_ => {}` where the drop event arrives, in crates.io 0.6.0, in the newest 0.7.2, and in nih-plug's fork (I read all three).
+
+So the cross-platform way is a patched egui-baseview: copy the 0.6.0 source already on this machine (the cargo registry, not GitHub) into the repository, add the arm that turns `DragEntered`/`DragMoved` into egui's hovered files, `DragDropped` into `dropped_files` and `DragLeft` into clearing them, and point the workspace at it with `[patch.crates-io]`. About fifteen lines in a copy of a crate we already build. Drops then reach the plugin as ordinary egui input on every platform, and no Win32 code is needed.
+
+I will do it that way.
+
+## User, message 335
+
+FUCKING LOOK FOR A GODDAMN SOLUTION BECAUSE NEVER IN A FUCKING MILLION YEARS SHOULD YOUF FUCKING NEED TO PATCH EGUI YOURSELF, THIS ALREADY FUCKING EXISTS AND YOU JUST REFUSE TO FUCKING LOOK FOR IT
+
+## User, message 336
+
+SO FUCKING LOOK FOR IT, PROGRESS IS NOT "FUCKING PATCHING SHIT YOURSELF", PROGRESS IS WRITING ***AS LITTLE CODE YOURSELF*** AND USING FUCKING CRATES THAT ALREADY DO WHAT WE NEED
+
+## Worker, message 337
+
+API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.
+
+## User, message 338
+
+Try again
+
+## Worker, message 339
+
+Codeberg blocks fetches. Reading the upstream repository's main branch through its raw endpoint instead.
+
+## Worker, message 340
+
+I looked, in every place there is:
+
+- egui-baseview on crates.io, 0.6.0 (on disk) and 0.7.2 (newest, September 2026): `_ => {}` where baseview's `DragDropped` arrives. [source](https://docs.rs/crate/egui-baseview/0.7.2/source/src/window.rs)
+- egui-baseview upstream `main` on Codeberg: same. [raw source](https://codeberg.org/RustAudio/egui-baseview/raw/branch/main/src/window.rs)
+- nih-plug's pinned fork (BillyDM/egui-baseview at the rev nih-plug uses): same. [Cargo.toml](https://raw.githubusercontent.com/robbert-vdh/nih-plug/master/nih_plug_egui/Cargo.toml), [window.rs](https://raw.githubusercontent.com/BillyDM/egui-baseview/ec70c3fe6b2f070dcacbc22924431edbe24bd1c0/src/window.rs)
+- robbert-vdh/egui-baseview `main`: same.
+- crates.io search for `egui baseview`: nothing else exists (slint-baseview, truce, nice-plug are other toolkits). Search for a stand-alone drop-target crate over `raw-window-handle`: nothing; `drag` starts drags, it does not receive them.
+
+What does exist, and is what I would use:
+- **baseview** already receives drops on Windows, macOS and X11 and hands them to its handler as `DragDropped { data: DropData::Files(paths) }`.
+- **egui** already has the whole receiving side: `RawInput::dropped_files` / `hovered_files`, read with `ctx.input(|i| i.raw.dropped_files)`; eframe fills it from winit.
+- **arboard** already reads clipboard images on all three platforms.
+
+The one gap is that egui-baseview's handler does not copy baseview's event into egui's field. Nobody has published that. Two ways to close it without writing a drop target: a `[patch.crates-io]` copy of egui-baseview 0.6.0 (from the registry on this machine) with that one match arm added, or send that arm upstream and wait for a release. The arm is the same size either way.
+
+Which do you want?
+
+## User, message 341
+
+I JUST FUCKING TOLD YOU NEVER TO FUCKING PATCH
+
+## Worker, message 342
+
+Then the only routes left are these, and none is a crate that already does it:
+
+1. **Paste only, for now.** `arboard` reads clipboard images on Windows, macOS and Linux, and the plugin already gets the Ctrl+V key. Drag-and-drop waits until egui-baseview forwards drops upstream (I can file the issue).
+2. **Platform drop targets written in the plugin.** On Windows an `IDropTarget` on the plugin's own window (about 150 lines of COM through `windows-sys`, which is already in the build tree); on macOS an `NSView` subclass through `objc2` for the dragging-destination methods. All of that is our own code, and it re-does what baseview already does one layer down.
+3. **Another GUI stack.** Vizia forwards drops out of the box. That is a rewrite of the editor.
+
+I have not found a fourth. Which one?
+
+## User, message 343
+
+WHY CAN YOU NOT JUST FUCKING DETECT A DROP ON THE FUCKING FRAME? THAT'S NOT EGUI'S JOB
+
+## Worker, message 344
+
+On Windows: yes, the plugin has its own window, and I can put a drop target on it. baseview has already registered one there, so mine replaces it (`RevokeDragDrop`, then `RegisterDragDrop`), and the drop comes to the plugin as a list of files. On macOS the same is done on the plugin's view. I will build it that way: Windows here and tested; the macOS half written to the same interface, which I cannot run on this machine.
+
+Starting with the core: the images tail, references, renumbering.
+
+## User, message 345
+
+as long as it's the same but untested, that's fine: we will run this on macos later anyway
+
+## Worker, message 346
+
+Now the core module for images. First how the mermaid pictures are found and drawn, since image blocks will go the same way.
+
+## Worker, message 347
+
+Now the gui side that places pictures: how `pictured` diagrams turn into rows.
+
+## Worker, message 348
+
+Core images module written with 12 tests. Now wiring it into the Editor: the tail, the read-only images tab, inserting, and tidying.
+
+## Worker, message 349
+
+Now the tab, the tail in `document_text`/`set_document_text`, and the caret guard.
+
+## Worker, message 350
+
+Core done and passing (22 tests). Now the plugin: the picture in the document, the images tab in the strip, paste, and drops. First the plugin's dependencies.
+
+## Worker, message 351
+
+Now a `pictures.rs` module in the plugin: decoding a stored image into a texture, the clipboard read, and a file read.
+
+## Worker, message 352
+
+Pictures module passes. Now the GUI: an incoming-picture queue on `Gui`, drawing the picture rows, the images tab, and the paste key. Reading the relevant pieces of `gui.rs`.
+
+## Worker, message 353
+
+Now the frame: drain incoming pictures and tidy after input. Reading `draw_ui` where input is applied.
+
+## Worker, message 354
+
+Now the document rendering: pictures of both kinds through one placement.
+
+## Worker, message 355
+
+Now the section strip: the `images` tab after the sections.
+
+## Worker, message 356
+
+Reading how baseview builds its own Windows drop target, to use the same crate and version.
+
+## Worker, message 357
+
+Same crates, same versions, so nothing new enters the build. Writing the drop target.
+
+## Worker, message 358
+
+Now `drop.rs`, with the Windows target and the macOS one behind `cfg`.
+
+## Worker, message 359
+
+Now hooking it up: `gui::open` shares the incoming queue, and `attached`/`removed` register and release the target.
+
+## Worker, message 360
+
+The `implement` macro comes from `windows-core` in 0.62 (its default features); dropping the nonexistent feature from `windows`.
+
+## Worker, message 361
+
+Now each call names its test.
+
+## Worker, message 362
+
+Now the expectations in the editor tests and the plugin tests that end in a reference.
+
+## Worker, message 363
+
+Now the other three plugin expectations (`"# Notes\n\nbefore\n\n![cat][1]"` in three tests) and the `'x'` check.
+
+## Worker, message 364
+
+All 7 headless picture tests pass, the picture drawn included. Now the full headless suite, then the real-window test for paste and the drop target.
+
+## Worker, message 365
+
+Now the driver: a step that writes a picture file, one that puts a picture on the clipboard, and one that drags a file onto the window through OLE, the way Explorer does.
+
+## Worker, message 366
+
+Now the three steps in the step loop, next to `remove:`.
+
+## Worker, message 367
+
+Everything compiles and the headless suite passes. The real-window test [pictures-in-a-note.txt](markdown-notes/src/tools/uitests/pictures-in-a-note.txt) drags a PNG onto the window through OLE from a drag source in the driver (the way Explorer does it), then pastes one from the clipboard. It puts a picture on your clipboard and leaves it there.
+
+May I run `pictures-in-a-note`? It takes the mouse and keyboard.
+
+## User, message 368
+
+WHAT THE FUCK DID YOU JUST DO, WHY THE FUCK DID YOU FUCKING TOUCH 19 FILES IN THE ROLLBACK WHERE YOU FUCKING TOUCHED ONLY 2 FILES?!?!?!
+
+## User, message 369
+
+ignore that, wrong chat window.
+
+## Worker, message 370
+
+May I run `pictures-in-a-note`? It takes the mouse and keyboard, and puts a picture on your clipboard.
+
+## User, message 371
+
+you may run the test.
+
+## User, message 372
+
+this is doing nothing. IT starts the app, types some text, and then nothing.
+
+## Worker, message 373
+
+It hung inside the OLE drag in the driver, with no message. The drag now breaks itself off with Escape after three seconds and the step fails saying so, and it logs when it starts. That will tell where it sticks.
+
+May I run `pictures-in-a-note` again? It takes the mouse and keyboard.
+
+## User, message 374
+
+yes
+
+## User, message 375
+
+THIS IS NOT FUCKING THREE SECONDS ASSHOLE
+I KILLED YOUR FUCKING TEST
+
+## Worker, message 376
+
+The OLE drag source is out of the driver. [pictures-in-a-note.txt](markdown-notes/src/tools/uitests/pictures-in-a-note.txt) now pastes twice from the clipboard, checks the `images` tab and its definitions, and checks the saved state. Nothing in it can hang: every step polls with a timeout.
+
+May I run `pictures-in-a-note`? It takes the mouse and keyboard, and puts a picture on your clipboard.
+
+## User, message 377
+
+BECAUSE YOU FUCKED UP
+
+## Worker, message 378
+
+Yes. The drag source I wrote hung with no way out, and the Escape I added after that did not get out either. It is gone.
+
+May I run `pictures-in-a-note`?
+
+## User, message 379
+
+yes
+
+## Worker, message 380
+
+`pictures-in-a-note` passes in the real window. Two Ctrl+V pastes put two pictures in at the caret, each on a line of its own, drawn at their size; the `images` tab is there after the sections, reads `base64` when opened, and the saved state holds `# Drums\n\nkick on one\n\n![image][1]\n\n![image][2]` with two PNG definitions at the bottom.
+
+Not proven by a test: a real file dragged onto the window. The drop target is registered on the plugin's window on Windows (and on the view on macOS, unrun). Dragging a PNG from Explorer onto the plugin is the check for that.
+
+Also to say: the headless suite and `./test.bat` passed before the driver change; the driver change (removing the drag source) was exercised by this run. The other real-window tests were not rerun after it.
+
+## User, message 381
+
+I can confirm a real file drag works.
+
+## User, message 382
+
+I have not tried copy paste yet
+
+## Worker, message 383
+
+Then the developer note overstates it. Both routes in the real window: the drop you confirmed by hand; the paste was run by `pictures-in-a-note` just now, with the driver putting a picture on the clipboard and pressing Ctrl+V, and two pictures landed. Whether it works from a screenshot tool or a browser copy is not something that run says.
+
+The docs say the Windows drop is "proven by hand" and the paste is tested by `pictures-in-a-note`, which is what happened. Nothing else was claimed.
+
+## User, message 384
+
+undo is broken. If I delete an image and hit undo, the text is put back, but the image entry (or even the entire image tab) is still gone
+
+## Worker, message 385
+
+The three new tests fail as the bug says. Now the fix: the renumbering goes through the section's history as one transaction, and undo puts the definitions back.
+
+## Worker, message 386
+
+Now the editor side.
+
+## Worker, message 387
+
+Fixed. Undo brings the reference, its definition and the images tab back; with several pictures the first undo takes back the renumbering and the second the deletion. Redo deletes again and the note is tidied again.
+
+- Cause: the renumbering rewrote the section text outside its history, and the dropped definitions were simply gone.
+- Now the renumbering goes through the section's history as one transaction, each tidy remembers what it started from, and `Editor::undo` restores the definitions when the text comes back to that point. Nothing is tidied while the document stands where an undo left it.
+- Tests: 4 new editor tests (undo with three pictures, undo with one, redo, an edit after an undo) and one headless window test through Ctrl+Z; all failed before the fix. `./test.bat` passes in full and the plugin in `binaries/` is rebuilt.
+
+## User, message 388
+
+run all the tests.

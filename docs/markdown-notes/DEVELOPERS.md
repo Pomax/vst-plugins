@@ -247,6 +247,50 @@ There is one cursor in the window. While the name, or any other field, has the
 keyboard, the document has no caret and no selection: `draw_ui` clears them
 with `Editor::clear_caret` for as long as a field is focused.
 
+## Pictures
+
+A PNG or JPEG dropped on the window, or pasted from the clipboard with Ctrl+V,
+goes into the note at the caret as a reference on a line of its own, with a
+blank line before and after: `![cat][1]` for a file called `cat.png`,
+`![image][1]` for a paste. The data goes into the document's images tail as
+`[1]: data:image/png;base64,...`, one line per picture, after the last
+section. The tail is what the `images` tab in the section strip shows: it is
+always last, it is read and not typed into, and it saves as the bottom of the
+document. `markdown_notes_core::images` is the tail, the reference syntax and
+the numbering; `Editor::insert_image` and `Editor::tidy_images` put a picture
+in and keep the tail in step with the text. A reference deleted from the text
+loses its definition on the next frame, and the definitions after it move up
+so the numbers run without gaps.
+
+The renumbering is written through each section's history as one transaction,
+so undo takes it back before it takes the deletion back. `Editor::undo` puts
+the definitions back too: each tidy remembers the text it started from and the
+definitions it had, and an undo that lands on that text, or on text referring
+to a picture the tidy took away, restores them. Nothing is tidied while the
+document stands where an undo left it, so what came back stays until
+something else is typed.
+
+In the document the reference is drawn as the picture, at its size, scaled
+down to the width when the window is narrower. The caret on its line brings
+the text back to edit, the same as a mermaid block. `pictures.rs` decodes and
+keeps the textures.
+
+Where a picture comes from:
+
+- A drop. baseview delivers drops to egui-baseview, which discards them, so
+  the plugin registers its own drop target on the window baseview opened:
+  `drop.rs`, an `IDropTarget` on Windows, an overlay `NSView` registered for
+  file URLs on macOS. Both queue the files for the next frame. The Windows
+  target is proven by hand: a file dragged from Explorer lands. The macOS one
+  has not been run.
+- A paste. egui-baseview turns Ctrl+V into a text event only when the
+  clipboard holds text, so on that key with no text the plugin reads the
+  clipboard's picture with `arboard` and encodes it as PNG.
+
+The real-window test `pictures-in-a-note` pastes; nothing in the driver can
+drag a file. The headless `pictures_in_notes` tests drop through egui's own
+dropped-files input, which reaches the same queue.
+
 ## Sections
 
 The sections are one document seen in parts, not several documents. Saving

@@ -216,6 +216,27 @@ pub struct Editor {
     pub dirty: bool,
     /// Counts the documents opened, see [`Editor::opened`].
     opened: u64,
+    /// The pictures in the note, which save as the document's images tail.
+    /// See [`crate::images`].
+    images: Vec<crate::images::Image>,
+    /// Whether the images tab is in front instead of a section. It shows the
+    /// definitions and takes no typing.
+    viewing_images: bool,
+    /// What each tidy of the images put right, newest last, so an undo that
+    /// takes the text back to before a tidy takes the definitions back too.
+    tidied: Vec<Tidied>,
+    /// The section and version an undo left the document at. The images are
+    /// not tidied while it stands there: what an undo brought back is not to
+    /// be taken away again until something else is typed.
+    undone_at: Option<(usize, u64)>,
+}
+
+/// The state a tidy of the images started from: the text of every section
+/// after whatever edit left a definition unreferenced, and the definitions as
+/// they were.
+struct Tidied {
+    texts: Vec<String>,
+    images: Vec<crate::images::Image>,
 }
 
 impl Default for Editor {
@@ -239,6 +260,10 @@ impl Editor {
             title: DEFAULT_TITLE.to_string(),
             dirty: false,
             opened: 0,
+            images: Vec::new(),
+            viewing_images: false,
+            tidied: Vec::new(),
+            undone_at: None,
         };
         e.select(sections::new_section_title());
         e
@@ -292,9 +317,10 @@ impl Editor {
     }
 
     pub fn set_active_section(&mut self, index: usize) {
-        if index >= self.sections.len() || index == self.active {
+        if index >= self.sections.len() {
             return;
         }
+        self.viewing_images = false;
         self.active = index;
         // A section is opened the way it is meant to be read. The source view
         // is for working on the one that is in front, not a setting the
@@ -302,8 +328,144 @@ impl Editor {
         self.mode = ViewMode::Wysiwyg;
     }
 
+    /// The pictures in the note, in the order they are defined.
+    pub fn images(&self) -> &[crate::images::Image] {
+        &self.images
+    }
+
+    /// The picture defined under `number`.
+    pub fn image(&self, number: usize) -> Option<&crate::images::Image> {
+        self.images.iter().find(|image| image.number == number)
+    }
+
+    /// Whether the note has an images tab: it has one for as long as it has
+    /// pictures.
+    pub fn has_images(&self) -> bool {
+        !self.images.is_empty()
+    }
+
+    /// Whether the images tab is in front.
+    pub fn viewing_images(&self) -> bool {
+        self.viewing_images
+    }
+
+    /// Put the images tab in front. It reads as the definitions, and nothing
+    /// typed goes anywhere while it is.
+    pub fn view_images(&mut self) {
+        if self.has_images() {
+            self.viewing_images = true;
+        }
+    }
+
+    /// The images tail as it reads: one definition per line.
+    pub fn images_text(&self) -> String {
+        self.images
+            .iter()
+            .map(crate::images::Image::definition)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Put a picture into the note: its data as the next definition, and a
+    /// reference to it at the caret, on a line of its own with a blank line
+    /// before and after. Replaces any selection. Nothing happens without a
+    /// caret to put it at, or for bytes that are not a PNG or a JPEG.
+    pub fn insert_image(&mut self, alt: &str, bytes: &[u8]) -> bool {
+        let Some(mime) = crate::images::kind_of(bytes) else {
+            return false;
+        };
+        if !self.has_caret() {
+            return false;
+        }
+        self.delete_selection();
+        let number = self.images.iter().map(|i| i.number).max().unwrap_or(0) + 1;
+        self.images.push(crate::images::Image::from_bytes(number, mime, bytes));
+        let text = self.text();
+        let block = crate::images::block_to_insert(
+            &text,
+            self.caret(),
+            &crate::images::reference(alt, number),
+        );
+        self.live_mut().insert(&block);
+        self.dirty = true;
+        true
+    }
+
+    /// Drop the definitions nothing refers to any more and close the gaps in
+    /// the numbering, rewriting the references to match. Reports whether
+    /// anything changed.
+    ///
+    /// The references are rewritten through each section's history, as one
+    /// transaction per section, so an undo takes the renumbering back first
+    /// and the deletion after it; the definitions go back with it, see
+    /// [`Editor::undo`]. Nothing is tidied while the document stands where an
+    /// undo left it.
+    pub fn tidy_images(&mut self) -> bool {
+        if self.images.is_empty() {
+            return false;
+        }
+        if self.undone_at == Some((self.active, self.live().version())) {
+            return false;
+        }
+        let before: Vec<String> = self.sections.iter().map(|s| s.text()).collect();
+        let mut texts = before.clone();
+        let mut images = self.images.clone();
+        if !crate::images::tidy(&mut texts, &mut images) {
+            return false;
+        }
+        // The definitions kept are the ones referred to, in their own order,
+        // numbered from 1: what each old number becomes.
+        let used: Vec<usize> = before.iter().flat_map(|t| crate::images::referenced(t)).collect();
+        let changes: Vec<(usize, usize)> = self
+            .images
+            .iter()
+            .filter(|image| used.contains(&image.number))
+            .enumerate()
+            .map(|(at, image)| (image.number, at + 1))
+            .filter(|(from, to)| from != to)
+            .collect();
+        self.tidied.push(Tidied { texts: before, images: std::mem::replace(&mut self.images, images) });
+        for index in 0..self.sections.len() {
+            self.renumber_references(index, &changes);
+        }
+        if self.images.is_empty() {
+            self.viewing_images = false;
+        }
+        self.dirty = true;
+        true
+    }
+
+    /// Rewrite the numbers of the references in section `index` as `changes`
+    /// says, in one transaction of its history, leaving its caret where it
+    /// was.
+    fn renumber_references(&mut self, index: usize, changes: &[(usize, usize)]) {
+        let text = self.sections[index].text();
+        let spans = crate::images::reference_spans(&text);
+        let mut steps = Vec::new();
+        // The steps are applied one after another, so each offset counts
+        // what the steps before it added or took away.
+        let mut shift: isize = 0;
+        for (range, number) in spans {
+            let Some((_, to)) = changes.iter().find(|(from, _)| *from == number) else {
+                continue;
+            };
+            let buffer = self.sections[index].buffer();
+            let offset = buffer.byte_to_char(range.start) as isize + shift;
+            let inserted = to.to_string();
+            shift += inserted.len() as isize - range.len() as isize;
+            steps.push(kode_core::EditStep::replace(offset as usize, &text[range], inserted));
+        }
+        if steps.is_empty() {
+            return;
+        }
+        let caret = self.sections[index].cursor();
+        self.sections[index].apply_transaction(kode_core::Transaction::new(steps));
+        self.sections[index].set_cursor(caret);
+    }
+
     /// Add an empty section after the last one and switch to it.
     pub fn new_section(&mut self) -> usize {
+        self.viewing_images = false;
         self.sections.push(kode_core::Editor::new(sections::NEW_SECTION));
         self.placed.push(true);
         self.active = self.sections.len() - 1;
@@ -369,17 +531,26 @@ impl Editor {
     /// A single section is the document, byte for byte: nothing is normalised
     /// away, so opening a file and saving it back does not rewrite it.
     pub fn document_text(&self) -> String {
-        if self.sections.len() == 1 {
-            return self.sections[0].text();
-        }
-        let parts: Vec<String> = (0..self.sections.len()).map(|i| self.section_text(i)).collect();
-        let borrowed: Vec<&str> = parts.iter().map(String::as_str).collect();
-        sections::join_document(&borrowed)
+        let body = if self.sections.len() == 1 {
+            self.sections[0].text()
+        } else {
+            let parts: Vec<String> =
+                (0..self.sections.len()).map(|i| self.section_text(i)).collect();
+            let borrowed: Vec<&str> = parts.iter().map(String::as_str).collect();
+            sections::join_document(&borrowed)
+        };
+        crate::images::join(&body, &self.images)
     }
 
-    /// Replace every section by splitting `text` on its top-level headings.
+    /// Replace every section by splitting `text` on its top-level headings,
+    /// after taking the images tail off its end.
     pub fn set_document_text(&mut self, text: &str) {
-        self.sections = sections::split_document(text)
+        let (body, images) = crate::images::split_off(text);
+        self.images = images;
+        self.viewing_images = false;
+        self.tidied.clear();
+        self.undone_at = None;
+        self.sections = sections::split_document(&body)
             .into_iter()
             .map(|part| {
                 let mut section = kode_core::Editor::new(&part);
@@ -404,6 +575,9 @@ impl Editor {
 
 
     pub fn text(&self) -> String {
+        if self.viewing_images {
+            return self.images_text();
+        }
         self.live().text()
     }
 
@@ -467,7 +641,7 @@ impl Editor {
     /// A click that lands where there is no line to put it on takes the caret
     /// away, and until one is placed again there is nowhere for text to go.
     pub fn has_caret(&self) -> bool {
-        self.placed.get(self.active).copied().unwrap_or(false)
+        !self.viewing_images && self.placed.get(self.active).copied().unwrap_or(false)
     }
 
     /// Take the caret away, and the selection with it.
@@ -556,10 +730,13 @@ impl Editor {
     /// visible, since the user is looking at the source.
     pub fn render(&self) -> RenderDoc {
         let text = self.text();
+        // The images tab has no caret, and the section's own would point into
+        // text that is not on show.
+        let caret = self.has_caret().then(|| self.caret());
         match self.mode {
-            ViewMode::Wysiwyg => block::parse_document(&text, Some(self.caret())),
+            ViewMode::Wysiwyg => block::parse_document(&text, caret),
             ViewMode::Raw => {
-                let mut doc = block::parse_document(&text, Some(self.caret()));
+                let mut doc = block::parse_document(&text, caret);
                 for b in &mut doc.blocks {
                     b.marker_visible = true;
                     for s in &mut b.spans {
@@ -589,7 +766,7 @@ impl Editor {
     ///
     /// Loading replaces the section wholesale, and a fresh one has no history.
     pub fn clear_history(&mut self) {
-        let text = self.text();
+        let text = self.live().text();
         let at = self.live().cursor();
         self.sections[self.active] = kode_core::Editor::new(&text);
         // A fresh editor starts at the top; the caret was not what was being
@@ -600,7 +777,30 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         let before = self.live().version();
         self.live_mut().undo();
-        self.live().version() != before
+        let undone = self.live().version() != before;
+        if undone {
+            // Text taken back to before a tidy takes the definitions back
+            // with it, and stays untidied until something else is typed. The
+            // text is at that point when it is what the tidy started from, or
+            // when it refers to a picture the tidy took away.
+            let texts: Vec<String> = self.sections.iter().map(|s| s.text()).collect();
+            let referenced: Vec<usize> =
+                texts.iter().flat_map(|t| crate::images::referenced(t)).collect();
+            let undefined = |number: &usize| self.image(*number).is_none();
+            let taken_back = self.tidied.last().is_some_and(|tidy| {
+                tidy.texts == texts
+                    || referenced.iter().any(|number| {
+                        undefined(number) && tidy.images.iter().any(|i| i.number == *number)
+                    })
+            });
+            if taken_back {
+                if let Some(tidy) = self.tidied.pop() {
+                    self.images = tidy.images;
+                }
+            }
+            self.undone_at = Some((self.active, self.live().version()));
+        }
+        undone
     }
 
     pub fn redo(&mut self) -> bool {
@@ -1026,6 +1226,253 @@ impl Editor {
         }
         self.dirty = true;
         true
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\npixels";
+    const JPEG: &[u8] = b"\xff\xd8\xff\xe0pixels";
+
+    #[test]
+    fn a_picture_goes_in_at_the_caret_on_a_line_of_its_own() {
+        let mut e = Editor::with_text("# Notes\n\nbefore after");
+        e.set_caret("# Notes\n\nbefore".len());
+
+        assert!(e.insert_image("cat", PNG));
+
+        assert_eq!(e.text(), "# Notes\n\nbefore\n\n![cat][1]\n\n after");
+        assert_eq!(e.caret(), "# Notes\n\nbefore\n\n![cat][1]\n\n".len());
+        assert_eq!(e.images().len(), 1);
+        assert_eq!(e.images()[0].mime, crate::images::PNG);
+        assert!(e.dirty);
+    }
+
+    #[test]
+    fn a_picture_replaces_the_selection() {
+        let mut e = Editor::with_text("one two three");
+        e.select(4..7);
+
+        assert!(e.insert_image("cat", JPEG));
+
+        assert_eq!(e.text(), "one \n\n![cat][1]\n\n three");
+        assert_eq!(e.images()[0].mime, crate::images::JPEG);
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_png_or_a_jpeg_are_refused() {
+        let mut e = Editor::with_text("text");
+        assert!(!e.insert_image("gif", b"GIF89a...."));
+        assert_eq!(e.text(), "text");
+        assert!(!e.has_images());
+    }
+
+    #[test]
+    fn nothing_goes_in_without_a_caret() {
+        let mut e = Editor::with_text("text");
+        e.clear_caret();
+        assert!(!e.insert_image("cat", PNG));
+        assert!(!e.has_images());
+    }
+
+    #[test]
+    fn the_document_ends_in_the_definitions_and_reads_them_back() {
+        let mut e = Editor::with_text("# Notes\n\nline");
+        e.insert_image("cat", PNG);
+        e.insert_image("dog", JPEG);
+
+        assert_eq!(e.text(), "# Notes\n\nline\n\n![cat][1]\n\n![dog][2]\n\n");
+        let saved = e.document_text();
+        assert!(saved.starts_with("# Notes\n\nline\n\n![cat][1]\n\n![dog][2]\n\n[1]: data:image/png;base64,"));
+        assert!(saved.contains("\n[2]: data:image/jpeg;base64,"));
+
+        let mut back = Editor::new();
+        back.set_document_text(&saved);
+        assert_eq!(back.section_count(), 1);
+        assert_eq!(back.text(), "# Notes\n\nline\n\n![cat][1]\n\n![dog][2]");
+        assert_eq!(back.images().len(), 2);
+        assert_eq!(back.image(2).and_then(|i| i.bytes()).as_deref(), Some(JPEG));
+        assert_eq!(back.document_text(), saved);
+    }
+
+    #[test]
+    fn the_definitions_come_after_every_section() {
+        let mut e = Editor::with_text("# One\n\nfirst");
+        e.insert_image("cat", PNG);
+        e.new_section();
+        e.handle_key(Key::Char('T'), Mods::NONE);
+
+        let saved = e.document_text();
+        let tail = saved.find("[1]: data:").expect("no definition in the document");
+        let two = saved.find("# T").expect("no second section");
+        assert!(two < tail, "the definition is not at the bottom: {saved}");
+    }
+
+    #[test]
+    fn deleting_a_reference_drops_its_definition_and_closes_the_gap() {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        e.insert_image("two", JPEG);
+        e.insert_image("three", PNG);
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n![two][2]\n\n![three][3]\n\n");
+
+        let text = e.text();
+        let from = text.find("![two][2]").unwrap();
+        e.select(from..from + "![two][2]".len());
+        e.delete_selection();
+
+        assert!(e.tidy_images());
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n\n\n![three][2]\n\n");
+        let numbers: Vec<usize> = e.images().iter().map(|i| i.number).collect();
+        assert_eq!(numbers, vec![1, 2]);
+        assert_eq!(e.image(2).and_then(|i| i.bytes()).as_deref(), Some(PNG));
+        assert!(!e.tidy_images(), "a tidy note was tidied again");
+    }
+
+    #[test]
+    fn a_rewritten_section_keeps_its_caret() {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        e.insert_image("two", PNG);
+        let text = e.text();
+        let from = text.find("![one][1]").unwrap();
+        e.select(from..from + "![one][1]".len());
+        e.delete_selection();
+        let caret = e.caret();
+
+        e.tidy_images();
+
+        assert_eq!(e.caret(), caret);
+        assert_eq!(e.text(), "a\n\n\n\n![two][1]\n\n");
+    }
+
+    /// Three pictures, the middle one's reference deleted and the note tidied.
+    fn tidied_after_deleting_the_middle_one() -> Editor {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        e.insert_image("two", JPEG);
+        e.insert_image("three", PNG);
+        let text = e.text();
+        let from = text.find("![two][2]").unwrap();
+        e.select(from..from + "![two][2]".len());
+        e.delete_selection();
+        assert!(e.tidy_images());
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n\n\n![three][2]\n\n");
+        e
+    }
+
+    #[test]
+    fn undo_brings_a_deleted_picture_back_with_its_definition() {
+        let mut e = tidied_after_deleting_the_middle_one();
+
+        // The renumbering is undone first, then the deletion. Neither undo
+        // is tidied away again.
+        assert!(e.undo());
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n\n\n![three][3]\n\n");
+        assert!(!e.tidy_images(), "the undo was tidied away");
+        assert_eq!(e.images().len(), 3);
+
+        assert!(e.undo());
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n![two][2]\n\n![three][3]\n\n");
+        assert!(!e.tidy_images());
+        let numbers: Vec<usize> = e.images().iter().map(|i| i.number).collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
+        assert_eq!(e.image(2).and_then(|i| i.bytes()).as_deref(), Some(JPEG));
+        assert!(e.has_images());
+    }
+
+    /// With one picture there is nothing to renumber, so the deletion is the
+    /// only edit to undo, and one undo brings the picture and its tab back.
+    #[test]
+    fn undo_brings_the_only_picture_back() {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        let text = e.text();
+        let from = text.find("![one][1]").unwrap();
+        e.select(from..from + "![one][1]".len());
+        e.delete_selection();
+        assert!(e.tidy_images());
+        assert!(!e.has_images());
+
+        assert!(e.undo());
+
+        assert_eq!(e.text(), text);
+        assert!(e.has_images());
+        assert!(!e.tidy_images(), "the undo was tidied away");
+        assert_eq!(e.image(1).and_then(|i| i.bytes()).as_deref(), Some(PNG));
+    }
+
+    #[test]
+    fn redo_deletes_the_picture_again_and_the_note_is_tidied_again() {
+        let mut e = tidied_after_deleting_the_middle_one();
+        e.undo();
+        e.undo();
+
+        assert!(e.redo());
+        assert!(e.tidy_images());
+
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n\n\n![three][2]\n\n");
+        let numbers: Vec<usize> = e.images().iter().map(|i| i.number).collect();
+        assert_eq!(numbers, vec![1, 2]);
+    }
+
+    #[test]
+    fn an_edit_after_an_undo_tidies_the_note_again() {
+        let mut e = tidied_after_deleting_the_middle_one();
+        e.undo();
+        assert_eq!(e.images().len(), 3);
+
+        e.handle_key(Key::Char('x'), Mods::NONE);
+        assert!(e.tidy_images());
+
+        assert_eq!(e.images().len(), 2);
+        assert!(e.text().contains("![three][2]"));
+    }
+
+    #[test]
+    fn the_renumbering_leaves_the_caret_where_it_was() {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        e.insert_image("two", PNG);
+        let text = e.text();
+        let from = text.find("![one][1]").unwrap();
+        e.select(from..from + "![one][1]".len());
+        e.delete_selection();
+        let caret = e.caret();
+
+        e.tidy_images();
+
+        assert_eq!(e.caret(), caret);
+        assert_eq!(e.text(), "a\n\n\n\n![two][1]\n\n");
+    }
+
+    #[test]
+    fn the_images_tab_shows_the_definitions_and_takes_no_typing() {
+        let mut e = Editor::with_text("a");
+        e.insert_image("one", PNG);
+        e.view_images();
+
+        assert!(e.viewing_images());
+        assert!(!e.has_caret());
+        assert!(e.text().starts_with("[1]: data:image/png;base64,"));
+        let result = e.handle_key(Key::Char('x'), Mods::NONE);
+        assert!(!result.changed);
+        e.insert_str("x");
+
+        e.set_active_section(0);
+        assert!(!e.viewing_images());
+        assert!(e.has_caret());
+        assert_eq!(e.text(), "a\n\n![one][1]\n\n");
+    }
+
+    #[test]
+    fn a_note_without_pictures_has_no_images_tab() {
+        let mut e = Editor::with_text("a");
+        assert!(!e.has_images());
+        e.view_images();
+        assert!(!e.viewing_images());
     }
 }
 

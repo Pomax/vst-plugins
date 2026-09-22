@@ -29,6 +29,7 @@
 #![allow(non_snake_case)]
 
 pub mod diagram;
+pub mod drop;
 pub mod elbows;
 pub mod files;
 pub mod fit;
@@ -36,6 +37,7 @@ pub mod fonts;
 pub mod gui;
 pub mod keys;
 pub mod node_widths;
+pub mod pictures;
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CString};
@@ -542,6 +544,8 @@ pub struct MarkdownNotesView {
     /// `RefCell` rather than `Mutex` because baseview's handle is `!Send` and
     /// VST3 guarantees `IPlugView` calls arrive on the UI thread.
     window: RefCell<Option<baseview::WindowHandle>>,
+    /// The drop target on the child window, for as long as it is open.
+    drops: RefCell<Option<drop::DropTarget>>,
 }
 
 impl MarkdownNotesView {
@@ -550,6 +554,7 @@ impl MarkdownNotesView {
             editor,
             last_error: Mutex::new(None),
             window: RefCell::new(None),
+            drops: RefCell::new(None),
         }
     }
 
@@ -625,7 +630,12 @@ impl IPlugViewTrait for MarkdownNotesView {
             Ok(e) => (e.width, e.height),
             Err(_) => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
         };
-        let handle = gui::open(&parent, self.editor.clone(), width, height);
+        let incoming = gui::Incoming::default();
+        let handle = gui::open(&parent, self.editor.clone(), incoming.clone(), width, height);
+        // The window is up now, so the drop target can go on it.
+        if let Ok(mut drops) = self.drops.try_borrow_mut() {
+            *drops = drop::accept(&parent, incoming);
+        }
         match self.window.try_borrow_mut() {
             Ok(mut slot) => {
                 // A host that attaches twice without removing in between would
@@ -641,6 +651,9 @@ impl IPlugViewTrait for MarkdownNotesView {
     }
 
     unsafe fn removed(&self) -> tresult {
+        if let Ok(mut drops) = self.drops.try_borrow_mut() {
+            drops.take();
+        }
         if let Ok(mut slot) = self.window.try_borrow_mut() {
             if let Some(handle) = slot.take() {
                 handle.close();
