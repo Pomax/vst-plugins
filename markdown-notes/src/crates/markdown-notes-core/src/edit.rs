@@ -214,6 +214,8 @@ pub struct Editor {
     /// markdown and is not written to disk with it.
     pub title: String,
     pub dirty: bool,
+    /// Counts the documents opened, see [`Editor::opened`].
+    opened: u64,
 }
 
 impl Default for Editor {
@@ -236,6 +238,7 @@ impl Editor {
             file: None,
             title: DEFAULT_TITLE.to_string(),
             dirty: false,
+            opened: 0,
         };
         e.select(sections::new_section_title());
         e
@@ -389,6 +392,14 @@ impl Editor {
         }
         self.placed = vec![true; self.sections.len()];
         self.active = 0;
+        self.opened += 1;
+    }
+
+    /// How many documents have been opened in this editor: a file, a preset
+    /// or a project each replace what was there. A window compares this with
+    /// what it last saw to know that the document under it is a new one.
+    pub fn opened(&self) -> u64 {
+        self.opened
     }
 
 
@@ -489,6 +500,33 @@ impl Editor {
     pub fn select_all(&mut self) {
         self.live_mut().select_all();
         self.place_caret();
+    }
+
+    /// Whether the note still has the name it was made with.
+    pub fn title_is_unset(&self) -> bool {
+        self.title == DEFAULT_TITLE
+    }
+
+    /// Whether the section in front still opens with the heading a new
+    /// section is given, which is there to be replaced.
+    pub fn section_title_is_unset(&self) -> bool {
+        self.text().lines().next() == Some(sections::NEW_SECTION)
+    }
+
+    /// Put the caret where somebody arriving in the document starts from.
+    ///
+    /// That is the first section, whichever was in front. If its heading is
+    /// still the one it was made with, the words of it are selected, without
+    /// the `# `, so the first thing typed names the section. Otherwise there
+    /// is writing here already, and the caret goes after the end of it.
+    pub fn arrive_in_document(&mut self) {
+        self.active = 0;
+        if self.section_title_is_unset() {
+            self.select(sections::new_section_title());
+        } else {
+            let end = self.text().len();
+            self.set_caret(end);
+        }
     }
 
     /// Set the window size, clamped to something a window can actually be.

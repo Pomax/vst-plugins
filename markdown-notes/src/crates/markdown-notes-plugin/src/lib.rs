@@ -31,6 +31,7 @@
 pub mod diagram;
 pub mod elbows;
 pub mod files;
+pub mod fit;
 pub mod fonts;
 pub mod gui;
 pub mod keys;

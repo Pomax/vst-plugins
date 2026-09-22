@@ -144,6 +144,33 @@ window to photograph.
 On macOS the UI tests photograph the window themselves, through the `Window
 Shot` app in `tools/window-shot`.
 
+The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
+order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
+There are four, and each is one long run that covers a whole area rather than a
+launch of the host per behaviour: `typing-goes-into-the-document` (the
+baseline), `editing-the-document`, `sections-and-files` and `opening-a-note`.
+A new behaviour goes into the run whose note it can reuse, not into a new file
+that types the same title, heading and body again.
+
+No step pauses for a length of time, and there is no `wait:` step. A step that
+needs the window to have caught up says what it is waiting to see, and the
+driver looks until it is there: `showing:`, `hidden:`, `press:`, `dragtext:`,
+`written:`, `cursor:`, `window:`, `nowindow:` and `dialog:` all poll, and a
+window that has just opened is waited on until it has drawn something that can
+drawn. The only timing in the driver is a hand's: keys go one at a time, a
+click holds the button for a moment, the pointer travels rather than jumps, and
+a click, a drag or a dialog opening is followed by the moment a hand takes to
+get to the next thing. Input sent faster than a person can make it reaches the
+plugin out of order, because the pointer and the keyboard come in by different
+roads.
+
+The plugin writes its state when the host closes, and `expect:` lines are
+checked against it. A `restart:` step closes the host and starts it again, so
+a test with restarts has several runs and several states: an `expect:` line is
+checked against the state of the run it is written in, which for every run but
+the last is the one `restart:` put aside as `NAME.state.1`, `NAME.state.2` and
+so on in `.cache/uitests/`.
+
 The host is also a standalone tool that loads **any** VST3 plugin, not just
 this one:
 
@@ -188,6 +215,37 @@ Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
 `- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
 list item ends the list, numbered lists renumber themselves, and an opening
 code fence closes itself.
+
+## Opening
+
+A note whose name is still `...project title goes here...` opens with the
+keyboard in the name and the whole of it selected, so the first thing typed
+replaces it. Enter or Tab there sends the keyboard to the document. A note
+that has a name opens in the document straight away.
+
+Arriving in the document always means the first section, whichever was in
+front. If that section still opens with `# Section Title`, the words of the
+heading are selected, without the `# `. If it does not, the caret goes after
+the end of the section. `Editor::arrive_in_document` is that rule, and
+`Gui::arrive` applies it on the first frame of a window.
+
+A name too long for its field is shown as the start of it and `...`, cut by
+measured width (`fit::fitted`), and hovering over it shows the whole name in a
+tooltip. That is only what is drawn: the name itself is untouched, and the
+field holds all of it again while it is being edited.
+
+The cut follows the window: it is worked out every frame from the room the
+toolbar leaves. A resize while the name has the keyboard takes the keyboard
+from it (`sync_window_size`), so a name that was just typed is cut like any
+other once the window is too narrow for it.
+
+The name is centred in its field for as long as it fits. One being typed past
+the end of the field is laid out from the left instead, because egui's
+single-line field only scrolls to keep the caret in view when it is.
+
+There is one cursor in the window. While the name, or any other field, has the
+keyboard, the document has no caret and no selection: `draw_ui` clears them
+with `Editor::clear_caret` for as long as a field is focused.
 
 ## Sections
 

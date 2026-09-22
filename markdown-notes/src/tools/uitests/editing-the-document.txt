@@ -1,0 +1,109 @@
+# Editing the document with the pointer and the keyboard, through the real
+# window: the pointer's shape over it, selecting by dragging, clicking past the
+# end of a line, clicking the caret away, the clipboard shortcuts, a drag that
+# selects across lines, and where the keys go below a code block.
+#
+# One run. The plugin writes its state once, on the way out, so the text at the
+# end is what says whether each step did its job: every step leaves a mark the
+# next one cannot produce on its own.
+#
+# An I-beam is how a window says "there is text here to put a caret in", so it
+# is shown where a click would put one: over a line. The empty space below the
+# last line takes the caret away instead of placing it, and the toolbar is not
+# the document at all.
+# A note nobody has named opens with the keyboard in its name. Enter leaves the
+# name as it is and goes to the document.
+type:{ENTER}
+# The document opens on a heading waiting to be named, with the name selected.
+# Three backspaces take the name and then the `# `: what this test is about is
+# a paragraph, drawn at the height a paragraph is drawn at.
+type:{BS 3}
+type:text goes here
+cursor:60,155|ibeam
+cursor:400,400|arrow
+cursor:450,76|arrow
+
+# Dragging through the text selects what it crosses, which typing then
+# replaces. The press has to land inside the text: a line is only as wide as
+# what is written on it, and a press beside it belongs to no line at all.
+# The drag runs from where "goes" starts, found by looking rather than by a
+# pixel count, to past the end of the line, so what it selects is everything
+# from there on: "text goes here" becomes "text X". The end of the drag sits
+# far right of the text so it is past the line's end whatever width a
+# platform's font gives it. A word rather than part of one: text recognition
+# places words, and a mark inside one snaps to its start. Not the last word on
+# the line either: the caret stands against it, and a reader takes the two
+# together and makes a different letter of it.
+dragtext:goes|140|300,155
+type:X
+shot:%CACHE%\editing-dragged-to-select.png
+
+# Clicking far to the right of a line puts the caret at the end of that line,
+# not nowhere: the empty space to the right of a line belongs to it. A second
+# line first, so the click has a short line above a long one to land beside.
+type:{ENTER}second line
+click:600,155
+type:!
+
+# Clicking where there is no line takes the caret away, and typing then has
+# nowhere to go. The empty space below the last line is document, but it is not
+# a line: there is nothing there to put a caret on. Clicking beside the first
+# line again puts the caret back at the end of it, and the `?` lands there.
+click:450,400
+type:this must not appear
+shot:%CACHE%\clicking-away-the-caret.png
+click:600,155
+type:?
+
+# Select the lot, cut it, and paste it back after some new text: the shortcuts
+# have to reach the document for any of that to happen. This is the only test
+# that presses Ctrl for real; the scenarios reach the editor through the
+# plugin's own key entry point and never touch the window's keyboard.
+shortcut:ctrl+a
+shortcut:ctrl+x
+type:kept:
+shortcut:ctrl+v
+shot:%CACHE%\editing-pasted.png
+
+# Dragging selects across lines, the way it does in any text area. Each line
+# of the document is drawn as its own row, so a selection that runs from one
+# line into the next is the case to check: a third line, and one drag that
+# starts on the second and ends well below the last, which is off the end of
+# the text. A drag that runs past the end selects to the end, rather than
+# stopping at the line it began on, and typing replaces all of it. The second
+# line's first character is the boundary being pressed on, so no space beside
+# it can be taken in or left out depending on which pixel the press lands.
+type:{ENTER}third line here
+dragtext:second line|140|400,400
+type:Y
+shot:%CACHE%\selecting-across-lines.png
+
+# A code block typed through the real keyboard, and where the keys go once
+# there is one above them.
+#
+# The fence lines take no row of their own unless the caret is on one, so the
+# rows the document draws are fewer than the lines it holds, and a caret that
+# followed rows rather than lines would put the next keystroke inside the
+# block. What the document ends up holding is what says where the keys went:
+# every line below is typed blind, at whatever the caret was.
+#
+# Where the caret is *drawn* is a question about pixels, which this cannot
+# answer and does not claim to: `caret_rendering.rs` renders the same document
+# headlessly and measures it. The picture here is for reading a failure, not
+# for deciding one.
+type:{ENTER}testing as well
+# Enter after the fence marker closes it and leaves the caret inside.
+type:{ENTER}```py
+type:{ENTER}with extra code stuff
+type:{ENTER}import * as lol
+type:{ENTER}
+type:{ENTER}def cake{(}self{)}:
+type:{ENTER}    wow_spaces
+# Out of the block, past the closing fence, and onto a line of its own, with
+# a blank line between the two as any other block gets.
+type:{DOWN}{END}{ENTER}{ENTER}Okay
+shot:%CACHE%\caret-below-a-code-block.png
+
+expect:sections is 1
+expect:notes contain kept:text X!?\n\nY\n\ntesting as well
+expect:notes contain ```py\nwith extra code stuff\nimport * as lol\n\ndef cake(self):\n    wow_spaces\n```\n\nOkay

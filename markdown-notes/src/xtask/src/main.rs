@@ -72,6 +72,7 @@ fn main() -> ExitCode {
                  bundle [--release] [--target <triple>]   assemble the VST3 bundle\n  \
                  test [--release] [--full]                every test but the UI tests\n  \
                  test --only <name>                       one test and nothing else\n  \
+                 test --ui <name>                         one UI test, or one suite\n  \
                  uitest [name]                            drive the real window\n  \
                  clean                                    empty the build cache\n  \
                  \n  \
@@ -629,6 +630,14 @@ fn test(args: &[String]) -> Result<(), String> {
         }
     };
 
+    // One real-window test, or one suite of them, and nothing else.
+    if let Some(at) = args.iter().position(|a| a == "--ui") {
+        let name = args
+            .get(at + 1)
+            .ok_or("--ui needs the name of a UI test or of a suite")?;
+        return uitest(std::slice::from_ref(name));
+    }
+
     if let Some(at) = args.iter().position(|a| a == "--only") {
         let name = args
             .get(at + 1)
@@ -676,6 +685,7 @@ const RENDERING_TESTS: &[&str] = &[
     "block_spacing",
     "mermaid_blocks",
     "mermaid_renderers",
+    "opening_focus",
     "section_dragging",
     "selection_rendering",
     "source_view",
@@ -704,7 +714,7 @@ fn test_only(root: &Path, name: &str, release: bool) -> Result<(), String> {
             cmd.args(["-p", PLUGIN_CRATE, "--features", "snapshots", "--test", file]);
         }
         None => {
-            cmd.args(["--workspace", "--lib"]);
+            cmd.args(["--workspace", "--lib", "--bins"]);
         }
     }
     if release {

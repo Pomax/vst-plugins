@@ -2,6 +2,5 @@
 # order is decided here and nowhere else. A test file that is not listed is an
 # error, so nothing can sit in this directory and silently never run.
 host-preset-across-runs
-host-preset-escape
-host-preset-scrolling
+host-preset-dialogs
 host-resize

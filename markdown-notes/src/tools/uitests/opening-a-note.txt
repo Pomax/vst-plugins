@@ -1,0 +1,122 @@
+# Where the keyboard is when the plugin's window opens, through the real
+# window, with nothing in the plugin clicked before a key is pressed: every key
+# goes wherever the plugin put the keyboard.
+#
+# Four runs of the host. The first is a plugin that has just been added. Each
+# of the others is a new host that starts the plugin the way a DAW opening a
+# project does: the note the run before kept as a preset is restored first, and
+# the plugin's window is opened after. The `expect:` lines written in a run are
+# checked against the state that run wrote when it closed.
+remove:%PRESETS%\opening-unnamed-section.preset
+remove:%PRESETS%\opening-named-section.preset
+remove:%PRESETS%\opening-two-tabs.preset
+
+# Run 1. The note's name is still the placeholder, so it has the keyboard and
+# all of it is selected: what is typed first replaces the whole of it, which
+# the title this run wrote says. The title is far longer than its field. While
+# it is being typed the field follows the caret: the end that was just typed is
+# on screen and the start has scrolled out of it. The last word is not what is
+# looked for: the caret stands against it and is read as part of it.
+type:This is a long title, three times the length any toolbar could show, with more words after those, that does not fit
+showing:does not|60
+hidden:This is a long|60
+
+# Tab sends the keyboard to the text area, the same as Enter does (Enter is
+# what `sections-and-files` uses). The section there still has the heading it
+# was made with, which is on screen. No tab reaches the title or the document,
+# which the state this run writes says.
+type:{TAB}
+showing:Section Title|140
+
+# The title nobody is editing is cut to fit. The pointer is put over the
+# document, so nothing in the toolbar is hovered: the start of the title is on
+# screen and the end of it is not.
+moveto:300,300
+showing:This is|60
+hidden:does not fit|60
+
+# The pointer over the title brings up the whole of it, and taking the pointer
+# away takes it away again.
+moveto:63,77
+showing:does not fit|60
+moveto:300,300
+hidden:does not fit|60
+
+press:Save preset|44,41
+window:Save preset
+type:{END}{BS 40}opening-unnamed-section
+type:{ENTER}
+nowindow:Save preset
+window:
+
+# What was cut is what is drawn, not the title.
+expect:title is This is a long title, three times the length any toolbar could show, with more words after those, that does not fit
+expect:sections is 1
+expect:section 0 is # Section Title
+
+# Run 2. A note that has a name, and a section that still has the heading it
+# was made with: the keyboard goes straight to the text area and the words of
+# the heading are selected. What is typed replaces `Section Title`, keeps the
+# `# `, and does not reach the name.
+restart:--preset|%PRESETS%\opening-unnamed-section.preset
+showing:Section Title|140
+type:Drums
+showing:Drums|140
+hidden:Section Title|140
+type:{ENTER}kick on one
+
+press:Save preset|44,41
+window:Save preset
+type:{END}{BS 40}opening-named-section
+type:{ENTER}
+nowindow:Save preset
+window:
+
+expect:title is This is a long title, three times the length any toolbar could show, with more words after those, that does not fit
+expect:sections is 1
+expect:section 0 is # Drums\n\nkick on one
+
+# Run 3. A note that has a name and a section somebody named: the keyboard
+# goes straight to the text area, with the cursor after the end of what is
+# written there, which is where the `!` lands. The heading is what is looked
+# for: the caret stands against the last letter of the body and is read as part
+# of the word.
+restart:--preset|%PRESETS%\opening-named-section.preset
+showing:Drums|140
+type:!
+
+# A second tab, kept in front when the preset is saved. The + button carries no
+# word, and a lone glyph is not something text recognition reads reliably: it
+# is clicked where the code puts it, and that the click landed is said by the
+# two sections this run wrote.
+plugin:129,87
+type:Two
+type:{ENTER}second
+
+press:Save preset|44,41
+window:Save preset
+type:{END}{BS 40}opening-two-tabs
+type:{ENTER}
+nowindow:Save preset
+window:
+
+expect:sections is 2
+expect:section 0 is # Drums\n\nkick on one!
+expect:section 1 is # Two\n\nsecond
+
+# Run 4. A note of two tabs, kept with the last tab in front: it opens on the
+# first tab, not the last, with the cursor after the end of what is written in
+# it, which is where the second `!` lands.
+restart:--preset|%PRESETS%\opening-two-tabs.preset
+showing:Drums|140
+hidden:Two|140
+type:!
+
+cleanup:%PRESETS%\opening-unnamed-section.preset
+cleanup:%PRESETS%\opening-named-section.preset
+cleanup:%PRESETS%\opening-two-tabs.preset
+
+expect:title is This is a long title, three times the length any toolbar could show, with more words after those, that does not fit
+expect:sections is 2
+expect:section 0 is # Drums\n\nkick on one!!
+expect:section 1 is # Two\n\nsecond

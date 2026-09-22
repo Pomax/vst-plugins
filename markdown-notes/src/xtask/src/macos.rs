@@ -806,6 +806,7 @@ fn launch(
     plugin: &Path,
     state: &Path,
     reported: &Path,
+    extra: &[String],
     settle: Duration,
 ) -> Result<(Child, u32, Rect), String> {
     let child = Command::new(program)
@@ -814,6 +815,7 @@ fn launch(
         .arg(state)
         .arg("--geometry")
         .arg(reported)
+        .args(extra)
         .spawn()
         .map_err(|e| format!("running {}: {e}", program.display()))?;
     let pid = child.id();
@@ -877,6 +879,8 @@ struct Film {
 struct Run {
     child: Child,
     pid: u32,
+    /// How many times `restart:` has started the host again.
+    restarts: usize,
     /// What the run was started with, so `restart:` can do it again.
     program: PathBuf,
     plugin: PathBuf,
@@ -908,10 +912,11 @@ impl Run {
         reported: &Path,
         settle: Duration,
     ) -> Result<Run, String> {
-        let (child, pid, rect) = launch(program, plugin, state, reported, settle)?;
+        let (child, pid, rect) = launch(program, plugin, state, reported, &[], settle)?;
         Ok(Run {
             child,
             pid,
+            restarts: 0,
             program: program.to_path_buf(),
             plugin: plugin.to_path_buf(),
             state: state.to_path_buf(),
@@ -930,16 +935,38 @@ impl Run {
     ///
     /// What a preset has to survive is the host going away, so a test that
     /// only ever loads one back into the process that saved it is not testing
-    /// the thing. The state the old run wrote is thrown away first, so
-    /// whatever is asserted afterwards can only have come from the new one.
-    fn restart(&mut self) -> Result<(), String> {
+    /// the thing.
+    ///
+    /// The state the old run wrote is put aside first, as `STATE.1` for the
+    /// first run and `STATE.2` for the second, where the runner checks it
+    /// against the expectations written before the step. It is moved rather
+    /// than left, so whatever is asserted afterwards can only have come from
+    /// the new run.
+    ///
+    /// `extra` is `ARG|ARG`, arguments the host is started with after its own,
+    /// for a host that is to come back up differently from how it first
+    /// started. They are paths as a test file writes them.
+    fn restart(&mut self, extra: &str) -> Result<(), String> {
         self.finish()?;
-        let _ = std::fs::remove_file(&self.state);
+        self.restarts += 1;
+        if self.state.exists() {
+            let mut aside = self.state.clone().into_os_string();
+            aside.push(format!(".{}", self.restarts));
+            std::fs::rename(&self.state, &aside)
+                .map_err(|e| format!("putting {} aside: {e}", self.state.display()))?;
+        }
+        let extra: Vec<String> = extra
+            .split('|')
+            .map(str::trim)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| arg.replace('\\', "/"))
+            .collect();
         let (child, pid, rect) = launch(
             &self.program,
             &self.plugin,
             &self.state,
             &self.reported,
+            &extra,
             self.settle,
         )?;
         self.child = child;
@@ -1325,9 +1352,19 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .parent()
                 .map(|work| work.join("showing.png"))
                 .ok_or("nowhere to put the look")?;
-            let found = find_on_screen(area, text, &probe);
-            let _ = std::fs::remove_file(&probe);
-            let found = found?.is_some();
+            // Looked at until it is as the step says: what the step before did
+            // may not have been drawn yet, and a tooltip takes its time coming
+            // and going. No step pauses for a length of time instead.
+            let wanted = kind == "showing";
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let found = loop {
+                let found = find_on_screen(area, text, &probe);
+                let _ = std::fs::remove_file(&probe);
+                let found = found?.is_some();
+                if found == wanted || Instant::now() >= deadline {
+                    break found;
+                }
+            };
             match (kind, found) {
                 ("showing", false) => {
                     Err(format!("the document does not show {text:?}"))
@@ -1461,6 +1498,14 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .ok_or_else(|| format!("cannot read written: {value}"))?;
             let path = path_of(path);
             let want = want.trim().replace("\\n", "\n");
+            // The save runs off the plugin's drawing thread, so the file is
+            // looked for until it is there and holds what it should.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline
+                && !std::fs::read_to_string(&path).is_ok_and(|got| got.contains(&want))
+            {
+                sleep(Duration::from_millis(25));
+            }
             let got = std::fs::read_to_string(&path)
                 .map_err(|e| format!("{} was not written: {e}", path.display()))?;
             if !got.contains(&want) {
@@ -1564,7 +1609,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             run.killed = true;
             Ok(())
         }
-        "restart" => run.restart(),
+        "restart" => run.restart(value),
         "geometry" => {
             // The plugin's editor is a subview of the host's, and nothing
             // outside the process can measure a subview. The host writes down

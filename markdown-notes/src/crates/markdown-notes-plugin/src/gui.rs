@@ -95,6 +95,9 @@ const DOCUMENT_MARGIN: egui::Margin = egui::Margin::symmetric(18, 12);
 /// How much larger the note's name is than the toolbar's buttons.
 const TITLE_SIZE_BUMP: f32 = 5.0;
 
+/// The space kept clear at each end of the note's name, inside its field.
+const TITLE_MARGIN: f32 = 4.0;
+
 /// How far a code block reaches above and below the rows it holds.
 const CODE_PADDING: f32 = 5.0;
 
@@ -159,6 +162,22 @@ struct Gui {
     gallery: crate::diagram::Gallery,
     /// Where each picture was drawn this frame, top one first.
     pictures: Pictures,
+    /// Which document the keyboard was last put in its opening place for, by
+    /// [`markdown_notes_core::Editor::opened`]. It is put there on the first
+    /// frame, and again whenever a preset, a project or a file replaces the
+    /// document under the window.
+    arrived: Option<u64>,
+    /// Whether the note's name is still owed the keyboard. A window inside a
+    /// host often has no keyboard focus on its first frames, and what is asked
+    /// for then is lost, so it is asked for until the name has it or the
+    /// pointer has been pressed somewhere.
+    name_wanted: bool,
+    /// Whether the name was finished with Enter or Tab on the last frame. Tab
+    /// is what egui moves focus on, and the widget it moved to is drawn
+    /// after the name: it is only known, and given up, on the frame after.
+    name_finished: bool,
+    /// Who has the keyboard, written each frame.
+    keyboard: KeyboardReport,
 }
 
 /// A mermaid block as it was drawn: where, and whether what was drawn there is
@@ -172,6 +191,21 @@ pub struct DrawnPicture {
 /// The document's pictures as of the last frame, shared so they can be read
 /// from outside the frame that drew them.
 pub type Pictures = Arc<std::sync::Mutex<Vec<DrawnPicture>>>;
+
+/// Who has the keyboard, as of the last frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Keyboard {
+    /// Whether what is typed goes into the note's name.
+    pub name_has_it: bool,
+    /// The part of the name that is selected, while the name has the
+    /// keyboard.
+    pub name_selected: String,
+    /// Whether what is typed goes into the document.
+    pub document_has_it: bool,
+}
+
+/// [`Keyboard`], shared so it can be read from outside the frame.
+pub type KeyboardReport = Arc<std::sync::Mutex<Keyboard>>;
 
 impl Gui {
     fn new(editor: Shared) -> Gui {
@@ -195,6 +229,38 @@ impl Gui {
             caret_moved_at: 0.0,
             gallery: crate::diagram::Gallery::default(),
             pictures: Pictures::default(),
+            arrived: None,
+            name_wanted: false,
+            name_finished: false,
+            keyboard: KeyboardReport::default(),
+        }
+    }
+
+    /// Put the keyboard where a note that has just been opened takes it.
+    ///
+    /// A note nobody has named starts in its name, which arrives selected so
+    /// the first thing typed replaces it. A note with a name starts in its
+    /// document, where [`markdown_notes_core::Editor::arrive_in_document`]
+    /// says.
+    fn arrive(&mut self, ui: &egui::Ui) {
+        let Ok(mut editor) = self.editor.lock() else {
+            return;
+        };
+        let document = editor.opened();
+        if self.arrived == Some(document) {
+            return;
+        }
+        self.arrived = Some(document);
+
+        if editor.title_is_unset() {
+            self.name_wanted = true;
+            self.document_focused = false;
+            editor.clear_caret();
+        } else {
+            self.name_wanted = false;
+            ui.memory_mut(|m| m.surrender_focus(title_id()));
+            editor.arrive_in_document();
+            self.document_focused = true;
         }
     }
 
@@ -300,9 +366,26 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
 
     sync_window_size(ui, gui);
 
-    // A field taking the keyboard takes it from the document.
+    gui.arrive(ui);
+
+    // A name finished with Tab handed the keyboard to the widget after it,
+    // which is not where it goes: the document is.
+    if gui.name_finished {
+        gui.name_finished = false;
+        if let Some(next) = ui.memory(|m| m.focused()) {
+            ui.memory_mut(|m| m.surrender_focus(next));
+        }
+    }
+
+    // A field taking the keyboard takes it from the document, and the caret
+    // and selection with it: there is one cursor in the window.
     if ui.memory(|m| m.focused()).is_some() {
         gui.document_focused = false;
+        if let Ok(mut editor) = gui.editor.lock() {
+            if editor.has_caret() {
+                editor.clear_caret();
+            }
+        }
     }
 
     // Keyboard next, so the document is current before it is laid out — but
@@ -404,7 +487,19 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
 pub struct TestGui(Gui);
 
 impl TestGui {
+    /// A window already open and in use: the caret is wherever the editor has
+    /// it, and the keyboard is the document's.
     pub fn new(editor: Shared, system_dark: bool) -> TestGui {
+        let opened = editor.lock().map(|e| e.opened()).ok();
+        let mut gui = Gui::new(editor);
+        gui.system_dark = system_dark;
+        gui.arrived = opened;
+        TestGui(gui)
+    }
+
+    /// A window as it opens, which puts the keyboard where a note that has
+    /// just been opened takes it.
+    pub fn opening(editor: Shared, system_dark: bool) -> TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
         TestGui(gui)
@@ -422,6 +517,11 @@ impl TestGui {
     /// frame. Empty when every one of them is showing its code.
     pub fn pictures(&self) -> Pictures {
         Arc::clone(&self.0.pictures)
+    }
+
+    /// Who has the keyboard, as of the last frame.
+    pub fn keyboard(&self) -> KeyboardReport {
+        Arc::clone(&self.0.keyboard)
     }
 }
 
@@ -447,6 +547,12 @@ fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
     }
     if gui.last_seen_size == Some(window) {
         return;
+    }
+    // A hand on the window's frame is not a hand on the keyboard: a name that
+    // was being typed is done with, and reads as a heading again, cut to
+    // whatever room the new size leaves it.
+    if gui.last_seen_size.is_some() {
+        ui.memory_mut(|m| m.surrender_focus(title_id()));
     }
     gui.last_seen_size = Some(window);
     if let Ok(mut e) = gui.editor.lock() {
@@ -760,9 +866,9 @@ fn document_id() -> egui::Id {
 
 /// Put the whole of a text field's contents in its selection.
 fn select_all(ctx: &egui::Context, id: egui::Id, chars: usize) {
-    let Some(mut state) = egui::text_edit::TextEditState::load(ctx, id) else {
-        return;
-    };
+    // A field that has never had the keyboard has no state stored yet, and it
+    // is exactly then that this is called: the first time it is given it.
+    let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
     state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
         egui::text::CCursor::new(0),
         egui::text::CCursor::new(chars),
@@ -783,34 +889,95 @@ fn title_field(ui: &mut egui::Ui, gui: &mut Gui) {
     let id = title_id();
     // Leave the buffer alone while it is being typed into, or every keystroke
     // would be overwritten by what is still stored.
-    if !ui.memory(|m| m.has_focus(id)) {
+    let editing = ui.memory(|m| m.has_focus(id));
+    if !editing {
         gui.title = stored.clone();
     }
+
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let font = egui::FontId {
+        size: font.size + TITLE_SIZE_BUMP,
+        family: crate::fonts::bold_family(ui),
+    };
+
+    // A name too long for the field is shown as the start of it and `...`
+    // while nobody is editing it. The field being edited holds the whole name.
+    let room = ui.available_width() - 2.0 * TITLE_MARGIN;
+    let width_of = |text: &str| {
+        ui.painter()
+            .layout_no_wrap(text.to_string(), font.clone(), Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    let mut shown = if editing {
+        gui.title.clone()
+    } else {
+        crate::fit::fitted(&gui.title, room, width_of)
+    };
+    let cut = shown != gui.title;
+
+    // Centred in the room there is, for as long as it fits. A name being
+    // typed past the end of the field is laid out from the left instead, which
+    // is what lets the field scroll to keep the caret in view.
+    let align = if editing && width_of(&gui.title) > room {
+        egui::Align::Min
+    } else {
+        egui::Align::Center
+    };
 
     // It reads as a heading, not a form control: the whole width the buttons
     // left over, the toolbar's own fill behind it, no border, centred, and in
     // the bold text colour. Clicking still edits it.
-    let font = egui::TextStyle::Button.resolve(ui.style());
     let bar = toolbar_fill(gui, ui.visuals());
+    let buffer = if cut { &mut shown } else { &mut gui.title };
     let response = ui.add(
-        egui::TextEdit::singleline(&mut gui.title)
+        egui::TextEdit::singleline(buffer)
             .id(id)
             .desired_width(ui.available_width())
-            .horizontal_align(egui::Align::Center)
+            .margin(egui::Margin::symmetric(TITLE_MARGIN as i8, 2))
+            .horizontal_align(align)
             .frame(egui::Frame::NONE.fill(bar))
             .background_color(bar)
-            .font(egui::FontId {
-                size: font.size + TITLE_SIZE_BUMP,
-                family: crate::fonts::bold_family(ui),
-            })
+            .font(font)
             .text_color(bold),
     );
+    let response = if cut { response.on_hover_text(gui.title.clone()) } else { response };
+
+    // The name is owed the keyboard, and the whole of it selected, until it
+    // has both. Pressing the pointer anywhere is somebody choosing where the
+    // keyboard goes, and a name that is no longer the one it was made with has
+    // been typed into: either ends it.
+    //
+    // Having the keyboard is not the end of it. A selection made before the
+    // field has laid its text out is clamped to the nothing that is there, so
+    // it is made again until the field is seen to be holding it.
+    let mut given = false;
+    if gui.name_wanted {
+        let whole = gui.title.chars().count();
+        let selected = egui::text_edit::TextEditState::load(ui.ctx(), id)
+            .and_then(|state| state.cursor.char_range())
+            .is_some_and(|range| {
+                let chars = range.as_sorted_char_range();
+                usize::from(chars.start) == 0 && usize::from(chars.end) == whole
+            });
+        if ui.input(|i| i.pointer.any_pressed()) || gui.title != markdown_notes_core::DEFAULT_TITLE {
+            gui.name_wanted = false;
+        } else if !response.has_focus() {
+            response.request_focus();
+        } else if selected {
+            gui.name_wanted = false;
+        } else {
+            given = true;
+        }
+    }
 
     // A name nobody has set yet is there to be replaced, so it arrives
-    // selected and the first keystroke takes all of it. A name somebody chose
-    // is clicked into to change part of it, and keeps the caret where it was
-    // put.
-    if response.gained_focus() && gui.title == markdown_notes_core::DEFAULT_TITLE {
+    // selected and the first keystroke takes all of it, whether the field was
+    // given the keyboard or clicked into while it had it. A name somebody
+    // chose is clicked into to change part of it, and keeps the caret where it
+    // was put.
+    let taken_up = given || response.gained_focus() || response.clicked();
+    if taken_up && gui.title == markdown_notes_core::DEFAULT_TITLE {
         select_all(ui.ctx(), id, gui.title.chars().count());
     }
 
@@ -822,10 +989,33 @@ fn title_field(ui: &mut egui::Ui, gui: &mut Gui) {
         }
     }
 
-    // Enter means the name is finished, so the keyboard goes back to the
-    // section that is open and typing carries straight on.
-    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+    if let Ok(mut keyboard) = gui.keyboard.lock() {
+        let has_it = ui.memory(|m| m.has_focus(id));
+        let selected = egui::text_edit::TextEditState::load(ui.ctx(), id)
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| {
+                let (from, to): (usize, usize) =
+                    (range.primary.index.into(), range.secondary.index.into());
+                let (from, to) = (from.min(to), from.max(to));
+                gui.title.chars().skip(from).take(to - from).collect::<String>()
+            })
+            .unwrap_or_default();
+        *keyboard = Keyboard {
+            name_has_it: has_it,
+            name_selected: if has_it { selected } else { String::new() },
+            document_has_it: gui.document_focused,
+        };
+    }
+
+    // Enter or Tab means the name is finished, so the keyboard goes to the
+    // document, the way it does for a note opened with a name already.
+    let finished = ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Tab));
+    if response.lost_focus() && finished {
+        gui.name_finished = true;
         gui.document_focused = true;
+        if let Ok(mut e) = gui.editor.lock() {
+            e.arrive_in_document();
+        }
     }
 }
 

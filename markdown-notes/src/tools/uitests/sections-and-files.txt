@@ -1,0 +1,184 @@
+# The section strip and the file buttons, in one run: making sections, naming
+# the note, Save, Save As, dragging sections into each of the three kinds of
+# place one can be dropped (between two sections, in front of the first, after
+# the last), and opening a file back.
+#
+# Every file is checked in code the moment its dialog closes, which is where
+# each stage is proven: the state the plugin writes is written once, on the
+# way out, and by then the file opened last has replaced everything.
+#
+# A native dialog runs its own message loop, so one opened from inside the
+# frame being drawn leaves the frame timer firing into a layout that is already
+# under way, and the plugin dies. A dead plugin never reaches its shutdown, so
+# this test sees that as no state written at all.
+#
+# The order after all three drags is `Vocal chain`, `Drum bus`, `Mix notes`,
+# and nothing else produces that order. Fail any one drag and the result is
+# different every time:
+#
+#   the first fails  -> Drum bus, Vocal chain, Mix notes
+#   the second fails -> Mix notes, Drum bus, Vocal chain
+#   the third fails  -> Vocal chain, Mix notes, Drum bus
+#
+# Two things about the keyboard are settled in the first few steps. Nothing is
+# clicked before the first line is typed: a note nobody has named opens with
+# the keyboard in its name, Enter sends it to the document, and the line lands
+# there. Then the note is renamed and another section is made and typed into,
+# which says the name field hands the keyboard back.
+#
+# The name sits mid-toolbar and is its own field: what is typed into it lands
+# nowhere else, which the first section's text at the end says. The + button
+# follows the last section, so it moves right as sections are added.
+# Every section starts as a heading waiting for its name, with the name
+# selected. Each one is read off the window before anything is typed, and the
+# name typed straight after has to have replaced it: still showing afterwards
+# means the selection was not there.
+remove:%CACHE%\round-trip.md
+remove:%CACHE%\dragged.md
+type:{ENTER}
+showing:Section Title|140
+type:Mix notes
+showing:Mix notes|140
+hidden:Section Title|140
+type:{ENTER}levels are close
+
+# Save is Save As until the document has a path, so this is the first dialog.
+# The file it wrote is checked in code, and then deleted in code: the name is
+# free for the Save As below to write to a file that does not exist, as this
+# one did.
+press:Save|501,76
+dialog:Save
+type:%CACHE%\round-trip.md
+type:{ENTER}
+nodialog:Save
+written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close
+remove:%CACHE%\round-trip.md
+
+# A name that fits the window at this size and not at the smaller one it is
+# dragged to at the end.
+press:project title|204,76
+type:{END}{BS 40}funky cake with sprinkles
+# The + button carries no word, and a lone glyph is not something text
+# recognition reads reliably: it is clicked where the code puts it, and that
+# the click landed is said by the tabs read at the end.
+plugin:129,87
+showing:Section Title|140
+type:Drum bus
+showing:Drum bus|140
+hidden:Section Title|140
+
+# Save As. The document has a path by now, which is what makes this a
+# different action from the save above rather than the same one twice. Both
+# sections, in order.
+press:Save As|567,76
+dialog:Save
+type:%CACHE%\round-trip.md
+type:{ENTER}
+nodialog:Save
+written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close\n\n# Drum bus
+
+plugin:239,87
+showing:Section Title|140
+type:Vocal chain
+showing:Vocal chain|140
+hidden:Section Title|140
+
+# With three sections the centres are 60, 170 and 280, and the last one ends at
+# 334.
+#
+# Between two: the last section carried over the middle one, which puts the mark
+# in the gap between the first two. The button stays down across these steps,
+# which is what makes it a drag rather than two clicks.
+#
+# The mid-drag pictures are for reading a failure. What the strip draws while
+# a section is being carried, the ghost and the drop mark, is measured in
+# `section_dragging.rs` against a headless render; nothing here decides it.
+plugin:hold:280,87
+plugin:moveto:170,87
+shot:%CACHE%\section-drag-between.png
+# While it is held, the pointer says so. On Windows that is the four-way arrow,
+# which is what baseview asks for when egui reports a grabbing pointer.
+plugin:cursor:170,87|grabbing
+plugin:letgo:170,87
+# Now: Mix notes, Vocal chain, Drum bus.
+shot:%CACHE%\section-drag-between-landed.png
+
+# In front of the first: the section that just landed in the middle, carried
+# left past the first one's middle.
+plugin:hold:170,87
+plugin:moveto:20,87
+shot:%CACHE%\section-drag-to-front.png
+plugin:letgo:20,87
+# Now: Vocal chain, Mix notes, Drum bus.
+shot:%CACHE%\section-drag-to-front-landed.png
+
+# After the last: the middle section carried out beyond every section there is.
+plugin:hold:170,87
+plugin:moveto:330,87
+shot:%CACHE%\section-drag-to-end.png
+plugin:letgo:330,87
+shot:%CACHE%\section-drag-to-end-landed.png
+
+# Each tab, read in turn. The expectations below take the document the plugin
+# wrote and cut it into sections here, so they say nothing about how many tabs
+# there are or what each one holds: three sections in one tab would satisfy
+# them. Each tab has to show its own text and not its neighbours'.
+press:Vocal chain|60,113
+showing:Vocal chain|140
+hidden:levels are close|140
+press:Drum bus|170,113
+showing:Drum bus|140
+hidden:levels are close|140
+press:Mix notes|280,113
+showing:levels are close|140
+
+# The order the drags left, written to a file and checked in code.
+press:Save As|567,76
+dialog:Save
+type:%CACHE%\dragged.md
+type:{ENTER}
+nodialog:Save
+written:%CACHE%\dragged.md|# Vocal chain\n\n# Drum bus\n\n# Mix notes\n\nlevels are close
+
+# Open the two-section file back. It replaces what is open: three sections in
+# another order become exactly what that file holds. An open that silently did
+# nothing leaves the three, and the expectations below refuse it.
+press:Open|443,76
+dialog:Open
+type:%CACHE%\round-trip.md
+type:{ENTER}
+nodialog:Open
+# The file holds two sections, so the third tab going is the file having come
+# in. The tabs are above the document, so this looks from above them.
+hidden:Vocal chain|100
+
+cleanup:%CACHE%\round-trip.md
+cleanup:%CACHE%\dragged.md
+
+# Both tabs, read rather than typed into. A load that put the whole file in
+# one tab satisfies the expectations below. Reading each tab does not: the
+# second tab has to show its own line and not the first tab's.
+press:Mix notes|60,113
+showing:levels are close|140
+press:Drum bus|170,113
+showing:Drum bus|140
+hidden:levels are close|140
+
+# The whole name is on show at this size. The window dragged down to a size
+# with no room for it cuts the name to what fits and `...`, and hovering over
+# the cut name brings up the whole of it. The name is what is drawn, not what
+# is kept, which the expectations below say.
+showing:sprinkles|60
+dragto:620,420,500
+hidden:sprinkles|60
+showing:funky|60
+moveto:63,77
+showing:sprinkles|60
+moveto:300,300
+hidden:sprinkles|60
+
+# The name is not part of the file, so opening one leaves it alone.
+expect:title is funky cake with sprinkles
+expect:sections is 2
+expect:section 0 is # Mix notes\n\nlevels are close
+expect:section 1 is # Drum bus

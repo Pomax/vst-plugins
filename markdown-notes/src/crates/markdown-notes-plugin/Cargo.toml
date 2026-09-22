@@ -107,6 +107,10 @@ name = "source_view"
 required-features = ["snapshots"]
 
 [[test]]
+name = "opening_focus"
+required-features = ["snapshots"]
+
+[[test]]
 name = "mermaid_blocks"
 required-features = ["snapshots"]
 
