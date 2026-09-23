@@ -360,6 +360,26 @@ fn name_of(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// What the strip calls the plug-in: the name it gives itself, then the file
+/// it came from in brackets.
+///
+/// The two are not the same thing and both are worth seeing. The name is what
+/// the plug-in reports over VST3, which is what a DAW lists and which carries
+/// its version. The file is what was loaded off disk, which a rename can
+/// change without the plug-in knowing.
+fn strip_label(reported: Option<&str>, path: &std::path::Path) -> String {
+    let file = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let reported = reported.map(str::trim).filter(|name| !name.is_empty());
+    match (reported, file.is_empty()) {
+        (Some(reported), false) => format!("{reported} ({file})"),
+        (Some(reported), true) => reported.to_string(),
+        (None, _) => file,
+    }
+}
+
 /// Where a dialog of this size sits to be centred on the host's window.
 ///
 /// A window of its own opens wherever the platform decides, which is not over
@@ -432,6 +452,14 @@ fn main() -> ExitCode {
         .and_then(|index| module.class_info2(index))
         .map(|info| info.cid)
         .unwrap_or([0u8; 16]);
+    let label = strip_label(
+        module
+            .first_audio_class()
+            .and_then(|index| module.class_info(index))
+            .map(|(name, _)| name)
+            .as_deref(),
+        &path,
+    );
     let plugin_path = path.clone();
 
     let options = eframe::NativeOptions {
@@ -482,7 +510,7 @@ fn main() -> ExitCode {
                 geometry_out: args.geometry.clone(),
                 handle: handle.unwrap_or(std::ptr::null_mut()),
                 cid,
-                name: presets::plugin_name(&plugin_path),
+                name: label,
                 state,
                 panel: None,
                 dialog_at: None,
@@ -499,4 +527,41 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_label;
+    use std::path::Path;
+
+    #[test]
+    fn the_strip_shows_the_reported_name_then_the_file() {
+        assert_eq!(
+            strip_label(
+                Some("Markdown Notes 11.0.0"),
+                Path::new("/plugins/Markdown Notes.vst3")
+            ),
+            "Markdown Notes 11.0.0 (Markdown Notes.vst3)"
+        );
+    }
+
+    /// The path is often the binary inside the bundle, and the strip has room
+    /// for a file name, not for a path.
+    #[test]
+    fn only_the_file_name_is_shown_never_the_path() {
+        let inside = Path::new("/plugins/Markdown Notes.vst3/Contents/x86_64-win/Markdown Notes.vst3");
+        assert_eq!(
+            strip_label(Some("Markdown Notes 11.0.0"), inside),
+            "Markdown Notes 11.0.0 (Markdown Notes.vst3)"
+        );
+    }
+
+    /// A plug-in that reports no name, or a factory that refuses to say,
+    /// leaves the file as the only thing to call it.
+    #[test]
+    fn a_plugin_that_names_itself_nothing_is_called_by_its_file() {
+        let path = Path::new("/plugins/Whatever.vst3");
+        assert_eq!(strip_label(None, path), "Whatever.vst3");
+        assert_eq!(strip_label(Some("   "), path), "Whatever.vst3");
+    }
 }
