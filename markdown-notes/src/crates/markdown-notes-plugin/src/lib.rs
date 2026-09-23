@@ -49,9 +49,16 @@ use vst3::{uid, Class, ComRef, ComWrapper, Steinberg::Vst::*, Steinberg::*};
 /// The document, shared between the processor, the controller and the view.
 pub type Shared = Arc<Mutex<Editor>>;
 
-const PLUGIN_NAME: &str = "Markdown Notes";
+/// The release this build is part of: the crate version, which is what the
+/// release workflow tags and publishes under. Changing it in
+/// `markdown-notes/Cargo.toml` is what makes a release happen.
+const RELEASE: &str = env!("CARGO_PKG_VERSION");
+
+/// The name the host lists and titles the window with. It carries the release
+/// so the build on screen can be told from any other.
+const PLUGIN_NAME: &str = concat!("Markdown Notes ", env!("CARGO_PKG_VERSION"));
 const VENDOR: &str = "markdown-notes";
-const VERSION: &str = "0.1.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SDK_VERSION: &str = "VST 3.7.0";
 /// This is an effect, not an instrument. It must be reported identically from
 /// every factory version, or a host can end up listing the plugin as both.
@@ -950,4 +957,53 @@ extern "system" fn GetPluginFactory() -> *mut IPluginFactory {
         .to_com_ptr::<IPluginFactory>()
         .map(|p| p.into_raw())
         .unwrap_or(std::ptr::null_mut())
+}
+
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+
+    /// Read one of VST3's fixed C string fields back as text.
+    fn text(field: &[c_char]) -> String {
+        let end = field.iter().position(|c| *c == 0).unwrap_or(field.len());
+        field[..end].iter().map(|c| *c as u8 as char).collect()
+    }
+
+    fn class_info() -> PClassInfo {
+        let factory = ComWrapper::new(Factory)
+            .to_com_ptr::<IPluginFactory>()
+            .expect("no factory");
+        let mut info: PClassInfo = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { factory.getClassInfo(0, &mut info) }, kResultOk);
+        info
+    }
+
+    #[test]
+    fn the_name_the_host_lists_carries_the_release() {
+        let info = class_info();
+        assert_eq!(text(&info.name), format!("Markdown Notes {RELEASE}"));
+    }
+
+    /// VST3 gives the name 64 bytes. A longer one is cut off, and a cut
+    /// version number is worse than none, so this fails before that can ship.
+    #[test]
+    fn the_name_fits_the_field_the_host_reads_it_into() {
+        let info = class_info();
+        assert!(
+            PLUGIN_NAME.len() < info.name.len(),
+            "{PLUGIN_NAME:?} is {} bytes, the field holds {}",
+            PLUGIN_NAME.len(),
+            info.name.len()
+        );
+        assert_eq!(text(&info.name), PLUGIN_NAME, "the name was cut short");
+    }
+
+    /// The release in the name is the crate version, so changing that version
+    /// is the only thing that changes it.
+    #[test]
+    fn the_release_in_the_name_is_the_crate_version() {
+        assert_eq!(RELEASE, env!("CARGO_PKG_VERSION"));
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+        assert_eq!(PLUGIN_NAME, format!("Markdown Notes {}", env!("CARGO_PKG_VERSION")));
+    }
 }

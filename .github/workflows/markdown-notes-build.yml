@@ -24,8 +24,54 @@ defaults:
     working-directory: markdown-notes
 
 jobs:
+  # The release is the version in markdown-notes/Cargo.toml, and changing it is
+  # what asks for a release. A push that leaves it alone changes nothing anyone
+  # can install, so nothing is built.
+  version:
+    name: Read the version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changed: ${{ steps.version.outputs.changed }}
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2 # this commit and the one before, to compare them
+
+      - name: Compare it with the commit before
+        id: version
+        shell: bash
+        env:
+          # Asking for the run by hand is asking for the build, whatever the
+          # last commit did to the version.
+          BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          version_of() { sed -n 's/^version = "\([^"]*\)".*/\1/p' | head -1; }
+          now=$(version_of < markdown-notes/Cargo.toml)
+          [ -n "$now" ] || { echo "no version in markdown-notes/Cargo.toml"; exit 1; }
+          before=$(git show HEAD~1:markdown-notes/Cargo.toml 2>/dev/null | version_of || true)
+          echo "version=$now" >> "$GITHUB_OUTPUT"
+          if [ "$BY_HAND" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$now, asked for by hand"
+          elif [ "$now" = "$before" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "still $now, nothing to publish"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$now, was ${before:-none}"
+          fi
+
   windows:
     name: Windows (x86_64)
+    needs: version
+    if: needs.version.outputs.changed == 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -50,6 +96,8 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon)
+    needs: version
+    if: needs.version.outputs.changed == 'true'
     runs-on: macos-14
     permissions:
       contents: read
@@ -76,7 +124,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [windows, macos]
+    needs: [version, windows, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write # uploads the release assets
@@ -89,21 +137,28 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Number this release
-        id: number
+      # A run asked for by hand replaces what is at that version, so the same
+      # version can be published again. The old release and its tag go first,
+      # because the tag has to be able to move to this commit.
+      - name: Take down any release already at this version
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: markdown-notes-${{ needs.version.outputs.version }}
         run: |
-          published=$(gh api --paginate 'repos/{owner}/{repo}/releases' --jq 'length' \
-            | awk '{ total += $1 } END { print total + 0 }')
-          echo "n=$((published + 1))" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --cleanup-tag --yes
+            echo "took down $TAG"
+          else
+            echo "nothing published at $TAG"
+          fi
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: markdown-notes-${{ steps.number.outputs.n }}
-          name: Markdown Notes ${{ steps.number.outputs.n }}
+          tag_name: markdown-notes-${{ needs.version.outputs.version }}
+          name: Markdown Notes ${{ needs.version.outputs.version }}
           files: |
             artifacts/markdown-notes-windows-x86_64.zip
             artifacts/markdown-notes-macos-arm64.zip

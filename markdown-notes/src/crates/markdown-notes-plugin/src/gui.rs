@@ -293,7 +293,7 @@ fn system_is_dark() -> bool {
 
 fn settings(width: i32, height: i32) -> EguiWindowSettings {
     EguiWindowSettings::new()
-        .with_tile("Markdown Notes")
+        .with_tile(crate::PLUGIN_NAME)
         .with_size(Size::Logical(LogicalSize {
             width: width as f64,
             height: height as f64,

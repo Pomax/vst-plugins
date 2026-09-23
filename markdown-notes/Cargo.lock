@@ -2629,7 +2629,7 @@ dependencies = [
 
 [[package]]
 name = "markdown-notes-core"
-version = "0.1.0"
+version = "11.0.0"
 dependencies = [
  "base64",
  "kode-core",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "markdown-notes-plugin"
-version = "0.1.0"
+version = "11.0.0"
 dependencies = [
  "accesskit",
  "arboard",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "markdown-notes-testrunner"
-version = "0.1.0"
+version = "11.0.0"
 dependencies = [
  "markdown-notes-core",
  "vst3-loader",
@@ -6028,7 +6028,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "11.0.0"
 dependencies = [
  "core-graphics",
  "markdown-notes-core",
