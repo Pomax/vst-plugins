@@ -491,55 +491,10 @@ flowchart TD
         assert!(svg.contains("#theme-css text { fill: #654321; }"));
     }
 
-    #[test]
-    fn render_svg_sync_applies_external_site_theme_to_plain_source() {
-        let renderer = HeadlessRenderer::new()
-            .with_site_config(merman_core::MermaidConfig::from_value(json!({
-                "theme": "neutral"
-            })))
-            .with_diagram_id("external-theme");
-        let source = "flowchart TD\n  A[Plain source] --> B[External theme]";
-
-        let svg = renderer.render_svg_sync(source).unwrap().unwrap();
-
-        assert!(
-            svg.contains("#external-theme .labelBkg{background-color:rgba(255, 255, 255, 0.5);}")
-        );
-    }
-
-    #[test]
-    fn render_svg_sync_applies_external_neo_theme_to_plain_source() {
-        let renderer = HeadlessRenderer::new()
-            .with_site_config(merman_core::MermaidConfig::from_value(json!({
-                "theme": "neo"
-            })))
-            .with_diagram_id("external-neo");
-        let source = "flowchart TD\n  A[Plain source] --> B[Neo theme]";
-
-        let svg = renderer.render_svg_sync(source).unwrap().unwrap();
-
-        assert!(svg.contains("fill:#ffffff;stroke:#000000;stroke-width:2px;"));
-        assert!(
-            svg.contains("#external-neo .labelBkg{background-color:rgba(204, 204, 204, 0.5);}")
-        );
-    }
-
-    #[test]
-    fn render_svg_sync_falls_back_for_unknown_external_theme() {
-        let renderer = HeadlessRenderer::new()
-            .with_site_config(merman_core::MermaidConfig::from_value(json!({
-                "theme": "unknown"
-            })))
-            .with_diagram_id("external-unknown");
-        let source = "flowchart TD\n  A[Plain source] --> B[Unknown theme]";
-
-        let svg = renderer.render_svg_sync(source).unwrap().unwrap();
-
-        assert!(svg.contains("fill:#ECECFF;stroke:#9370DB;stroke-width:1px;"));
-        assert!(
-            svg.contains("#external-unknown .labelBkg{background-color:rgba(232, 232, 232, 0.5);}")
-        );
-    }
+    // Upstream also checked that `neutral`, `neo` and an unknown theme name
+    // each render in their own colours. This fork carries two themes, and
+    // every other name draws in the light one, so there is nothing to tell
+    // apart.
 
     #[test]
     fn supported_host_theme_presets_are_separate_from_mermaid_themes() {
@@ -555,36 +510,28 @@ flowchart TD
                 "ayu-dark"
             ]
         );
-        assert!(merman_core::supported_themes().contains(&"default"));
+        assert!(merman_core::supported_themes().contains(&"redux-color"));
         assert!(!merman_core::supported_themes().contains(&"one-dark"));
     }
 
+    /// A theme given per request does not leak into the next one.
     #[test]
     fn render_svg_with_site_config_is_request_scoped() {
         let renderer = HeadlessRenderer::new().with_diagram_id("request-site-theme");
         let source = "flowchart TD\n  A[Plain source] --> B[Request theme]";
 
-        let themed = renderer
+        let dark = renderer
             .render_svg_with_site_config_sync(
                 source,
                 merman_core::MermaidConfig::from_value(json!({
-                    "theme": "neutral"
+                    "theme": "redux-dark-color"
                 })),
             )
             .unwrap()
             .unwrap();
-        let plain = renderer.render_svg_sync(source).unwrap().unwrap();
+        let light = renderer.render_svg_sync(source).unwrap().unwrap();
 
-        assert!(
-            themed.contains(
-                "#request-site-theme .labelBkg{background-color:rgba(255, 255, 255, 0.5);}"
-            )
-        );
-        assert!(
-            plain.contains(
-                "#request-site-theme .labelBkg{background-color:rgba(232, 232, 232, 0.5);}"
-            )
-        );
+        assert_ne!(dark, light, "the request's theme was kept for the next one");
     }
 
     #[test]

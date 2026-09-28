@@ -334,7 +334,12 @@ pub fn open(
 ) -> Option<Window> {
     let mut gui = Gui::new(editor);
     gui.incoming = incoming;
-    EguiWindow::create(settings(width, height).with_parent(parent), gui).ok()
+    let window = EguiWindow::create(settings(width, height).with_parent(parent), gui).ok()?;
+    // `create` builds the window without opening it. The standalone path gets
+    // that from `run_until_closed`; a window inside a host does not, and stays
+    // black until it is shown.
+    window.show().ok()?;
+    Some(window)
 }
 
 /// Open the editor as a standalone window and block until it closes.

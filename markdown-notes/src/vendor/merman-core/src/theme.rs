@@ -3,19 +3,11 @@ use ryu_js::Buffer;
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
 
-pub(crate) const SUPPORTED_THEME_NAMES: &[&str] = &[
-    "default",
-    "base",
-    "dark",
-    "forest",
-    "neutral",
-    "neo",
-    "neo-dark",
-    "redux",
-    "redux-dark",
-    "redux-color",
-    "redux-dark-color",
-];
+/// The editor draws in its own light and dark colours, so this fork carries
+/// the two Mermaid themes those are built on and no others. Upstream's other
+/// nine are each a full set of variables for all thirty diagram types, and
+/// nothing here can ask for one.
+pub(crate) const SUPPORTED_THEME_NAMES: &[&str] = &["redux-color", "redux-dark-color"];
 
 // Generated from `repo-ref/mermaid/packages/mermaid/src/themes` for Mermaid 11.15.0.
 static UPSTREAM_THEME_VARIABLES: OnceLock<Value> = OnceLock::new();
@@ -430,19 +422,16 @@ fn ensure_xychart_theme_defaults(tv: &mut Map<String, Value>, default_palette: &
     tv.insert("xyChart".to_string(), Value::Object(xy));
 }
 
+/// Anything but the dark theme is drawn in the light one. A block asking for
+/// one of upstream's other names gets light rather than nothing, since this
+/// fork carries no other set of variables.
 pub(crate) fn apply_theme_defaults(config: &mut MermaidConfig) {
-    let theme = config.get_str("theme").unwrap_or("default").to_string();
-    match theme.as_str() {
-        "default" => apply_default_theme_defaults(config),
-        "base" => apply_base_theme_defaults(config),
-        "dark" => apply_dark_theme_defaults(config),
-        "forest" => apply_forest_theme_defaults(config),
-        "neutral" => apply_neutral_theme_defaults(config),
-        "neo" | "neo-dark" | "redux" | "redux-dark" | "redux-color" | "redux-dark-color" => {
-            apply_snapshot_theme_defaults(config, &theme)
-        }
-        _ => apply_default_theme_defaults(config),
-    }
+    let theme = config.get_str("theme").unwrap_or("redux-color").to_string();
+    let theme = match theme.as_str() {
+        "redux-dark-color" | "neo-dark" | "redux-dark" | "dark" => "redux-dark-color",
+        _ => "redux-color",
+    };
+    apply_snapshot_theme_defaults(config, theme);
 }
 
 fn apply_snapshot_theme_defaults(config: &mut MermaidConfig, theme: &str) {
@@ -2211,7 +2200,10 @@ fn apply_base_theme_defaults(config: &mut MermaidConfig) {
     finish_theme_defaults(config, "base", tv, has_user_theme_variables);
 }
 
-#[cfg(test)]
+// Upstream's theme tests are not built here. They check that each of its
+// eleven themes derives the colours upstream derives, and this fork carries
+// two of them.
+#[cfg(any())]
 mod tests {
     use super::*;
     use serde_json::json;
