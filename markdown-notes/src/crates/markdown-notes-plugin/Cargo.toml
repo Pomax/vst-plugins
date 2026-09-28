@@ -17,29 +17,35 @@ vst3.workspace = true
 rfd = "0.15"
 # default-features off drops the embedded font set (~1.4 MB); the fonts come
 # from the operating system instead, see gui::install_system_fonts.
-egui = { version = "0.35", default-features = false }
-baseview = "0.2.2"
+egui = { version = "0.36", default-features = false }
+baseview = "0.3.4"
 raw-window-handle = "0.6"
 dark-light = "2.0.0"
 
 # Headless pixel rendering. Optional because it drags in the whole wgpu/naga
 # stack (gigabytes of build output for a plugin that ships as 14 MB) and
 # nothing but the snapshot tooling needs it.
-egui_kittest = { version = "0.35.0", features = ["wgpu"], optional = true }
+egui_kittest = { version = "0.36.0", features = ["wgpu"], optional = true }
 # Pictures dropped or pasted into a note: PNG and JPEG decoded for showing,
 # and a pasted bitmap encoded as PNG.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 # The clipboard's picture, when what is pasted is not text.
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 font-kit = "0.14.3"
-# Mermaid code to SVG.
-merman = { version = "0.7.0", features = ["render"] }
+# Mermaid code to SVG. Forked into src/vendor to carry only the diagram types
+# this plug-in draws; see src/vendor/README.md.
+merman = { path = "../../vendor/merman", features = ["render"] }
 # merman takes mermaid's configuration as JSON, and keeps each edge's layout
 # points in its SVG as base64 JSON, which elbows.rs reads.
 serde_json = "1"
 base64 = "0.22"
 # SVG to pixels.
-resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts"] }
+resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts"] }
+# Measuring text for merman's layout, with the fonts the page is drawn in.
+# HarfRust is HarfBuzz's own Rust implementation and is already in the binary
+# under egui, so measuring with it adds nothing and shapes the same way the
+# editor does.
+harfrust = "0.12.0"
 
 # The editor's renderer, chosen per platform.
 #
@@ -48,10 +54,10 @@ resvg = { version = "0.47", default-features = false, features = ["text", "syste
 # texture the painter asks for comes back as zero and egui_glow panics. wgpu
 # draws through Metal there instead.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-egui-baseview = { version = "0.6.0", default-features = false, features = ["opengl"] }
+egui-baseview = { version = "0.7.2", default-features = false, features = ["opengl", "tracing"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-egui-baseview = { version = "0.6.0", default-features = false, features = ["wgpu"] }
+egui-baseview = { version = "0.7.2", default-features = false, features = ["wgpu", "tracing"] }
 # The drop target on the editor's view, see drop.rs. The same crates baseview
 # draws the view with.
 objc2 = "0.6"

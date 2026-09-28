@@ -4,6 +4,9 @@ members = [
     "src/crates/markdown-notes-core",
     "src/crates/markdown-notes-plugin",
     "src/crates/markdown-notes-testrunner",
+    "src/vendor/merman",
+    "src/vendor/merman-core",
+    "src/vendor/merman-render",
     "src/xtask",
 ]
 

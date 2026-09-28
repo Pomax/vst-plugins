@@ -77,6 +77,11 @@ native handle to `IPlugView::attached`, and keeps the plugin alive until the
 window closes. This is the only way to see a plugin's own editor without a DAW:
 `createView` alone builds the view object and draws nothing.
 
+Its strip names the plug-in twice: the name the factory reports, which is what
+a DAW lists and which usually carries a version, and then in brackets the file
+it was loaded from. The two differ, and renaming the file on disk changes only
+the second.
+
 The window remembers where it was left. baseview has no position API, so that
 goes through the platform — `SetWindowPos` on Windows, `NSWindow` on macOS —
 and the position is kept in `.cache/mini-host-window.txt`. The title bar icon

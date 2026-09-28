@@ -14,6 +14,24 @@ use markdown_notes_plugin::gui::{Pictures, IMAGES_TAB};
 const WIDTH: f32 = 700.0;
 const HEIGHT: f32 = 500.0;
 
+/// A file dropped on the window.
+///
+/// egui describes a dropped file by a trait and ships no implementation of it,
+/// because a browser hands one over differently from a desktop. A test drops
+/// files that are really on disk.
+#[derive(Debug)]
+struct ADroppedFile(PathBuf);
+
+impl egui::DroppedFile for ADroppedFile {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
 /// A 40 by 30 picture, all one colour that nothing else in the window is.
 const PICTURE_COLOUR: [u8; 4] = [200, 40, 160, 255];
 
@@ -72,10 +90,10 @@ impl Window {
     }
 
     fn drop_file(&mut self, path: PathBuf) {
-        self.harness.input_mut().dropped_files.push(egui::DroppedFile {
-            path: Some(path),
-            ..Default::default()
-        });
+        self.harness
+            .input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(ADroppedFile(path)));
         self.step();
     }
 

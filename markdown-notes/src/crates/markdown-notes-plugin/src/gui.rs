@@ -20,10 +20,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use baseview::dpi::{LogicalSize, Size};
-use baseview::{WindowHandle, WindowScalePolicy};
+use baseview::Window;
 use egui::text::LayoutJob;
 use egui::{Color32, FontFamily, FontId, Sense, Stroke, TextFormat};
-use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
+use egui_baseview::{App, EguiWindow, EguiWindowSettings, Frame};
 use markdown_notes_core::{
     Block, BlockKind, Command, Key, Mods, Span, SpanRole, Style, Theme, ViewMode,
 };
@@ -293,12 +293,32 @@ fn system_is_dark() -> bool {
 
 fn settings(width: i32, height: i32) -> EguiWindowSettings {
     EguiWindowSettings::new()
-        .with_tile(crate::PLUGIN_NAME)
+        .with_title(crate::PLUGIN_NAME)
         .with_size(Size::Logical(LogicalSize {
             width: width as f64,
             height: height as f64,
         }))
-        .with_scale_policy(WindowScalePolicy::SystemScaleFactor)
+}
+
+impl App for Gui {
+    /// Fonts before the first frame: `set_fonts` binds them for the pass after
+    /// the one it is called in, and the first pass already draws text in every
+    /// family the editor uses.
+    fn build(
+        &mut self,
+        ctx: egui::Context,
+        _frame: &mut Frame,
+    ) -> Result<(), baseview::HandlerError> {
+        crate::fonts::install_base(&ctx);
+        Ok(())
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame) {
+        let background = draw_ui(ui, self);
+        // Also hand the background to the renderer, which clears to it before
+        // any of our painting happens.
+        frame.set_clear_color(egui::Rgba::from(background));
+    }
 }
 
 /// Open the editor window as a child of the host's window.
@@ -311,22 +331,10 @@ pub fn open(
     incoming: Incoming,
     width: i32,
     height: i32,
-) -> WindowHandle {
+) -> Option<Window> {
     let mut gui = Gui::new(editor);
     gui.incoming = incoming;
-    EguiWindow::open_parented(
-        parent,
-        settings(width, height),
-        gui,
-        // Fonts before the first frame: `set_fonts` binds them for the pass
-        // after the one it is called in, and the first pass already draws text
-        // in every family the editor uses.
-        |ctx: &egui::Context, _cmds: &mut ExtraOutputCommands, _state: &mut Gui| {
-            crate::fonts::install_base(ctx);
-        },
-        |_out: &egui::FullOutput, _vp: &egui::ViewportOutput, _state: &mut Gui| {},
-        |ui: &mut egui::Ui, cmds: &mut ExtraOutputCommands, state: &mut Gui| draw(ui, state, cmds),
-    )
+    EguiWindow::create(settings(width, height).with_parent(parent), gui).ok()
 }
 
 /// Open the editor as a standalone window and block until it closes.
@@ -334,25 +342,12 @@ pub fn open(
 /// This runs the *same* drawing and input code the plugin uses, so it is a
 /// faithful way to look at the editor without loading it into a DAW.
 pub fn open_blocking(editor: Shared, width: i32, height: i32) {
-    EguiWindow::open_blocking(
-        settings(width, height),
-        Gui::new(editor),
-        // Fonts before the first frame: `set_fonts` binds them for the pass
-        // after the one it is called in, and the first pass already draws text
-        // in every family the editor uses.
-        |ctx: &egui::Context, _cmds: &mut ExtraOutputCommands, _state: &mut Gui| {
-            crate::fonts::install_base(ctx);
-        },
-        |_out: &egui::FullOutput, _vp: &egui::ViewportOutput, _state: &mut Gui| {},
-        |ui: &mut egui::Ui, cmds: &mut ExtraOutputCommands, state: &mut Gui| draw(ui, state, cmds),
-    );
-}
-
-fn draw(ui: &mut egui::Ui, gui: &mut Gui, commands: &mut ExtraOutputCommands) {
-    let background = draw_ui(ui, gui);
-    // Also hand the background to the renderer, which clears to it before any
-    // of our painting happens.
-    commands.clear_color(egui::Rgba::from(background));
+    match EguiWindow::create(settings(width, height), Gui::new(editor)) {
+        Ok(window) => {
+            let _ = window.run_until_closed();
+        }
+        Err(e) => eprintln!("the editor window would not open: {e}"),
+    }
 }
 
 /// Draw one frame and return the background colour the theme calls for.
@@ -577,10 +572,8 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
     }
     let dropped = ui.input(|i| i.raw.dropped_files.clone());
     for file in dropped {
-        if let Some(path) = file.path {
-            if let Some(picture) = crate::pictures::Incoming::from_file(&path) {
-                arrived.push(picture);
-            }
+        if let Some(picture) = crate::pictures::Incoming::from_file(file.path()) {
+            arrived.push(picture);
         }
     }
     if gui.document_focused {
@@ -2451,8 +2444,10 @@ mod tests {
     fn the_caret_lands_after_bold_text_not_inside_it() {
         let ctx = egui::Context::default();
         crate::fonts::install_base(&ctx);
-        // Fonts arrive on the pass after the one that installs them.
-        let _ = ctx.run_ui(Default::default(), |_| {});
+        // Fonts arrive on the pass after the one that installs them. Nothing
+        // here paints, and egui refuses to drop textures nobody applied, so
+        // each pass's atlas changes are cleared by hand.
+        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
 
         let body = FontId::new(15.0, FontFamily::Proportional);
         let bold = FontId::new(15.0, FontFamily::Name(crate::fonts::BOLD.into()));
@@ -2468,7 +2463,7 @@ mod tests {
 
         let mut galley = None;
         let mut flat = 0.0;
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        ctx.run_ui(Default::default(), |ui| {
             galley = Some(ui.painter().layout_job(job.clone()));
             // Where measuring the plain text in the body font would put it.
             flat = ui
@@ -2476,7 +2471,9 @@ mod tests {
                 .layout_no_wrap("testing as well y".to_string(), body.clone(), Color32::WHITE)
                 .size()
                 .x;
-        });
+        })
+        .textures_delta
+        .clear();
         let galley = galley.expect("nothing was laid out");
         let x = offset_spot(&galley, &map, 21).min.x;
 

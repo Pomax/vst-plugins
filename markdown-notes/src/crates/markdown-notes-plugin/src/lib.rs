@@ -36,6 +36,7 @@ pub mod fit;
 pub mod fonts;
 pub mod gui;
 pub mod keys;
+pub mod measure;
 pub mod node_widths;
 pub mod pictures;
 
@@ -49,15 +50,13 @@ use vst3::{uid, Class, ComRef, ComWrapper, Steinberg::Vst::*, Steinberg::*};
 /// The document, shared between the processor, the controller and the view.
 pub type Shared = Arc<Mutex<Editor>>;
 
-/// The release this build is part of: the crate version, which is what the
-/// release workflow tags and publishes under. Changing it in
-/// `markdown-notes/Cargo.toml` is what makes a release happen.
-const RELEASE: &str = env!("CARGO_PKG_VERSION");
-
-/// The name the host lists and titles the window with. It carries the release
+/// The name the host lists and titles the window with. It carries the version
 /// so the build on screen can be told from any other.
 const PLUGIN_NAME: &str = concat!("Markdown Notes ", env!("CARGO_PKG_VERSION"));
 const VENDOR: &str = "markdown-notes";
+/// The release this build is part of, which is what the workflow tags and
+/// publishes under. Changing it in `markdown-notes/Cargo.toml` is what makes a
+/// release happen.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SDK_VERSION: &str = "VST 3.7.0";
 /// This is an effect, not an instrument. It must be reported identically from
@@ -550,7 +549,7 @@ pub struct MarkdownNotesView {
     ///
     /// `RefCell` rather than `Mutex` because baseview's handle is `!Send` and
     /// VST3 guarantees `IPlugView` calls arrive on the UI thread.
-    window: RefCell<Option<baseview::WindowHandle>>,
+    window: RefCell<Option<baseview::Window>>,
     /// The drop target on the child window, for as long as it is open.
     drops: RefCell<Option<drop::DropTarget>>,
 }
@@ -638,7 +637,10 @@ impl IPlugViewTrait for MarkdownNotesView {
             Err(_) => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
         };
         let incoming = gui::Incoming::default();
-        let handle = gui::open(&parent, self.editor.clone(), incoming.clone(), width, height);
+        let Some(handle) = gui::open(&parent, self.editor.clone(), incoming.clone(), width, height)
+        else {
+            return kInternalError;
+        };
         // The window is up now, so the drop target can go on it.
         if let Ok(mut drops) = self.drops.try_borrow_mut() {
             *drops = drop::accept(&parent, incoming);
@@ -981,7 +983,7 @@ mod factory_tests {
     #[test]
     fn the_name_the_host_lists_carries_the_release() {
         let info = class_info();
-        assert_eq!(text(&info.name), format!("Markdown Notes {RELEASE}"));
+        assert_eq!(text(&info.name), format!("Markdown Notes {VERSION}"));
     }
 
     /// VST3 gives the name 64 bytes. A longer one is cut off, and a cut
@@ -1002,8 +1004,10 @@ mod factory_tests {
     /// is the only thing that changes it.
     #[test]
     fn the_release_in_the_name_is_the_crate_version() {
-        assert_eq!(RELEASE, env!("CARGO_PKG_VERSION"));
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-        assert_eq!(PLUGIN_NAME, format!("Markdown Notes {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            PLUGIN_NAME,
+            format!("Markdown Notes {}", env!("CARGO_PKG_VERSION"))
+        );
     }
 }

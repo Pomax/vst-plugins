@@ -262,7 +262,7 @@ mod tests {
 
         let width_in = |family: FontFamily| {
             let mut width = 0.0;
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
                 width = ui
                     .painter()
                     .layout_no_wrap(
@@ -273,6 +273,9 @@ mod tests {
                     .size()
                     .x;
             });
+            // Laying out text fills the font atlas, and nothing here paints it.
+            // egui refuses to drop textures nobody applied.
+            output.textures_delta.clear();
             width
         };
 

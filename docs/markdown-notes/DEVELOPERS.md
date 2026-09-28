@@ -15,6 +15,7 @@ complete VST3 bindings with no C++ SDK dependency, and supports both
 | `src/crates/markdown-notes-core` | The editor: a document, WYSIWYG layout, as-you-type conversion, plugin state, file I/O. No UI, no plugin dependencies. The buffer, caret, selection and undo are [`kode-markdown`](https://crates.io/crates/kode-markdown)'s; see [EDITOR_CHOICE.md](EDITOR_CHOICE.md). |
 | `src/crates/markdown-notes-plugin` | The VST3 plugin, plus the egui GUI. |
 | `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../tools/mini-host`. |
+| `src/vendor` | A cut-down copy of `merman`, which draws the mermaid blocks. See [The fork](#the-fork). |
 | `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite. |
 | `src/tools` | Screenshot helpers for the real editor window. |
 
@@ -194,9 +195,20 @@ Markdown, `docs/`, `.github/`, `LICENSE` and `.gitignore` are ignored, so
 editing the workflows does not cut a release. It builds and zips both
 platforms, then publishes them as a GitHub release. Before publishing, each job
 loads the bundle it just built and asks the factory for its classes, so a build
-that produces something no host can open fails there rather than in a DAW. Releases are numbered by how
-many already exist — the first is `1`, the one after release `8` is `9`. There
-is no version number and no semver; this is a product, not a library.
+that produces something no host can open fails there rather than in a DAW.
+
+A release happens when the version in
+[`markdown-notes/Cargo.toml`](../../markdown-notes/Cargo.toml) changes, and not
+otherwise. The workflow reads that version, compares it with the same file one
+commit back, and builds nothing unless it moved. The tag and the release are
+named for it. A run started by hand builds whatever the version says and
+replaces any release already at it, tag included, so the same version can be
+published again.
+
+That version is also the plug-in's name: the factory reports
+`Markdown Notes 11.0.0`, which is what a DAW lists and what the mini host's
+strip shows beside the file name. So the version on screen is the release the
+binary came from, and nothing else writes it.
 
 ## Keys
 
@@ -317,27 +329,47 @@ source view never draws a picture. The text is never changed by any of this.
 Code that cannot be drawn, an empty block included, is drawn as a picture
 reading `error in mermaid code`. A fence nothing closes stays code.
 
-[`merman`](https://crates.io/crates/merman) turns the code into SVG and
+`merman` turns the code into SVG and
 [`resvg`](https://crates.io/crates/resvg) turns the SVG into pixels, in
 [`diagram.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/diagram.rs).
-The site config is the theme and look Mermaid 12 gives a state diagram by
+The site config is the theme and look Mermaid 12 gives a diagram by
 default, which is what mermaid.live shows: `theme: redux-color`
 (`redux-dark-color` in the dark scheme) and `look: neo`. Flowcharts default to
 `flowchart.curve: linear`. A block's own frontmatter overrides all of it.
-Mermaid 12's other two defaults, `layout: elk` and `state.minNodeWidth`, are
-not something merman 0.7.0 reads: it follows Mermaid 11 and lays out with its
-dagre port.
+Mermaid 12's other default, `layout: elk`, is not something merman reads: it
+follows Mermaid 11 and lays out with its dagre port.
 
-merman sizes a state from its name alone: it has no `minNodeWidth`, and
-`state.padding` changes nothing. So
+### The fork
+
+merman is not taken from crates.io. A copy lives in
+[`src/vendor`](../../markdown-notes/src/vendor), cut down to the two diagram
+types this plug-in draws, because the published crate carries thirty of them
+and each is its own layout engine and SVG emitter. That was 4.7 MB of a 14.7 MB
+plug-in.
+
+Gone from the copy: every diagram type but the flowchart and the gantt chart,
+their parsers, their detectors, and their entries in the dispatch tables and
+the two enums. A diagram of any other kind now fails to detect and is drawn as
+the error picture. Upstream's own tests, examples and benches are not built,
+because they cover what was removed.
+
+Also gone is the table of character widths merman measured text with. Upstream
+Mermaid asks a browser how wide a string is, and merman, having no browser,
+carried 4,900 lines of the browser's answers. This plug-in has real fonts, so
+[`measure.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/measure.rs)
+shapes each line with HarfRust in the font resvg will draw it in, and hands
+merman that measurer. Labels are therefore sized by the font on the machine
+rather than by a font the table was made from, and the geometry no longer
+matches upstream Mermaid exactly.
+
+Updating merman means redoing the cut. The alternative is asking upstream for
+features that select diagram types.
+
+Rows are 100 apart (`rankSpacing`), which is the room the edges are routed in.
 [`node_widths.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/node_widths.rs)
-redraws the outline of any state narrower than 72 at that width, and the
-editor asks merman for enough `state.nodeSpacing` to widen them into. Rows are
-100 apart (`rankSpacing`, for states and flowcharts), which is the room the
-edges are routed in.
+widens a node narrower than 72 to that width.
 
-merman 0.7.0 draws the edges of a state diagram as splines and reads no setting
-for it, so
+merman draws edges as splines and reads no setting for it, so
 [`elbows.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/elbows.rs)
 redraws them, and a flowchart's the same way, from the layout points merman
 leaves in each edge's `data-points`: out of the bottom of one node, through the
@@ -351,9 +383,8 @@ the shortest highest, which keeps edges of one node from crossing each other.
 Where an edge does cross another it goes over it in a bump.
 
 `mermaid-rs-renderer` was tried against the same diagram with spacing of up to
-160 (its own options, frontmatter, `stateDiagram-v2` and as a flowchart). It
-ignores spacing for state diagrams, and its flowchart routing loops edges
-around nodes and leaves labels off their lines. The pictures are made by
+160. Its flowchart routing loops edges around nodes and leaves labels off their
+lines. The pictures are made by
 `tests/mermaid_renderers.rs`. The label is put back on its point, its box is made solid so the line
 does not show through the words, and the picture is widened if the label now
 reaches past its edge. The `neo` look's
@@ -362,7 +393,7 @@ redrawn edge is pointed at the `-margin` arrowhead merman also defines, which
 is sized in pixels. An edge that runs up the page keeps merman's curve.
 
 [`tests/mermaid_renderers.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/tests/mermaid_renderers.rs)
-draws one large state diagram with merman, with the editor's own path, and with
+draws one large flowchart with merman, with the editor's own path, and with
 `mermaid-rs-renderer` (a dev-dependency kept for that comparison), and leaves
 the pictures in `markdown-notes/.cache/uitests/`.
 A picture is drawn once per code, theme and screen scale, and dropped when no

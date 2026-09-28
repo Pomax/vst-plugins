@@ -77,35 +77,18 @@ fn inked(picture: &Picture) -> usize {
         .count()
 }
 
-#[test]
-fn the_editor_draws_the_state_diagram() {
-    let svg = markdown_notes_plugin::diagram::svg(STATES, look()).expect("no SVG was made");
-    let kept = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.cache/uitests/states-editor.svg");
-    let _ = std::fs::write(kept, &svg);
-
-    let picture = draw(STATES, look(), &system_fonts()).expect("nothing was drawn");
-    println!(
-        "the editor: {}x{} at {}",
-        picture.width,
-        picture.height,
-        saved(&picture, "states-editor")
-    );
-    assert!(inked(&picture) > 1000);
-}
-
 /// On a dark page the lines and the words have to be light, or they are not
 /// there to be read.
 #[test]
-fn the_editor_draws_the_state_diagram_on_a_dark_page() {
+fn the_editor_draws_the_flowchart_on_a_dark_page() {
     let page = [27u8, 27, 27];
-    let picture = draw(STATES, Look::new(true, page, 1.0), &system_fonts())
+    let picture = draw(&as_a_flowchart(), Look::new(true, page, 1.0), &system_fonts())
         .expect("nothing was drawn");
     println!(
         "the editor, dark: {}x{} at {}",
         picture.width,
         picture.height,
-        saved(&picture, "states-editor-dark")
+        saved(&picture, "flowchart-editor-dark")
     );
     let light = picture
         .rgba
@@ -181,51 +164,25 @@ fn mermaid_rs_renderer_draws_the_state_diagram() {
 
 /// The edge shapes mermaid's `curve` setting names, each drawn by merman and
 /// kept, so the one that reads best can be picked by looking.
+/// What Mermaid 12 uses when it is given no configuration, which is what
+/// mermaid.live gives it. merman 0.7.0 follows Mermaid 11, so this says how
+/// much of it merman knows.
 #[test]
-fn merman_draws_the_state_diagram_with_each_edge_shape() {
-    let fonts = system_fonts();
-    for curve in ["linear", "step", "stepBefore", "stepAfter", "rounded"] {
-        let config = merman::config::MermaidConfig::from_value(serde_json::json!({
-            "flowchart": { "curve": curve },
-            "state": { "curve": curve },
-        }));
-        let svg = merman::render::HeadlessRenderer::new()
-            .with_site_config(config)
-            .render_svg_resvg_safe_sync(STATES)
-            .unwrap_or_else(|e| panic!("merman could not render with {curve}: {e}"))
-            .expect("merman did not see a diagram");
-        let picture = rasterise(&svg, look(), &fonts).expect("the SVG did not rasterise");
-        println!(
-            "merman, {curve}: {}x{} at {}",
-            picture.width,
-            picture.height,
-            saved(&picture, &format!("states-merman-{curve}"))
-        );
-        assert!(inked(&picture) > 1000, "{curve} drew nothing");
-    }
-}
-
-/// What Mermaid 12 uses for a state diagram when it is given no configuration,
-/// which is what mermaid.live gives it: taken from `StateDiagramConfig` in
-/// mermaid's `config.schema.yaml`. merman 0.7.0 follows Mermaid 11, so this
-/// says how much of it merman knows.
-#[test]
-fn merman_draws_the_state_diagram_with_the_settings_mermaid_12_defaults_to() {
+fn merman_draws_the_flowchart_with_the_settings_mermaid_12_defaults_to() {
     let config = merman::config::MermaidConfig::from_value(serde_json::json!({
         "theme": "redux-color",
         "look": "neo",
         "layout": "elk",
-        "state": {
+        "flowchart": {
             "theme": "redux-color",
             "look": "neo",
             "layout": "elk",
-            "minNodeWidth": 120,
             "wrappingWidth": 120,
         },
     }));
     let svg = merman::render::HeadlessRenderer::new()
         .with_site_config(config)
-        .render_svg_resvg_safe_sync(STATES)
+        .render_svg_resvg_safe_sync(&as_a_flowchart())
         .unwrap_or_else(|e| panic!("merman could not render: {e}"))
         .expect("merman did not see a diagram");
     let picture = rasterise(&svg, look(), &system_fonts()).expect("the SVG did not rasterise");
@@ -233,7 +190,7 @@ fn merman_draws_the_state_diagram_with_the_settings_mermaid_12_defaults_to() {
         "merman, mermaid 12 defaults: {}x{} at {}; themes it knows: {:?}",
         picture.width,
         picture.height,
-        saved(&picture, "states-merman-v12-defaults"),
+        saved(&picture, "flowchart-merman-v12-defaults"),
         merman::supported_themes(),
     );
     assert!(inked(&picture) > 1000);
@@ -297,20 +254,20 @@ fn merman_draws_the_flowchart_with_each_edge_shape() {
 }
 
 #[test]
-fn merman_draws_the_state_diagram() {
+fn merman_draws_the_flowchart() {
     let svg = merman::render::HeadlessRenderer::new()
-        .render_svg_resvg_safe_sync(STATES)
+        .render_svg_resvg_safe_sync(&as_a_flowchart())
         .expect("merman could not render the diagram")
         .expect("merman did not see a diagram");
     let kept = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.cache/uitests/states-merman.svg");
+        .join("../../../.cache/uitests/flowchart-merman.svg");
     let _ = std::fs::write(kept, &svg);
     let picture = rasterise(&svg, look(), &system_fonts()).expect("the SVG did not rasterise");
     println!(
         "merman: {}x{} at {}",
         picture.width,
         picture.height,
-        saved(&picture, "states-merman")
+        saved(&picture, "flowchart-merman")
     );
     assert!(inked(&picture) > 1000);
 }

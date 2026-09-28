@@ -104,6 +104,9 @@ pub fn svg(code: &str, look: Look) -> Option<String> {
     }));
     let svg = merman::render::HeadlessRenderer::new()
         .with_site_config(config)
+        // Measure with the fonts resvg will draw the SVG in, so a label never
+        // overflows the box laid out for it.
+        .with_text_measurer(crate::measure::shared())
         .render_svg_sync(code)
         .ok()??;
 
@@ -300,6 +303,34 @@ mod tests {
         Look::new(false, [255, 255, 255], 1.0)
     }
 
+    /// A node's box is laid out from what the text measures, so a longer
+    /// label has to produce a wider box.
+    ///
+    /// The measurement comes from shaping the label in the font the SVG will
+    /// be drawn in. A measurer that returned a constant, or zero, would still
+    /// draw a picture, and every other check here would still pass, while
+    /// every label overflowed its box.
+    #[test]
+    fn a_longer_label_is_given_a_wider_box() {
+        let width_of = |label: &str| -> f64 {
+            let svg = svg(&format!("flowchart LR\n    A[{label}]"), look())
+                .expect("no SVG was made");
+            let at = svg.find("<rect").expect("the node has no box");
+            let tag = &svg[at..];
+            let tag = &tag[..tag.find('>').expect("an unclosed rect")];
+            crate::elbows::attribute(tag, "width")
+                .and_then(|w| w.trim_end_matches("px").parse().ok())
+                .unwrap_or_else(|| panic!("no width in {tag}"))
+        };
+
+        let short = width_of("Hi");
+        let long = width_of("A considerably longer label than that one");
+        assert!(
+            long > short * 2.0,
+            "a label twenty times longer got a box {long} wide against {short}"
+        );
+    }
+
     #[test]
     fn a_flowchart_becomes_pixels() {
         let picture = draw(FLOWCHART, look(), &system_fonts()).expect("nothing was drawn");
@@ -352,7 +383,7 @@ mod tests {
     /// middle one has to be the box and not the line.
     #[test]
     fn an_edge_does_not_show_through_its_label() {
-        let svg = svg("stateDiagram\n  a --> b : through", look()).expect("no SVG");
+        let svg = svg("flowchart TD\n  a -->|through| b", look()).expect("no SVG");
         let number = |tag: &str, name: &str| -> f32 {
             crate::elbows::attribute(tag, name)
                 .and_then(|n| n.split_whitespace().next()?.parse().ok())
