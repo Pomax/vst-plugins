@@ -170,6 +170,7 @@ hidden:levels are close|140
 # is kept, which the expectations below say.
 showing:sprinkles|60
 dragto:620,420,500
+shot:%CACHE%\sections-dragged-small.png
 hidden:sprinkles|60
 showing:funky|60
 moveto:63,77
