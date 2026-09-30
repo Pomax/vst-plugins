@@ -776,6 +776,32 @@ unsafe extern "C" {
     ) -> *mut std::ffi::c_void;
     fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
     fn CFRelease(value: *mut std::ffi::c_void);
+    fn CGPreflightPostEventAccess() -> u8;
+    fn CGRequestPostEventAccess() -> u8;
+}
+
+/// Whether this process may post clicks and keystrokes, asking macOS for the
+/// permission when it may not.
+///
+/// An event posted without it is dropped without a word: the window opens,
+/// nothing is typed, and the test fails a few seconds later on what it could
+/// not find. Asking first puts the system's own prompt on screen instead,
+/// naming the application the tests were run from, and the run stops here
+/// until that has been allowed.
+fn may_post_input() -> Result<(), String> {
+    if unsafe { CGPreflightPostEventAccess() } != 0 {
+        return Ok(());
+    }
+    if unsafe { CGRequestPostEventAccess() } != 0 {
+        return Ok(());
+    }
+    Err("this application may not post keystrokes or clicks, so no test can \
+         run. macOS has just been asked to allow it. If a prompt came up, \
+         allow it and run the tests again. If none did, macOS already holds \
+         an entry for this application and never asks twice: remove it with \
+         `tccutil reset Accessibility <the terminal's bundle id>`, and the \
+         next run will ask"
+        .to_string())
 }
 
 /// Scroll the list under the pointer by a few lines, the way a wheel does.
@@ -1071,6 +1097,7 @@ pub fn drive(
         .map_err(|e| format!("reading {}: {e}", steps.display()))?;
     let reported = steps.with_extension("geometry");
 
+    may_post_input()?;
     let mut run = Run::start(host, plugin, state, &reported, settle)?;
     let result = play(&mut run, &text, shot_to);
     // A test that failed halfway can leave the recorder rolling, and it keeps
