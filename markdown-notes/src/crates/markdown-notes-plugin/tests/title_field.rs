@@ -302,6 +302,31 @@ fn a_name_just_typed_is_cut_when_the_window_shrinks_around_it() {
     assert_eq!(title_now(&editor), FITS_AT_FIRST, "the name itself was cut");
 }
 
+/// The name `sections-and-files` types, and the width it drags the window
+/// down to. That test reads the name off the real window and fails unless the
+/// shrunk window has cut it, so the same pair is checked here, where a failure
+/// says which of the two is wrong without a window to drive.
+const AT_THE_DRAGGED_SIZE: &str = "funky cake with sprinkles";
+const DRAGGED_WIDTH: f32 = 620.0;
+
+#[test]
+fn the_name_the_dragged_window_is_left_with_does_not_fit_it() {
+    let (mut harness, editor) = with_title(Some(AT_THE_DRAGGED_SIZE));
+    assert_eq!(
+        name_shown(&harness).0,
+        AT_THE_DRAGGED_SIZE,
+        "the name did not fit at {} wide to begin with",
+        SIZE.0
+    );
+
+    harness.set_size(egui::vec2(DRAGGED_WIDTH, SIZE.1));
+    harness.run_steps(4);
+
+    let (shown, _) = name_shown(&harness);
+    assert!(shown.ends_with("..."), "{shown:?} is not cut at {DRAGGED_WIDTH} wide");
+    assert_eq!(title_now(&editor), AT_THE_DRAGGED_SIZE, "the name itself was cut");
+}
+
 /// Clicking into a cut name edits the name, not the cut of it.
 #[test]
 fn a_cut_name_is_whole_again_while_it_is_being_edited() {

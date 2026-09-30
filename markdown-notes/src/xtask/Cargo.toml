@@ -29,5 +29,12 @@ objc2-app-kit = { version = "0.3.2", features = [
     # once something has asked for the application object.
     "NSApplication",
     "NSResponder",
+    # Leaving a picture on the clipboard for a `clipboard:` step.
+    "NSPasteboard",
 ] }
 objc2-foundation = { version = "0.3.2", features = ["std", "NSData"] }
+
+# The picture a `picture:` step writes is built by hand, and decoding it back
+# is how its tests know it is a picture at all.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }

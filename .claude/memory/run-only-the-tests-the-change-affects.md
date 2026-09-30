@@ -14,6 +14,10 @@ the run. Re-running the markdown-notes suite after a mini-host-only change costs
 user a minute of an unusable desktop and proves nothing.
 
 **How to apply:** name the suite — `uitest mini-host`, `uitest markdown-notes` — or the
-single test. The runner takes one name for exactly this. Only run everything
-when the change is shared: the driver in `tools/`, the plugin bundle, or the
-test harness itself. Related: [[never-run-a-test-you-do-not-save]].
+single test. The runner takes one name for exactly this. A change to the
+driver or the harness is not a reason to run everything either: rerun the
+tests that were failing, one at a time, and stop when each has passed. On
+2026-09-29 I started `./test.sh --full` after every UI test had already
+passed on its own, and was stopped: *"stop fucking running every goddamn test
+if you only fix one or two"*. Related: [[never-run-a-test-you-do-not-save]],
+[[redo-the-failed-step-not-the-procedure]].

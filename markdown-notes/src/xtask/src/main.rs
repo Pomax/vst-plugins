@@ -22,6 +22,8 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod png;
 mod uitest;
 
 use std::fs;
@@ -304,40 +306,41 @@ fn uitest(args: &[String]) -> Result<(), String> {
     uitest::run(&root, only, &host, &plugin)
 }
 
-/// The mini host's executable, built if it is not there yet.
+/// The mini host's executable, built from its current source.
+///
+/// Built every time, the same as the plugin is: a UI test is of the host as
+/// much as of the plugin, and one that ran against whatever executable
+/// happened to be lying in `binaries/` would pass or fail on code that is not
+/// the code in the tree. The host's own build script does the build and puts
+/// the result in `binaries/`, and cargo makes an unchanged build cost nothing.
 fn mini_host(root: &Path) -> Result<PathBuf, String> {
-    let project = root
-        .parent()
-        .ok_or("no directory above this project")?
-        .join("tools")
-        .join("mini-host");
+    let parent = root.parent().ok_or("no directory above this project")?;
+    let project = parent.join("tools").join("mini-host");
     let name = if cfg!(windows) { "mini-host.exe" } else { "mini-host" };
+    let script = if cfg!(windows) { "build.bat" } else { "build.sh" };
 
-    for candidate in [
-        root.parent().map(|p| p.join("binaries").join(name)),
-        Some(project.join(".cache").join("release").join(name)),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    let status = Command::new("cargo")
-        .args(["build", "--release", "--quiet"])
+    let mut build = if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", script]);
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.arg(script);
+        cmd
+    };
+    let status = build
         .current_dir(&project)
         .status()
         .map_err(|e| format!("building the mini host: {e}"))?;
     if !status.success() {
         return Err("building the mini host failed".into());
     }
-    let built = project.join(".cache").join("release").join(name);
-    built
-        .exists()
-        .then_some(built)
-        .ok_or_else(|| "the mini host did not build".to_string())
+
+    let built = parent.join("binaries").join(name);
+    if !built.exists() {
+        return Err(format!("the mini host did not build: no {}", built.display()));
+    }
+    Ok(built)
 }
 
 /// Where finished builds go: one directory shared by every project here, so

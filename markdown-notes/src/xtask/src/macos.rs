@@ -341,6 +341,7 @@ const ESCAPE: u16 = 53;
 const BACKSPACE: u16 = 51;
 const END: u16 = 119;
 const DOWN: u16 = 125;
+const TAB: u16 = 48;
 
 /// The virtual key code for a letter or digit on the ANSI layout.
 ///
@@ -360,7 +361,7 @@ fn code_for(key: char) -> Option<u16> {
 
 /// Send one `type:` step, which is text with named keys written in braces.
 ///
-/// `{ENTER}`, `{ESC}`, `{END}`, `{DOWN}` are those keys. `{BS 40}` is
+/// `{ENTER}`, `{ESC}`, `{END}`, `{DOWN}`, `{TAB}` are those keys. `{BS 40}` is
 /// backspace forty times. `{(}` and `{)}` are the brackets themselves, which
 /// would otherwise be read as the start of a name. This is the notation the
 /// tests are already written in, and it is Windows `SendKeys`.
@@ -400,6 +401,7 @@ fn send_keys(step: &str) -> Result<(), String> {
             "BS" | "BACKSPACE" => BACKSPACE,
             "END" => END,
             "DOWN" => DOWN,
+            "TAB" => TAB,
             other => return Err(format!("unknown key: {other}")),
         };
         for _ in 0..times {
@@ -636,6 +638,50 @@ fn photographer() -> Result<PathBuf, String> {
     app.exists()
         .then_some(app)
         .ok_or_else(|| "the window photographer did not build".to_string())
+}
+
+/// The colour a test picture is filled with, the same one
+/// `tools/capture-window.ps1` fills its pictures with.
+const PICTURE_COLOUR: [u8; 3] = [200, 40, 160];
+
+/// Write a picture for a test to paste or drop.
+fn write_picture(path: &Path, width: u32, height: u32) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    std::fs::write(path, crate::png::solid(width, height, PICTURE_COLOUR))
+        .map_err(|e| format!("writing {}: {e}", path.display()))
+}
+
+/// Put a picture on the clipboard, as a screenshot tool leaves one.
+///
+/// Under both the types it may be asked for: the PNG as it is on disk, and the
+/// TIFF AppKit makes of it. Whatever reads the clipboard decides which one it
+/// looks for, and a pasteboard holds as many representations as are put on it.
+/// Nothing is put there as text: a paste of a picture is the key alone.
+fn put_on_clipboard(path: &Path) -> Result<(), String> {
+    use objc2::AnyThread;
+    use objc2_app_kit::{NSImage, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeTIFF};
+    use objc2_foundation::NSData;
+
+    let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let held = NSData::with_bytes(&bytes);
+    let image = NSImage::initWithData(NSImage::alloc(), &held)
+        .ok_or_else(|| format!("{} is not a picture", path.display()))?;
+    let tiff = image
+        .TIFFRepresentation()
+        .ok_or_else(|| format!("{} cannot be held as a TIFF", path.display()))?;
+
+    let board = NSPasteboard::generalPasteboard();
+    unsafe {
+        board.clearContents();
+        if !board.setData_forType(Some(&held), NSPasteboardTypePNG) {
+            return Err("the clipboard would not take the picture".to_string());
+        }
+        board.setData_forType(Some(&tiff), NSPasteboardTypeTIFF);
+    }
+    Ok(())
 }
 
 /// A path written in a test file, as this platform spells it.
@@ -1285,12 +1331,15 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // The panel is a window of the host's own process, so it is found
             // as a window rather than hunted for across the screen: the
             // frontmost window being one other than the window under test is
-            // a dialog being up.
+            // a dialog being up. Either way the window is given time to be as
+            // the step says: a panel takes a moment to come up, and a moment
+            // to go away after the keystroke that closed it.
             let deadline = Instant::now() + Duration::from_secs(3);
             let front = loop {
                 let front = window_rect(run.pid, "").ok();
                 let other = front.filter(|rect| *rect != run.host);
-                if other.is_some() || kind == "nodialog" || Instant::now() > deadline {
+                let settled = if kind == "dialog" { other.is_some() } else { other.is_none() };
+                if settled || Instant::now() > deadline {
                     break other;
                 }
                 sleep(Duration::from_millis(200));
@@ -1489,6 +1538,19 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             }
             Ok(())
         }
+        "picture" => {
+            // `picture:PATH|W,H` writes a PNG of that size, all one colour,
+            // for a test to paste or drop.
+            let (path, size) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read picture: {value}"))?;
+            let (width, height) = pair(size, "picture size")?;
+            if width <= 0 || height <= 0 {
+                return Err(format!("a picture cannot be {width} by {height}"));
+            }
+            write_picture(&path_of(path), width as u32, height as u32)
+        }
+        "clipboard" => put_on_clipboard(&path_of(value)),
         "written" => {
             // `written:PATH|TEXT` checks a file in code, mid-test, right when
             // the step before it claims to have written it. Failing here names
