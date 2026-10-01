@@ -487,13 +487,18 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
             state.bg_fill = handle;
         }
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Frame::default()
-                    .inner_margin(DOCUMENT_MARGIN)
-                    .show(ui, |ui| document(ui, gui));
-            });
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        // A scroll to the caret takes effect in the pass that asks for it. An
+        // animated area takes the new offset up at the start of the next
+        // pass, after that pass's contents are placed, so the pass drawn again
+        // after a caret move would still show the place the caret has left.
+        #[cfg(target_os = "linux")]
+        let area = area.animated(false);
+        area.show(ui, |ui| {
+            egui::Frame::default()
+                .inner_margin(DOCUMENT_MARGIN)
+                .show(ui, |ui| document(ui, gui));
+        });
     });
 
     settings_dialog(ui, gui);

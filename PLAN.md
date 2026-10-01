@@ -542,6 +542,12 @@ there. None of it can be run on this machine.
 | `xtask/src/uitest.rs`, `xtask/Cargo.toml` | a Linux `drive` and Linux-only dependencies | the same CI job compiles them out |
 | `mini-host` `main.rs`, `place.rs`, `Cargo.toml` | an `Xlib` arm in a match, Linux-only code and a Linux-only dependency, eframe's `wayland` feature dropped | CI: `cargo test` in `tools/mini-host` on Windows and macOS |
 | `tools/find-text` `main.rs`, `Cargo.toml` | cfg attributes and target tables | nothing: no CI job builds find-text |
+| `markdown-notes-plugin/src/fonts.rs` (T3.4, T3.5) | the two loaders call `name_of(font)`, which on Windows and macOS is `font.full_name()`, the call they made before | the same CI job, which runs the plugin's tests |
+| `markdown-notes-plugin/src/gui.rs` (T3.7) | the document's scroll area is built in two statements so that one Linux-only line can go between them. Windows and macOS make the calls they made before | the same CI job: the pixel tests draw through this code |
+| `xtask/src/main.rs` (T3.12) | two Linux-only lines that set `RUST_TEST_THREADS` | the same CI job compiles them out |
+| `markdown-notes-plugin/tests/caret_in_view.rs` (T3.7, T3.8) | Linux-only lines, and for every platform: `changing_the_view_arrives_at_the_caret` keeps its rendering when it fails | the same CI job runs the test. It passes there by the same assertion as before |
+| `markdown-notes-plugin/tests/selection_rendering.rs` (T3.10), `title_field.rs` (T3.15) | Linux-only lines | the same CI job compiles them out |
+| `markdown-notes-plugin/tests/source_view.rs` (T3.13) | the heading may measure `SLACK` rows taller than the body. `SLACK` is 0 on Windows and macOS, which is the check they had | the same CI job runs the test |
 
 ### 4.8 Added by this plan and not asked for
 
@@ -697,15 +703,178 @@ Not shown by T2:
 
 ### T3. Everything builds and the tests without a desktop pass (goal)
 
-- [ ] T3.1 `./build.sh` from the root. Done when: it ends with "all projects
+- [x] T3.1 `./build.sh` from the root. Done when: it ends with "all projects
       built", `binaries/Markdown Notes.vst3/Contents/x86_64-linux/Markdown Notes.so`
       exists and `bundle` prints its `loads:` line.
-- [ ] T3.2 `./test.sh` from the root, no `--full`: unit tests, scenarios,
+- [x] T3.2 `./test.sh` from the root, no `--full`: unit tests, scenarios,
       headless pixel tests. Done when: it ends with "all projects passed".
-- [ ] T3.3 Every failure in T3.1 or T3.2 is written into this list as an item
+- [x] T3.3 Every failure in T3.1 or T3.2 is written into this list as an item
       of its own before it is worked on, and only the failing test is rerun.
       A failure that needs something installed on the system is reported and
       not worked around.
+- [x] T3.4 Failure in T3.2, `markdown-notes-plugin`:
+      `fonts::tests::bold_is_a_different_face_from_the_regular_one`. "bold
+      measured 192.0625 against a regular 192.0625: the same width means the
+      same face, drawn in another colour".
+- [x] T3.5 Failure in T3.2, `markdown-notes-plugin`:
+      `gui::tests::the_caret_lands_after_bold_text_not_inside_it`. "the bold
+      face should be wider: galley 111, one font 111.78125".
+
+      The cause of both, read from the code: `install_base` in
+      `markdown-notes-plugin/src/fonts.rs` files each face under
+      `font.full_name()` and keeps the first face filed under a name. On
+      FreeType, font-kit's `full_name` only reads name records of the Apple
+      Unicode platform (`loaders/freetype.rs`, `get_type_1_or_sfnt_name`) and
+      otherwise gives the family name. This machine's sans-serif is Noto Sans,
+      with `NotoSans-Regular.ttf` and `NotoSans-Bold.ttf`, and both come back
+      named "Noto Sans". The bold face is dropped and bold text is drawn in
+      the regular one.
+
+      The fix, in `fonts.rs`: a face is filed under `name_of(font)`. On
+      Windows and macOS that is `font.full_name()`, as before. Everywhere else
+      (`#[cfg(not(any(target_os = "windows", target_os = "macos")))]`, the
+      systems the FreeType loader serves) it is the face's PostScript name,
+      which the regular and the bold do not share. The two failing tests are
+      the tests of it: both failed before it and pass with it.
+- [x] T3.6 The first run of T3.2 stopped at those two failures. What comes
+      after the plugin's unit tests in `markdown-notes/test.sh` has not run
+      yet: the rest of `cargo test --workspace`, the scenarios and the
+      headless pixel tests. They are run with `markdown-notes/test.sh` once
+      T3.4 and T3.5 pass.
+- [x] T3.7 Failure in the run of T3.6, `markdown-notes-plugin`, pixel test
+      `caret_in_view`: `changing_the_view_arrives_at_the_caret`. "the
+      formatted view is not at the caret".
+- [x] T3.8 Failure in the run of T3.6, same file:
+      `the_caret_at_the_end_of_a_tall_document_is_in_view`. "the caret is at
+      the end of a document 60 lines long and nothing is drawn on screen, so
+      the document was not scrolled to it".
+
+      The cause of T3.8, shown by the test passing once it was removed: the
+      test's harness draws a frame as it is built, before the test installs
+      the system's fonts. That frame is laid out in egui's built-in font, and
+      the document is scrolled to its caret then and not again. Noto Sans has
+      taller rows than the built-in font, so when it arrives the caret is
+      below the window. A real window installs the fonts before its first
+      frame (`gui.rs`, `build`). The fix is in the test file, for Linux only
+      (`#[cfg(target_os = "linux")]`): the harness's first frame installs the
+      fonts and draws nothing. What Windows and macOS run in this test is as
+      it was.
+
+      The cause of T3.7, read off the scroll position on each pass: after a
+      caret move `document` asks the scroll area for the caret's place and
+      has the pass drawn again, so that the pass shown has the caret in it.
+      egui's scroll area, left at its default of animated scrolling, takes
+      the new offset up at the start of the next pass, after that pass's
+      contents are placed, so the pass drawn again still shows the old place
+      and the caret arrives one frame later. The test looks at the first
+      frame after the click. On this machine the formatted view is taller
+      than the source view (Noto Sans against the monospace face), so the
+      caret is out of sight in that frame. The fix is in `gui.rs`:
+      `.animated(false)` on the document's scroll area, which makes a scroll
+      target take effect in the pass that asks for it. It is the only use
+      egui makes of that setting. It is compiled for Linux only
+      (`#[cfg(target_os = "linux")]`), so Windows and macOS build what they
+      built before. The one-frame delay is not particular to Linux: it is in
+      egui. Keeping the fix to Linux is a choice made here, because nothing
+      on this machine can show what it does to the other two. Taking the
+      `cfg` line away applies it everywhere.
+
+      Also changed in the test file, for every platform: when this test fails
+      it now writes its rendering to `.cache/uitests` and says where, as the
+      other two tests in the file do.
+- [x] T3.9 The run of T3.6 stopped at those two. The pixel tests after
+      `caret_in_view` have not run yet. They are run with
+      `markdown-notes/test.sh` once T3.7 and T3.8 pass.
+- [x] T3.10 Failure in the run of T3.9, `markdown-notes-plugin`, pixel test
+      `selection_rendering`:
+      `a_selection_ending_mid_line_leaves_the_words_after_it_alone`. "the
+      selection ends on line 0 of 3, which is not a line with text above and
+      below it".
+
+      The rendering the test kept shows the selection drawn as it should be.
+      The cause is in how the test finds lines: it takes rows of dark pixels
+      with a blank row between them as separate lines, and the caret is as
+      dark as the words and a whole row tall. In Noto Sans its top touches
+      the descenders of the row above, so the two rows are read as one line.
+      Shown by the test passing with the caret not drawn. The fix is in the
+      test file, for Linux only (`#[cfg(target_os = "linux")]`): the caret is
+      given a colour with no opacity. What Windows and macOS run in this test
+      is as it was.
+- [x] T3.11 The run of T3.9 stopped at that one. The pixel tests after
+      `selection_rendering` have not run yet. They are run with
+      `markdown-notes/test.sh` once T3.10 passes.
+- [x] T3.12 Failure in the run of T3.11, `markdown-notes-plugin`, pixel test
+      program `section_dragging`: the program died with "signal: 11, SIGSEGV:
+      invalid memory reference" straight after printing "running 9 tests",
+      before any test reported. The same program passed all nine tests in the
+      run of T3.9, and nothing it is built from changed in between.
+
+      The cause, from the backtrace of the crash under `gdb`: the fault is
+      inside `/usr/lib/x86_64-linux-gnu/libvulkan.so.1` (the system's Vulkan
+      loader, package `libvulkan1` 1.4.341.0-1), called from wgpu naming an
+      object (`set_debug_utils_object_name`) while it makes a device. Every
+      pixel test makes a device of its own, and the test harness runs the
+      tests of one program on as many threads as there are tests, so several
+      devices are made at the same moment. Run again on its own the program
+      passed; under `gdb` it crashed on the second try.
+
+      The crash is in a system library and is not fixed here. What is
+      changed, in `xtask/src/main.rs`, for Linux only
+      (`#[cfg(target_os = "linux")]`): the pixel tests are run with
+      `RUST_TEST_THREADS=1`, one test at a time, so no two devices are made
+      at once. Windows and macOS do not use this loader and run the tests as
+      before.
+
+      Shown by running the program 20 times under `gdb` each way: on many
+      threads it crashed 7 times, on one thread not once. Run 30 times
+      without `gdb` it did not crash either way, so the crash is rare in an
+      ordinary run and one clean run does not show it is gone.
+- [x] T3.13 Failure in the next run of `markdown-notes/test.sh`,
+      `markdown-notes-plugin`, pixel test `source_view`:
+      `a_heading_is_no_larger_than_body_text_in_the_source_view`. "in the
+      source view the heading is 14 rows tall and the body 11 ([(100, 113),
+      (139, 149)]), so it is still drawn as a heading".
+
+      The rendering the test kept shows both lines at one size. The cause is
+      in how the test measures a line: from its first row with dark pixels to
+      its last, where dark is a pixel four fifths covered or more. Counted
+      row by row, the two lines have the same eight rows of small letters,
+      thirty-six rows apart. The three rows above them are dark in the
+      heading (`H`, `d`) and not in the body (`b`, `d`): in this machine's
+      monospaced face the stems are thin, and whether one is dark enough
+      depends on where its letter falls on the pixel grid. The fix is in the
+      test file, for Linux only (`#[cfg(target_os = "linux")]`): the heading
+      may measure up to four rows taller than the body. Windows and macOS
+      keep the check they had. Shown to still catch the fault it is for: with
+      the source view made to draw headings large, the test failed with the
+      heading 28 rows tall against 15.
+- [x] T3.14 That run stopped there. The pixel tests after `source_view` have
+      not run yet: `text_area`, `theme_rendering`, `title_field` and
+      `view_mode_button`. They are run with `markdown-notes/test.sh` once
+      T3.13 passes.
+- [x] T3.15 Failure in the run of T3.14, `markdown-notes-plugin`, pixel test
+      `title_field`:
+      `the_caret_stays_in_view_while_a_name_longer_than_fits_is_typed`. "no
+      caret is in view after typing past the end of the field".
+
+      The rendering the test kept shows the caret at the end of the field,
+      where it should be. The cause is in where the test looks for it: in the
+      columns from the field's left edge up to its right edge with the
+      fraction dropped. Read off the picture, the field here runs from 18.0
+      to 379.7 and the caret is on columns 379 and 380, so the columns looked
+      at stop one short of it. The fix is in the test file, for Linux only
+      (`#[cfg(target_os = "linux")]`): the column the right edge falls in
+      counts as the field's. Windows and macOS keep the range they had.
+- [x] T3.16 The run of T3.14 stopped there. `view_mode_button` has not run
+      yet. It is run with `markdown-notes/test.sh` once T3.15 passes.
+- [x] T3.17 The plugin's code changed after the build of T3.1 (`fonts.rs`,
+      `gui.rs`), and so did the xtask. `markdown-notes/build.sh` is run again
+      on the code as it now is. Done when: it prints its `loads:` line and
+      the `.so` is in the bundle in `binaries/`. The other three projects of
+      `./build.sh` have not changed since T3.1.
+
+What T3 changed that was not written in this plan before it started, and
+which Windows and macOS also build, is listed in 4.7.
 
 ### T4. The host on Linux (M6, M7, M8)
 

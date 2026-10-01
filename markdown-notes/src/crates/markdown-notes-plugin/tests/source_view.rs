@@ -112,6 +112,18 @@ fn saved(image: &image::RgbaImage, name: &str) -> String {
 fn a_heading_is_no_larger_than_body_text_in_the_source_view() {
     const DOCUMENT: &str = "# Heading\n\nbody text";
 
+    /// How many rows taller than the body the heading may measure and still
+    /// be the same size.
+    #[cfg(not(target_os = "linux"))]
+    const SLACK: u32 = 0;
+    /// The monospaced face these tests get on Linux has thin strokes, and
+    /// which rows of a letter are dark enough to count as ink depends on
+    /// where the letter falls on the pixel grid: the tops of `H` and `d`
+    /// count in the heading and the tops of `b` and `d` in the body do not.
+    /// A heading drawn as a heading is more than ten rows taller.
+    #[cfg(target_os = "linux")]
+    const SLACK: u32 = 4;
+
     let formatted = render(DOCUMENT, ViewMode::Wysiwyg);
     let shown = lines(&formatted);
     assert_eq!(
@@ -138,7 +150,7 @@ fn a_heading_is_no_larger_than_body_text_in_the_source_view() {
         saved(&source, "source-view-heading")
     );
     let (heading, body) = (height_of(&shown[0]), height_of(&shown[1]));
-    if heading > body {
+    if heading > body + SLACK {
         panic!(
             "in the source view the heading is {heading} rows tall and the body \
              {body} ({:?}), so it is still drawn as a heading\n      rendering: {}",

@@ -664,6 +664,11 @@ fn test(args: &[String]) -> Result<(), String> {
     for name in RENDERING_TESTS {
         rendering.extend(["--test", name]);
     }
+    // On Linux the pixel tests run one at a time. Each makes a graphics device
+    // of its own, on a thread of its own, and the system's Vulkan loader
+    // crashes now and then when two are made at the same moment.
+    #[cfg(target_os = "linux")]
+    std::env::set_var("RUST_TEST_THREADS", "1");
     run("rendering tests", &rendering)?;
 
     // The UI tests drive a real window with real clicks and keystrokes, so
@@ -715,6 +720,9 @@ fn test_only(root: &Path, name: &str, release: bool) -> Result<(), String> {
     match file {
         Some(file) => {
             cmd.args(["-p", PLUGIN_CRATE, "--features", "snapshots", "--test", file]);
+            // One at a time on Linux, as in a whole run.
+            #[cfg(target_os = "linux")]
+            cmd.env("RUST_TEST_THREADS", "1");
         }
         None => {
             cmd.args(["--workspace", "--lib", "--bins"]);

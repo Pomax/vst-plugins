@@ -102,7 +102,24 @@ fn load_family(name: &str) -> Option<(String, Vec<u8>)> {
         .ok()?;
     let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
-    Some((font.full_name(), data.as_ref().clone()))
+    Some((name_of(&font), data.as_ref().clone()))
+}
+
+/// The name a face is filed under, which no other face may share.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn name_of(font: &font_kit::font::Font) -> String {
+    font.full_name()
+}
+
+/// The name a face is filed under, which no other face may share.
+///
+/// The FreeType loader reads a full name only from name records most fonts do
+/// not carry, and gives the family's name in its place. The regular and the
+/// bold face of a family then have one name between them, and the second to
+/// be filed is dropped. The PostScript name is the face's own.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn name_of(font: &font_kit::font::Font) -> String {
+    font.postscript_name().unwrap_or_else(|| font.full_name())
 }
 
 /// Ask the system for one of its generic families.
@@ -126,7 +143,7 @@ fn load_weighted(family: FamilyName, properties: &Properties) -> Option<(String,
         .ok()?;
     let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
-    Some((font.full_name(), data.as_ref().clone()))
+    Some((name_of(&font), data.as_ref().clone()))
 }
 
 /// The family the bold face is installed under.
