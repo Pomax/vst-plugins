@@ -932,33 +932,64 @@ Not shown by T4, and shown by the named tests of later tasks:
 
 ### T5. The Linux driver (M9, M10, M11)
 
-- [ ] T5.1 `xtask/Cargo.toml`: Linux dependencies, description.
-- [ ] T5.2 `xtask/src/main.rs`: module lines.
-- [ ] T5.3 `linux/keys.rs` with tests
+- [x] T5.1 `xtask/Cargo.toml`: Linux dependencies, description.
+- [x] T5.2 `xtask/src/main.rs`: module lines.
+- [x] T5.3 `linux/keys.rs` with tests
       `a_character_is_sent_as_its_own_keysym`,
       `named_keys_and_repeats_are_read_out_of_braces`,
       `bracket_escapes_are_literal_brackets`,
       `a_name_that_is_not_a_key_is_refused`.
-- [ ] T5.4 `linux/portal.rs`: the session, the token file, the refusal message,
+- [x] T5.4 `linux/portal.rs`: the session, the token file, the refusal message,
       `request_open`, with test
       `the_senders_with_open_requests_are_read_out_of_the_portals_tree`.
       `linux/input.rs` on top of it, with the release of whatever a failed
       step left pressed.
-- [ ] T5.5 `linux/xwindows.rs` with test
+- [x] T5.5 `linux/xwindows.rs` with test
       `a_frame_is_the_client_area_grown_by_its_extents`.
-- [ ] T5.6 `linux/cursor.rs` with tests
+- [x] T5.6 `linux/cursor.rs` with tests
       `the_shown_cursor_is_named_by_its_picture`,
       `a_cursor_no_stock_picture_matches_is_other`.
-- [ ] T5.7 `linux/screen.rs` with tests
+- [x] T5.7 `linux/screen.rs` with tests
       `a_region_is_cut_out_at_the_frames_scale`,
       `a_region_hanging_off_the_monitor_is_clamped`.
-- [ ] T5.8 `linux/look.rs` with tests
+- [x] T5.8 `linux/look.rs` with tests
       `find_text_output_is_read_as_boxes`,
       `the_box_nearest_the_expected_spot_wins`.
-- [ ] T5.9 `linux.rs`: `Run`, `launch`, `finish`, `play`, every step in the
+- [x] T5.9 `linux.rs`: `Run`, `launch`, `finish`, `play`, every step in the
       table of 4.5, the portal session opened before the first launch, the
       active-window check before input, and the host never left running.
-- [ ] T5.10 `uitest.rs`: Linux `drive`.
+- [x] T5.10 `uitest.rs`: Linux `drive`.
+- [x] T5.11 Every test of T5.3 to T5.8 is seen to fail. The code each covers
+      is broken, `cargo test -p xtask` is run and the test fails, and the
+      code is put back. The breaks, all in at once, since no two touch the
+      same test:
+  - [x] `keysym_of` sets the Unicode bit on every character:
+        `a_character_is_sent_as_its_own_keysym`.
+  - [x] `parse_keys` presses a repeated key once:
+        `named_keys_and_repeats_are_read_out_of_braces`.
+  - [x] `parse_keys` takes `{(}` and `{)}` for the names of keys:
+        `bracket_escapes_are_literal_brackets`.
+  - [x] `parse_keys` lets a name that is not a key through:
+        `a_name_that_is_not_a_key_is_refused`.
+  - [x] `senders` leaves the names as the tree spells them:
+        `the_senders_with_open_requests_are_read_out_of_the_portals_tree`.
+  - [x] `grown` leaves the title bar out:
+        `a_frame_is_the_client_area_grown_by_its_extents`.
+  - [x] `name_of` goes by a picture's size alone:
+        `the_shown_cursor_is_named_by_its_picture`.
+  - [x] `name_of` calls a picture it does not know `arrow`:
+        `a_cursor_no_stock_picture_matches_is_other`.
+  - [x] `cut` takes a picture for the size of the monitor:
+        `a_region_is_cut_out_at_the_frames_scale`.
+  - [x] `cut` does not stop at the picture's edges:
+        `a_region_hanging_off_the_monitor_is_clamped`.
+  - [x] `parsed` reads the picture's height for its width:
+        `find_text_output_is_read_as_boxes`.
+  - [x] `nearest` takes the first box:
+        `the_box_nearest_the_expected_spot_wins`.
+- [x] T5.12 `typing-goes-into-the-document` is seen to fail on Linux: with
+      `send_keys` sending nothing, the test is run once and fails, and the
+      code is put back.
 
 Done when: `cargo test -p xtask` in `markdown-notes` passes, and
 `./test.sh --ui typing-goes-into-the-document` in `markdown-notes` passes
@@ -968,6 +999,29 @@ then passes a second time with `start` answering within two seconds (U15).
 Its picture is sent. The baseline uses `type:`, `showing:` and `shot:` only
 and never moves the pointer. Every other step, and the pointer, are proven by
 T6 and T7.
+
+All of it holds. `cargo test -p xtask` passes, 22 tests, 12 of them the
+driver's. `typing-goes-into-the-document` passed twice: on the first run the
+desktop answered after 6.7 seconds, on the second after 0.1, so the grant is
+remembered (U15). With all twelve breaks of T5.11 in, the twelve driver tests
+failed and the other ten passed. With the driver typing nothing (T5.12) the UI
+test failed with "the document does not show "typed straight into"; below 140
+the window reads: Section Title". After both, every driver file was the same
+as its copy from before the breaks.
+
+Settled by the two passing runs: U1 and U2 (each picture is read by a new
+reader of the stream, and each got its frame), U8 (the line was typed with
+nothing clicked), U13 (the window came to the front when asked), U15, and U18
+for the plugin (light lettering on its dark page was read).
+
+Not settled: U10. The `showing:` step passed, but how long one look takes was
+not measured, and a look that runs past its deadline still counts when it
+finds the text. T6 has steps that look until something has gone (`hidden:`),
+which is where a slow look shows.
+
+Not shown by T5: every step but `type:`, `showing:` and `shot:`, and with them
+the pointer, the cursor, the clipboard, file dialogs, `restart:` and films.
+They are in `linux.rs` and nothing has run them. T6 and T7 do.
 
 ### T6. The markdown-notes UI suite
 

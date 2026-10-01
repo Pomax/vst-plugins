@@ -21,9 +21,11 @@
 //! cargo run -p xtask -- bundle [--release] [--target <triple>]
 //! ```
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod png;
 mod uitest;
 

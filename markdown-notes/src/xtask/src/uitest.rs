@@ -542,7 +542,19 @@ fn drive(
     crate::macos::drive(root, host, plugin, steps, state, shot)
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn drive(
+    root: &Path,
+    host: &Path,
+    plugin: &Path,
+    steps: &Path,
+    state: &Path,
+    shot: &Path,
+) -> Result<(), String> {
+    crate::linux::drive(root, host, plugin, steps, state, shot)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn drive(
     _root: &Path,
     _host: &Path,

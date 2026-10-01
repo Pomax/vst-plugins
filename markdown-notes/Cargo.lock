@@ -7414,13 +7414,19 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "xtask"
 version = "11.0.0"
 dependencies = [
+ "arboard",
+ "ashpd 0.11.1",
  "core-graphics",
  "image",
+ "libc",
  "markdown-notes-core",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "pollster 0.4.0",
  "vst3-loader",
+ "x11rb",
+ "xcursor",
 ]
 
 [[package]]
