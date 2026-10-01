@@ -32,7 +32,9 @@ eframe = { version = "0.35", default-features = false, features = [
     "glow",
     "persistence",
     "default_fonts",
-    "wayland",
+    # X11 and not Wayland: a plugin's editor on Linux is an X11 window, and an
+    # X11 window cannot be put inside a Wayland one. On a Wayland desktop this
+    # window is XWayland's.
     "x11",
 ] }
 egui = { version = "0.35", features = ["default_fonts"] }
@@ -53,6 +55,9 @@ features = [
     # host's resize rather than a frame later.
     "Win32_UI_Shell",
 ]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
 
 [target.'cfg(target_os = "macos")'.dependencies.objc2]
 version = "0.6.4"

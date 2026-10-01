@@ -300,6 +300,19 @@ fn settings(width: i32, height: i32) -> EguiWindowSettings {
         }))
 }
 
+/// The same settings, asking for a framebuffer that is not sRGB capable.
+///
+/// The window asks GLX for one that is, and an X server drawing in software
+/// may have none of those to give. egui does its own colour conversion and
+/// draws the same into either.
+#[cfg(target_os = "linux")]
+fn without_srgb(settings: EguiWindowSettings) -> EguiWindowSettings {
+    settings.with_graphics_config(egui_baseview::GraphicsConfig {
+        gl_config: baseview::gl::GlConfig { srgb: false, ..Default::default() },
+        ..Default::default()
+    })
+}
+
 impl App for Gui {
     /// Fonts before the first frame: `set_fonts` binds them for the pass after
     /// the one it is called in, and the first pass already draws text in every
@@ -332,9 +345,18 @@ pub fn open(
     width: i32,
     height: i32,
 ) -> Option<Window> {
+    #[cfg(target_os = "linux")]
+    let again = (editor.clone(), incoming.clone());
     let mut gui = Gui::new(editor);
     gui.incoming = incoming;
-    let window = EguiWindow::create(settings(width, height).with_parent(parent), gui).ok()?;
+    let window = EguiWindow::create(settings(width, height).with_parent(parent), gui);
+    #[cfg(target_os = "linux")]
+    let window = window.or_else(|_| {
+        let mut gui = Gui::new(again.0);
+        gui.incoming = again.1;
+        EguiWindow::create(without_srgb(settings(width, height)).with_parent(parent), gui)
+    });
+    let window = window.ok()?;
     // `create` builds the window without opening it. The standalone path gets
     // that from `run_until_closed`; a window inside a host does not, and stays
     // black until it is shown.

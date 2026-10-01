@@ -339,6 +339,14 @@ impl eframe::App for Host {
 
         let ctx = ui.ctx().clone();
         self.tell_plugin_the_size(&ctx);
+        // The window manager gives the keyboard to this window every time it
+        // comes to the front, and the plugin's window inside it is the one
+        // that is typed into. While a dialog is up the keyboard is the
+        // dialog's.
+        #[cfg(target_os = "linux")]
+        if self.panel.is_none() {
+            place::hold_keyboard(self.handle);
+        }
         self.follow_dialog_requests(&ctx);
         self.apply_pending();
         self.report_geometry(&ctx);
@@ -399,6 +407,7 @@ fn native_handle<W: HasWindowHandle>(window: &W) -> Option<*mut c_void> {
         RawWindowHandle::Win32(h) => Some(h.hwnd.get() as *mut c_void),
         RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
         RawWindowHandle::Xcb(h) => Some(h.window.get() as usize as *mut c_void),
+        RawWindowHandle::Xlib(h) => Some(h.window as usize as *mut c_void),
         _ => None,
     }
 }
@@ -490,8 +499,20 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             let handle = native_handle(cc);
+            #[cfg(not(target_os = "linux"))]
             if let Err(e) = plugin.attach(cc) {
                 eprintln!("could not attach the editor: {e}");
+            }
+            // On Linux the plugin is given a window of the host's under the
+            // strip, not the host's whole window: its editor makes itself the
+            // size of whatever it is put in, and would cover the strip.
+            #[cfg(target_os = "linux")]
+            if let Some(parent) = handle {
+                let attached = place::make_socket(parent, chrome::HEIGHT)
+                    .and_then(|socket| plugin.attach(&socket).map_err(|e| e.to_string()));
+                if let Err(e) = attached {
+                    eprintln!("could not attach the editor: {e}");
+                }
             }
             match handle {
                 Some(parent) => {

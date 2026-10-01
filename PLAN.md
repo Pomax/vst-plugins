@@ -544,6 +544,7 @@ there. None of it can be run on this machine.
 | `tools/find-text` `main.rs`, `Cargo.toml` | cfg attributes and target tables | nothing: no CI job builds find-text |
 | `markdown-notes-plugin/src/fonts.rs` (T3.4, T3.5) | the two loaders call `name_of(font)`, which on Windows and macOS is `font.full_name()`, the call they made before | the same CI job, which runs the plugin's tests |
 | `markdown-notes-plugin/src/gui.rs` (T3.7) | the document's scroll area is built in two statements so that one Linux-only line can go between them. Windows and macOS make the calls they made before | the same CI job: the pixel tests draw through this code |
+| `markdown-notes-plugin/src/gui.rs` (T4.6) | `open` keeps the result of making the window in a variable so that a Linux-only second try can go after it. Windows and macOS make the calls they made before | the same CI job compiles it. No test there opens the plugin's window: that is the UI tests, which CI does not run |
 | `xtask/src/main.rs` (T3.12) | two Linux-only lines that set `RUST_TEST_THREADS` | the same CI job compiles them out |
 | `markdown-notes-plugin/tests/caret_in_view.rs` (T3.7, T3.8) | Linux-only lines, and for every platform: `changing_the_view_arrives_at_the_caret` keeps its rendering when it fails | the same CI job runs the test. It passes there by the same assertion as before |
 | `markdown-notes-plugin/tests/selection_rendering.rs` (T3.10), `title_field.rs` (T3.15) | Linux-only lines | the same CI job compiles them out |
@@ -878,7 +879,7 @@ which Windows and macOS also build, is listed in 4.7.
 
 ### T4. The host on Linux (M6, M7, M8)
 
-- [ ] T4.1 New test file
+- [x] T4.1 New test file
       `tools/mini-host/src/crates/mini-host/tests/editor_under_the_strip.rs`,
       Linux only, `#[ignore]` because it opens a window:
       `the_editor_fills_the_window_below_the_strip` starts the host on
@@ -886,18 +887,48 @@ which Windows and macOS also build, is listed in 4.7.
       for a report with `editor=0,26,` and `inset=0,26,0,0`, then kills the
       host. The bundle is built first with `markdown-notes/build.sh`, since
       T3.2 removed it.
-- [ ] T4.2 Run it against the host as it is. Needs a yes: a window opens.
-      Expected: it fails, no report is written.
-- [ ] T4.3 `mini-host/Cargo.toml`: drop `wayland`, add `x11rb`.
-- [ ] T4.4 `mini-host/src/main.rs`: `Xlib` arm, Linux attach through the
+- [x] T4.2 Run it against the host as it is. Needs a yes: a window opens.
+      Expected: it fails, no report is written. It failed with "the host
+      wrote no report within 30 seconds", and the host printed "this window
+      has no handle the plugin can use".
+- [x] T4.3 `mini-host/Cargo.toml`: drop `wayland`, add `x11rb`.
+- [x] T4.4 `mini-host/src/main.rs`: `Xlib` arm, Linux attach through the
       socket, Linux-only `hold_keyboard` call.
-- [ ] T4.5 `mini-host/src/app/place.rs`: the Linux module of 4.4, the
+- [x] T4.5 `mini-host/src/app/place.rs`: the Linux module of 4.4, the
       `track_editor` thread included. The catch-all module's cfg excludes
       Linux. The Windows and macOS modules are not edited.
+- [x] T4.6 Found by the test of T4.1 once T4.3 to T4.5 were in: the host had
+      a window for the plugin, and the plugin's `attached` failed with
+      `tresult 4`. With the reason printed, it was baseview's "Could not find
+      a valid Framebuffer configuration". baseview asks GLX for a framebuffer
+      that is sRGB capable, and this machine's X server (XWayland, drawing in
+      software) has none: with the plugin asking for one that is not sRGB
+      capable the window opened and the test passed. The fix is in the
+      plugin's `gui.rs`, `open`, for Linux only
+      (`#[cfg(target_os = "linux")]`): when the window cannot be made with
+      baseview's own settings it is made again asking for a framebuffer that
+      is not sRGB capable. egui draws the same into either. Windows and macOS
+      build what they built before. The test of T4.1 is the test of it.
 
 Done when: `./test.sh` in `tools/mini-host` passes, and
 `cargo test --test editor_under_the_strip -- --ignored` in `tools/mini-host`
 passes (needs a yes; settles U16).
+
+Both pass. U16 holds: the host wrote its report with no input arriving, a
+fifth of a second after it was started. The test has been seen to fail three
+ways: with no report from the host as it was (T4.2), with no report while the
+plugin's window could not be made (T4.6), and, with the socket put at the top
+of the host's window on purpose, with the report `editor=0,0,900x620` and
+`inset=0,0,0,26`.
+
+Not shown by T4, and shown by the named tests of later tasks:
+
+- `track_editor`, the thread that sizes the socket as the host's window is
+  dragged: `host-resize` (T7.4, U17).
+- `hold_keyboard` and `focus_editor`: `typing-goes-into-the-document` (T5,
+  U8).
+- `follow_resize`: it runs when the host's window changes size, which this
+  test never does. `sections-and-files` drags the window (T6.2).
 
 ### T5. The Linux driver (M9, M10, M11)
 

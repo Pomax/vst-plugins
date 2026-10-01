@@ -1,5 +1,6 @@
 - [Windows redraw during resize](windows-redraw-during-resize.md) — the plugin's window is moved from the resize message and asked to paint at once, or a drag shows black
 - [Ask before running UI tests](ask-before-running-ui-tests.md) — anything that drives the mouse, keyboard or screen needs a yes first, every time
+- [The Linux VM is mine to run on](the-linux-vm-is-mine-to-run-on.md) — on the dedicated Linux VM, UI runs start without asking; asking first is for machines the user is working at
 - [Never run destructive commands unasked](never-run-destructive-commands-unasked.md) — read this before touching files at all: nothing that deletes, overwrites or discards runs unless they asked for that run
 - [Blanket permission means just run it](blanket-permission-means-just-run-it.md) — when they grant command permission, stop asking and start executing
 - [Never use installed plugins as reference](never-use-installed-plugins-as-reference.md) — VST3 docs, SDK and crates only; other people's binaries are off limits
