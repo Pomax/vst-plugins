@@ -10,6 +10,7 @@
 //! Markdown Notes.vst3/
 //!   Contents/
 //!     x86_64-win/Markdown Notes.vst3        (Windows: the DLL, renamed)
+//!     x86_64-linux/Markdown Notes.so (Linux: the shared library, renamed)
 //!     MacOS/Markdown Notes           (macOS: the dylib, no extension)
 //!     Info.plist                     (macOS only)
 //!     PkgInfo                        (macOS only)
@@ -190,9 +191,7 @@ fn bundle(args: &[String]) -> Result<PathBuf, String> {
         let arch_dir = contents.join(platform_dir(&triple));
         fs::create_dir_all(&arch_dir)
             .map_err(|e| format!("creating {}: {e}", arch_dir.display()))?;
-        // On Windows and Linux the binary inside the bundle keeps the .vst3
-        // extension rather than .dll/.so.
-        copy(&lib, &arch_dir.join(format!("{BUNDLE_NAME}.vst3")))?;
+        copy(&lib, &arch_dir.join(inner_binary_name(&triple)))?;
     }
 
     match write_module_info(&bundle_root, &contents) {
@@ -565,8 +564,8 @@ fn write_module_info(bundle_root: &Path, contents: &Path) -> Result<PathBuf, Str
 
 /// Put the build result in `<root>/binaries`.
 ///
-/// On Windows and Linux that is the plugin binary; on macOS it is the bundle,
-/// which is the only loadable form there.
+/// On Windows that is the plugin binary. On macOS and Linux it is the bundle:
+/// a plug-in there is a folder, and the binary on its own is not one.
 fn write_binary(
     root: &Path,
     lib: &Path,
@@ -581,7 +580,7 @@ fn write_binary(
     fs::create_dir_all(&binaries)
         .map_err(|e| format!("creating {}: {e}", binaries.display()))?;
 
-    if is_macos(triple) {
+    if is_macos(triple) || triple.contains("linux") {
         copy_tree(bundle_root, &target)?;
     } else {
         copy(lib, &target)?;
@@ -775,6 +774,18 @@ fn platform_dir(triple: &str) -> String {
     }
 }
 
+/// The name of the binary inside the bundle's architecture directory.
+///
+/// On Windows it is the DLL under the bundle's own name, `.vst3` and all. On
+/// Linux it is the shared library under the bundle's name, with `.so`.
+fn inner_binary_name(triple: &str) -> String {
+    if triple.contains("linux") {
+        format!("{BUNDLE_NAME}.so")
+    } else {
+        format!("{BUNDLE_NAME}.vst3")
+    }
+}
+
 fn host_triple() -> String {
     // Good enough for the host build; explicit --target covers everything else.
     let arch = if cfg!(target_arch = "x86_64") {
@@ -824,4 +835,20 @@ fn info_plist() -> String {
 </plist>
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_linux_bundle_holds_a_so_named_after_the_bundle() {
+        let linux = "x86_64-unknown-linux-gnu";
+        assert_eq!(platform_dir(linux), "x86_64-linux");
+        assert_eq!(inner_binary_name(linux), "Markdown Notes.so");
+        assert_eq!(
+            inner_binary_name("x86_64-pc-windows-msvc"),
+            "Markdown Notes.vst3"
+        );
+    }
 }

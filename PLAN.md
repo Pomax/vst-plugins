@@ -5,13 +5,36 @@
 `./build.sh` and `./test.sh` (including `./test.sh --full`) work on Linux the
 way they work on Windows and macOS:
 
-- every project builds and its result lands in `binaries/`;
+- every project `./build.sh` names builds and its result lands in `binaries/`
+  (`tools/window-shot` is macOS only and is not one of them);
 - the unit tests, the scenarios and the headless pixel tests pass;
 - the UI tests run from the same step files, against the real host window,
   with input posted to the desktop's own keyboard and pointer, the way
   `SendInput` and `CGEvent` post to theirs, and pictures taken of the screen;
-- Linux has the same three tools the other platforms have: a window driver, a
-  screen photographer and a text finder.
+- Linux has what the other platforms have for this: a window driver that can
+  photograph the screen, and a text finder. On Windows the driver and the
+  photographer are one program, on macOS two; on Linux they are one.
+
+The first UI run raises GNOME's permission dialog, which only the person at
+the machine can answer.
+
+Not part of this plan: files dropped onto the plugin's window. `drop.rs` has
+no Linux drop target, and no test drives a real drop onto the window on any
+platform. The headless `pictures_in_notes` tests put files into the same
+queue through egui, and those run on Linux in T3.
+
+Also not part of this plan:
+
+- CI and releases. The workflows build and test on Windows and macOS only,
+  and this plan does not add a Linux job or a Linux release.
+- `markdown-notes/README.md` and the root `README.md`, which are the user's.
+  Line 27 of the first says there are only Windows and macOS releases
+  "because Linux does not support VST3". A Linux build of the plugin is at
+  odds with that sentence, and the sentence is the user's to change.
+- `markdown-notes/.cargo/config.toml`, whose `CFLAGS` lines trim the
+  tree-sitter grammar out of the Windows and macOS binaries. Linux gets no
+  such line, so its binary keeps the grammar. The lines are about size, and
+  T3 is what shows the Linux build works without one.
 
 Target: GNOME 50 on Wayland, x86_64, one 1920x1080 monitor. The host and the
 plugin are XWayland windows, because the plugin's only Linux window type is
@@ -21,11 +44,16 @@ Fixed choices:
 
 - Screen reading: the xdg-desktop-portal ScreenCast interface.
 - Text recognition: the `tesseract` program.
-- Input: the xdg-desktop-portal RemoteDesktop interface, which posts key and
-  pointer events to the session's existing keyboard and pointer. No device is
-  created, virtual or otherwise.
+- Input: the xdg-desktop-portal RemoteDesktop interface. The driver hands key
+  and pointer events to the desktop, which delivers them through its own
+  pointer and keyboard focus, the way `SendInput` and `CGEvent` posting do.
+  The driver creates no input device. How GNOME carries those events inside
+  itself is not checked: its source is not on this machine.
 
 ## 2. Current breakdown
+
+Sections 2 and 3 describe the code as it was before any task of section 5 was
+done. Line numbers are from then.
 
 ### 2.1 Entry points
 
@@ -33,7 +61,7 @@ Fixed choices:
 |---|---|
 | `build.sh` | `build.sh` of `tools/find-text`, `tools/mini-host`, `tools/vst3-loader`, `markdown-notes`, in that order |
 | `test.sh` | `test.sh` of `tools/mini-host`, `tools/vst3-loader`, `markdown-notes` |
-| `markdown-notes/build.sh` | `cargo run -p xtask -- bundle --release --target aarch64-apple-darwin` |
+| `markdown-notes/build.sh` | `cargo run --release --quiet -p xtask -- bundle --release --target aarch64-apple-darwin` |
 | `markdown-notes/test.sh` | `cargo run -p xtask -- test "$@"` |
 | `tools/find-text/build.sh` | `swiftc find-text.swift` into `binaries/find-text` |
 | `tools/mini-host/build.sh`, `tools/vst3-loader/build.sh` | `cargo build --release`, copy into `binaries/` |
@@ -57,7 +85,7 @@ Fixed choices:
 
 | Job | Windows (`tools/capture-window.ps1`) | macOS (`xtask/src/macos.rs`) |
 |---|---|---|
-| Keys | `SendInput` with real scan codes, one key at a time, a Shift of its own per character, key found with `VkKeyScanW` | `CGEvent` posted at the HID tap |
+| Keys | characters: `SendInput` with real scan codes, one key at a time, a Shift of its own per character, key found with `VkKeyScanW`. Named keys: `SendKeys`. Shortcuts: `SendInput` | `CGEvent` posted at the HID tap, the character set on the event |
 | Mouse | `SetCursorPos`, `mouse_event`, glides in 16 ms steps | `CGEvent` mouse events, glides in 16 ms steps |
 | Picture | `CopyFromScreen` of the window's region | `Window Shot.app` running `screencapture -R` on the region |
 | Film | ffmpeg `gdigrab`, frames counted with `mpdecimate` | stills at 30 a second joined by ffmpeg, same count |
@@ -75,10 +103,12 @@ Fixed choices:
 Both read the screen and not the window, so a dialog on top is in the picture.
 Both send input to the system and not to the window.
 
-Steps the drivers implement: `type click press showing hidden dialog nodialog
-window nowindow dragtext hold moveto letgo drag cursor shortcut kill restart
-row copies dragto dragedge geometry remove picture clipboard written shot film
-endfilm wiggle wait resize`.
+Steps both drivers implement: `type click press showing hidden dialog nodialog
+window nowindow dragtext hold moveto letgo cursor shortcut kill restart row
+copies dragto geometry remove picture clipboard written shot film endfilm
+wiggle`. Only the macOS driver has `wait`, `drag`, `dragedge` and `resize`.
+The step files of the two suites use every shared step except `kill` and
+`wiggle`, and none of the macOS-only ones.
 
 ### 2.4 The host, the loader and the plugin
 
@@ -97,18 +127,18 @@ endfilm wiggle wait resize`.
 
 | # | Where | What |
 |---|---|---|
-| M1 | `markdown-notes/build.sh` | Hardcodes `--target aarch64-apple-darwin`. Fails on Linux. |
+| M1 | `markdown-notes/build.sh` | Hardcodes `--target aarch64-apple-darwin`, so on Linux it does not build the Linux plugin. |
 | M2 | `tools/find-text/build.sh` | Runs `swiftc`. `./build.sh` stops at its first project on Linux. |
 | M3 | `tools/find-text/src/main.rs`, `Cargo.toml` | Windows-only code and dependencies. No Linux reader. |
 | M4 | `xtask/src/main.rs:195`, `write_binary` | The Linux bundle is not the documented one. The VST3 Plugin Format page: binary at `<Name>.vst3/Contents/x86_64-linux/<Name>.so`, folder and `.so` share the name, single-file plug-ins deprecated since 3.6.10. The code names the inner file `.vst3` and copies a bare file to `binaries/`. |
 | M5 | `markdown-notes/run.sh` | Looks for `.dylib` only. |
-| M6 | `mini-host/src/main.rs:397`, `vst3-loader/src/lib.rs:109` | `native_handle` accepts `Xcb` only. winit's X11 window gives `Xlib` (`winit-0.30.13/src/platform_impl/linux/x11/window.rs:1884`). The editor is never attached. |
+| M6 | `mini-host/src/main.rs:397` | `native_handle` accepts `Xcb` only. winit's X11 window gives `Xlib` (`winit-0.30.13/src/platform_impl/linux/x11/window.rs:1884`). The host gets no handle and the editor is never attached. |
 | M7 | `mini-host` `Cargo.toml` | eframe has `wayland` and `x11`. On a Wayland session winit picks Wayland, and an X11 plugin window cannot be parented into a Wayland surface. |
 | M8 | `mini-host/src/app/place.rs:378` | Every Linux function is empty: the editor is not put under the strip, not resized, not given the keyboard, not measured. |
 | M9 | `xtask/src/uitest.rs:545` | No Linux `drive`. |
 | M10 | `xtask/src/main.rs:25` | `mod png` is macOS only. |
 | M11 | Linux tooling | No screen photographer, no input driver, no window lookup. |
-| M12 | `docs/` | Nothing about Linux. |
+| M12 | `docs/markdown-notes/DEVELOPERS.md`, `docs/mini-host/DEVELOPERS.md`, `docs/markdown-notes/PROJECT_DEFINITION.md` | Line 38 of the first says the Linux result in `binaries/` is the bare plugin binary, which stops being true with M4. Its install folders and its UI test tooling are given for Windows and macOS only. Nothing says what a Linux machine needs installed. `PROJECT_DEFINITION.md`, which `.claude/CLAUDE.md` names as a document to keep current and as where project history goes, lists the build targets, the per-platform build scripts, the status of every criterion and the known gaps, and says nothing of Linux. |
 
 ## 4. Implementation
 
@@ -164,6 +194,10 @@ windows = { version = "0.62.2", features = [ ...as now... ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+font-kit = "0.14.3"
+pathfinder_geometry = "0.5"
 ```
 
 `tools/find-text/src/main.rs`:
@@ -181,7 +215,9 @@ New `tools/find-text/src/linux.rs`:
 - `fn at_scale(picture, scale) -> Result<Vec<Line>, String>`: enlarge with a
   cubic filter, pull the greys apart with the Windows reader's formula, encode
   as PNG, pipe it to `tesseract stdin stdout --psm 11 -l eng tsv`, hand the
-  output to `parse_tsv`.
+  output to `parse_tsv`. `man tesseract`: "If FILE is stdin or - then the
+  standard input is used", the same for `stdout`, `tsv` is one of its config
+  files, and `-l` and `--psm` "must occur before any CONFIGFILE".
 - `fn parse_tsv(text: &str, scale: u32) -> Vec<Line>`: level 5 rows are words
   (`left top width height conf text`); words sharing block, paragraph and line
   numbers form one `Line`; boxes are divided by `scale`; rows with no text or a
@@ -189,12 +225,14 @@ New `tools/find-text/src/linux.rs`:
 - `tesseract` not on `PATH`: exit 2 with a message that names it.
 
 The Windows build of this crate changes (cfg attributes, target table) and
-cannot be compiled here. The Windows code itself is not edited.
+cannot be compiled here. No CI job builds find-text either, so that change
+stays unverified until the crate is built on Windows. The Windows code itself
+is not edited.
 
-### 4.3 vst3-loader (M6)
+### 4.3 vst3-loader
 
-`src/lib.rs` `native_handle`: add
-`RawWindowHandle::Xlib(h) => Some(h.window as usize as *mut c_void)`.
+No change. The host hands `Plugin::attach` the socket of 4.4, which is an
+`Xcb` handle, and the loader's `native_handle` already accepts that.
 
 ### 4.4 mini-host (M6, M7, M8)
 
@@ -205,14 +243,19 @@ cannot be compiled here. The Windows code itself is not edited.
 
 `src/main.rs`:
 
-- `native_handle`: the same `Xlib` arm as the loader.
+- `native_handle`: add
+  `RawWindowHandle::Xlib(h) => Some(h.window as usize as *mut c_void)`.
 - Attaching, Linux only: `place::make_socket(parent, chrome::HEIGHT)` then
   `plugin.attach(&socket)`. Other platforms keep `plugin.attach(cc)`.
-- `Host::ui`: call `place::hold_keyboard(self.handle)` each frame while no
-  dialog is open. Empty on Windows and macOS.
+- `Host::ui`, Linux only (`#[cfg(target_os = "linux")]`): call
+  `place::hold_keyboard(self.handle)` each frame while no dialog is open.
 
-`src/app/place.rs`, Linux module (replaces the empty one; the catch-all for
-other systems stays):
+The Windows and macOS modules of `place.rs` are not edited.
+
+`src/app/place.rs`, a new Linux module. The empty module there now is the
+catch-all for every system that is not Windows or macOS; it stays for the
+others, with its cfg changed to leave Linux out. `make_socket`, `Socket` and
+`hold_keyboard` exist on Linux only and are only called from Linux-only code:
 
 - State: one `x11rb::rust_connection::RustConnection`, the socket's window id
   and the strip height, in a `OnceLock<Mutex<_>>`.
@@ -223,23 +266,33 @@ other systems stays):
   less `top`, map it.
 - `inset_editor`, `follow_resize`: `ConfigureWindow` on the socket to the
   host's current size less the strip.
-- `track_editor`: nothing. baseview resizes the plugin's window to its
-  parent's size on the parent's `ConfigureNotify`
-  (`baseview/src/platform/x11/event_loop.rs`, `handle_coalesced_resize_events`),
-  and the parent is the socket.
+- `track_editor`: a thread with an X connection of its own that selects
+  `StructureNotify` on the host's window and resizes the socket on every
+  `ConfigureNotify`, in that moment. The host draws only when an event
+  arrives (nothing in it asks for a repaint), so sizing the socket from its
+  frame would be a frame late for every step of a drag, which is what
+  `host-resize.txt` and `.claude/memory/windows-redraw-during-resize.md`
+  describe as the fault on Windows. baseview then resizes the plugin's window
+  to the socket's size on the socket's `ConfigureNotify`
+  (`baseview/src/platform/x11/event_loop.rs`, `handle_coalesced_resize_events`).
 - `focus_editor`: `SetInputFocus` on the plugin's window (the socket's largest
   child, from `QueryTree`).
 - `hold_keyboard`: when `GetInputFocus` names the host's own window, give the
   focus to the plugin's window. The window manager puts the focus on the
-  top-level window every time it is activated, which is after every dialog.
+  top-level window every time it is activated: at launch, after a restart,
+  and when a dialog closes. The baseline test types with nothing clicked, so
+  the first of those is what it depends on.
 - `editor_in_host`: the socket's position plus the plugin window's geometry.
   With this, `Host::report_geometry` writes `window=`, `host=`, `editor=` and
   `inset=` as it does on macOS.
 - `set_enabled`: nothing, as on macOS.
 
 Why a socket window: with the host's whole window as the parent, baseview's
-follow-the-parent rule makes the plugin cover the strip. This reading is of
-baseview 0.3.5; the lock file has 0.3.4, so task T3.1 confirms it there first.
+follow-the-parent rule makes the plugin cover the strip. Checked in the
+version the lock file names, baseview 0.3.4: the rule is at
+`platform/x11/event_loop.rs:175` and `:422`, a parent given as `Xlib` or `Xcb`
+is accepted (`platform/x11/mod.rs`), and the window draws on a 15 ms timer in
+a thread of its own (`event_loop.rs:125`), whatever the host is doing.
 
 ### 4.5 The Linux driver (M9, M10, M11)
 
@@ -266,24 +319,37 @@ New files under `xtask/src/`:
 
 | File | Holds |
 |---|---|
-| `linux.rs` | `pub fn drive(root, host, plugin, steps, state, shot)`, `struct Run` (child, pid, restarts, launch arguments, `reported` geometry file, `host` and current `rect`, `holding`, `title`, `killed`, film, the clipboard owner), `launch`, `finish`, `play`, `step` |
-| `linux/portal.rs` | `struct Portal`: the one portal session that carries both input and the screen stream. `open(cache)`, the stream's node and size, the restore token |
-| `linux/input.rs` | Input through the `Portal`, and the last pointer position. `move_to`, `glide`, `click`, `take_hold`, `let_go`, `drag`, `wheel`, `tap`, `shortcut`, `write`, `send_keys` |
+| `linux.rs` | `pub fn drive(root, host, plugin, steps, state, shot)`, `struct Run` (child, pid, restarts, launch arguments, `reported` geometry file, `host` and current `rect`, `holding`, `title`, film, the clipboard owner), `launch`, `finish`, `play`, `step` |
+| `linux/portal.rs` | `struct Portal`: the one portal session that carries both input and the screen stream. `open(cache)`, the stream's node and size, the restore token. `request_open(pid)`: whether a process has a portal request open, which is what a file dialog is |
+| `linux/input.rs` | Input through the `Portal`, and the last pointer position. `move_to`, `glide`, `click`, `take_hold`, `let_go`, `wheel`, `tap`, `shortcut`, `write`, `send_keys` |
 | `linux/keys.rs` | `keysym_of(char)`, `named(&str)` (the keysym of `ENTER`, `ESC`, `BS`, `END`, `DOWN`, `TAB`), `modifier(&str)`, `parse_keys(step) -> Vec<Stroke>` |
-| `linux/xwindows.rs` | `struct Desktop`: X connection and atoms. `window_of(pid, title)`, `frame_rect`, `client_rect`, `activate`, `close`, `set_size`, `pointer`, `screen_size`, `cursor_image` |
-| `linux/cursor.rs` | `stock(theme, size)` and `name_of(shown, stock)` giving `ibeam`, `arrow`, `hand`, `grabbing` or `other` |
-| `linux/screen.rs` | Pictures and films from the `Portal`'s stream. `shot(area, to)`, `film(area, to)`, `Film::stop`, `crop(area, stream, screen)` |
+| `linux/xwindows.rs` | `struct Desktop`: X connection and atoms. `window_of(pid, title)`, `frame_rect`, `client_rect`, `activate`, `close`, `pointer`, `cursor_image` |
+| `linux/cursor.rs` | `stock(theme)`, every size of each named cursor in the theme, and `name_of(shown, stock)` giving `ibeam`, `arrow`, `hand`, `grabbing` or `other` |
+| `linux/screen.rs` | Pictures and films from the `Portal`'s stream. `shot(area, to)`, `film(area, to)`, `Film::stop`, `cut(area, stream, frame_size)` (the region of a frame, in its pixels) |
 | `linux/look.rs` | `finder()`, `find_all(picture, text)`, `read_all(picture)`, `nearest(boxes, near)`, `find_on_screen`, `find_box_on_screen` |
 
 The portal session (`portal.rs`):
 
+- The session is opened before the first host is started, so GNOME's dialog
+  is answered before there is a window for it to take the focus from.
 - One session per xtask process, made with `RemoteDesktop::create_session`.
   `RemoteDesktop::select_devices` asks for the keyboard and the pointer,
   `Screencast::select_sources` adds the monitor to the same session, and
   `RemoteDesktop::start` raises GNOME's one permission dialog for both.
-- Persist mode "until revoked". The restore token is read from and written to
-  `markdown-notes/.cache/portal-token`, so the dialog is answered once.
-- While the dialog is up the driver prints one line saying it is waiting.
+- Persistence is asked for in `select_devices` only: persist mode "until
+  revoked", with the restore token read from and written to
+  `markdown-notes/.cache/portal-token`. `select_sources` asks for none and
+  gets no token. The portal documentation requires this for a combined
+  session: "the persistence options in ScreenCast.SelectSources must not be
+  used with a remote desktop session".
+- This desktop's portal is RemoteDesktop version 2 and ScreenCast version 5,
+  so the stream is addressed by its PipeWire node id, which only version 6
+  deprecates.
+- The driver cannot see GNOME's dialog. It prints one line before `start`
+  saying the dialog may be up, and one after saying how long `start` took.
+  An answer within two seconds is the grant having been restored with nobody
+  touching the machine. `start` is waited on for up to 200 seconds, the time
+  the macOS driver gives its photographer's first prompt.
 - A refusal, or no portal on the bus, stops the run with a message, as
   `may_post_input` does on macOS.
 
@@ -294,9 +360,11 @@ Input (`input.rs`, `keys.rs`):
   the session already has. The portal's `Notify*` calls are that on this
   desktop: GNOME moves its own pointer and delivers the keys to whichever
   window has the focus. Nothing is sent to the window itself.
-- Pointer: `notify_pointer_motion_absolute(stream, x, y)` in the monitor
-  stream's coordinates, `notify_pointer_button(BTN_LEFT, pressed/released)`,
-  `notify_pointer_axis_discrete(Vertical, steps)` for the wheel.
+- Pointer: `notify_pointer_motion_absolute(stream, x, y)`. The portal
+  documentation puts x and y in "the stream's logical coordinate space", so a
+  point in a window is its X position less the stream's reported position.
+  `notify_pointer_button(BTN_LEFT, pressed/released)` takes the evdev button
+  code, and `notify_pointer_axis_discrete(Vertical, steps)` is the wheel.
 - Keys: `notify_keyboard_keysym(keysym, pressed/released)`, one character per
   keystroke. The keysym carries the character, so the layout in use does not
   change what arrives (the macOS driver sets the character on the event for
@@ -307,12 +375,36 @@ Input (`input.rs`, `keys.rs`):
   over the key's. No remapping.
 - Timing follows the existing drivers: 16 ms glide steps, a settle before a
   press, a hold before a release, about 20 ms per keystroke.
-- After every pointer move onto a window the driver reads `QueryPointer` and
-  fails if the pointer is not where it was sent.
+- Input must never land in another program's window. Before a step clicks,
+  the root's `_NET_ACTIVE_WINDOW` has to name the addressed window. Before a
+  step types, one of two things has to hold: that same check, or the host's
+  process has a portal request open, which is a file dialog being up. In the
+  second case what is typed is for the dialog: the path, and the `{ENTER}`
+  the test confirms it with, which is a plain `type:` step. When neither
+  holds, the driver asks once for the addressed window to be brought to the
+  front, the way `window:` does, and checks again: a file dialog that has
+  just closed may not have handed the focus back. If the window is still not
+  the active one the step fails and nothing is sent. Whether the dialog
+  itself has the keyboard cannot be read from outside it (U14).
+- Nothing is left pressed. When a step fails, or the run ends, the driver
+  releases the mouse button if `hold:` left it down and any modifier a
+  `shortcut:` was holding, before it returns. A button or a Ctrl left down
+  would stay down on the desktop of the person at the machine.
+- At the end of each move onto one of the host's windows the driver reads
+  `QueryPointer` and fails if the pointer is not where it was sent. X only
+  knows the pointer while it is over an X window, so a move onto a file
+  dialog, which is not one, is not checked this way.
 
 Windows and geometry (`xwindows.rs`):
 
+- Launch: the host is started with the plugin, `--state` and `--geometry`. Its
+  window is waited for by process id and title for up to 30 seconds, brought to
+  the front, and then looked at until text can be read below the strip, which
+  is the plugin having drawn. This is the Windows driver's `Wait-Loaded`.
 - A window is found in `_NET_CLIENT_LIST` by `_NET_WM_PID` and its title.
+  This desktop's window manager lists `_NET_CLIENT_LIST`, `_NET_WM_PID`,
+  `_NET_ACTIVE_WINDOW` and `_NET_FRAME_EXTENTS` in `_NET_SUPPORTED` on the X
+  root, and winit sets `_NET_WM_PID` on its windows.
 - The window under test is addressed by its frame (client area grown by
   `_NET_FRAME_EXTENTS`), the Windows and macOS convention. A dialog is
   addressed by its client area, the Windows convention.
@@ -322,20 +414,31 @@ Windows and geometry (`xwindows.rs`):
   `Run::finish` does on macOS. A crash on the way out fails the test.
 - Sizes for `dragto:` and `geometry:` come from the host's `--geometry` file,
   the macOS way.
+- Read from this desktop's X resources: `Xft.dpi` is 96, so the host and the
+  plugin both draw at a scale of 1 and a step's coordinates are X pixels.
+  `Xcursor.theme` is `Yaru`, and that theme has `text`, `xterm`, `left_ptr`,
+  `hand2`, `hand1`, `closedhand` and `grabbing`, the names baseview 0.3.4
+  loads (`platform/x11/cursor.rs`).
 
 Screen (`screen.rs`, `look.rs`):
 
 - The stream is the monitor stream of the `Portal`'s session, cursor hidden.
 - A picture: `open_pipe_wire_remote`, then
   `gst-launch-1.0 -q pipewiresrc fd=N path=NODE num-buffers=1 ! videoconvert !
-  videocrop ... ! pngenc ! filesink location=OUT`, five second limit.
-- The crop is computed from the stream's size against the X screen's size, so
-  a scale other than 1 is handled and not assumed.
+  pngenc ! filesink location=FRAME`, five second limit. That is the whole
+  monitor. The driver cuts the region out of it with the `image` crate and
+  writes the PNG the step asked for.
+- The portal reports the stream's position and size in the compositor's
+  logical space and says the size "may not be equivalent to a size in a pixel
+  coordinate space". A frame is in pixels. So the cut is scaled by the frame's
+  width over the stream's logical width, and a scale other than 1 is handled
+  and not assumed.
 - A film: `gst-launch-1.0 -e pipewiresrc ... ! videorate !
   video/x-raw,framerate=30/1 ! videoconvert ! videocrop ... ! x264enc ! mp4mux !
-  filesink`, ended with SIGINT. Frames are then counted with ffmpeg and
-  `mpdecimate` and written as `frames=` and `distinct_frames=`, as on the other
-  platforms.
+  filesink`, ended with SIGINT. `videocrop` needs its numbers in pixels before
+  the recording starts, so the scale comes from one still taken when `film:`
+  begins. Frames are then counted with ffmpeg and `mpdecimate` and written as
+  `frames=` and `distinct_frames=`, as on the other platforms.
 - Text finding calls `binaries/find-text`, built through its `build.sh` when
   it is not there, as `macos.rs` does.
 
@@ -344,27 +447,39 @@ Steps:
 | Step | Linux behaviour |
 |---|---|
 | `type:` | `send_keys`. A value starting with `/` is a path for a file dialog, see below |
-| `click:` `hold:` `moveto:` `letgo:` `drag:` `wiggle:` | `Hands`, in the addressed window's coordinates |
-| `press:LABEL\|X,Y` | photograph the window, take the match nearest X,Y, click it; no match fails and says what was read |
-| `showing:` `hidden:` | photograph the window, look below Y until it is as the step says, five second limit |
-| `dragtext:` | find the text below Y, press on its first glyph, let go at X,Y |
-| `window:` `nowindow:` | X11 window of the host's process by title; a new dialog is waited for until text can be read in it |
-| `dialog:WORD` `nodialog:WORD` | the file dialog is another program's window, so it is found by looking at the monitor: up when `Cancel` and WORD are both read, gone when `Cancel` is not |
+| `click:` `hold:` `moveto:` `letgo:` | the pointer functions of `input.rs`, in the addressed window's coordinates |
+| `press:LABEL\|X,Y` | put the pointer on the title bar first when the window is the host's (a pointer left on a control draws it highlighted, the Windows driver's reason), photograph the window and take the match nearest X,Y, looking again until it is there or five seconds have gone; then click it. No match fails, keeps the picture and says what was read |
+| `showing:` `hidden:` | photograph the window, look below Y until it is as the step says, five second limit; a failure says what was read below Y |
+| `dragtext:` | find the text below Y, looking until it is there or five seconds have gone; press on its first glyph, let go at X,Y |
+| `window:` `nowindow:` | X11 window of the host's process by title, waited for up to four seconds (`window:`) or waited to go for up to three (`nowindow:`), the Windows driver's limits. `window:` brings it to the front, as both drivers do; a new dialog is waited for until text can be read in it |
+| `dialog:WORD` `nodialog:WORD` | the file dialog is the portal's window, not the host's, and not an X window. Whether one is up is asked of the portal, not read off the screen: a dialog is a request object at `/org/freedesktop/portal/desktop/request/SENDER/TOKEN` that "will stay alive for the duration of the user interaction" (portal documentation), the portal's object tree lists them by sender (seen here for its `session` node), and `GetConnectionUnixProcessID` says which process a sender is. `dialog:` passes when the host's process has one, `nodialog:` when it has none. This is the Windows driver's test, a second window of the host's process, in the form this desktop has. Words on the monitor cannot decide it: any other window showing `Cancel`, this conversation included, would hold `nodialog:` up for ever. WORD is then read off the monitor, on the same row as `Cancel`, to say which dialog it is. `dialog:` waits up to ten seconds, `nodialog:` up to three, the Windows driver's limits |
 | `cursor:X,Y\|NAME` | move there, compare the XFixes cursor picture with the theme's pictures for the names baseview loads (`text`/`xterm`, `left_ptr`, `hand2`/`hand1`, `closedhand`/`grabbing`), two second limit |
 | `shortcut:` | modifier held over the key |
 | `row:DIR\|NAME` | look for the row, click it; wheel down and look again when it is not on screen |
-| `dragto:W,H,MS` | take the frame's bottom right corner, glide by the difference from the reported size, let go, wait for the reported size |
-| `dragedge:` | the same with a given distance |
-| `resize:W,H` | `ConfigureWindow`, corrected from the reported size |
-| `geometry:PATH` | copy the host's report once the editor fills the host |
+| `dragto:W,H,MS` | take the frame's bottom right corner, glide by the difference from the reported size over MS milliseconds, let go, wait up to two seconds for the reported size to be W by H |
+| `geometry:PATH` | copy the host's report once the editor fills the host, or as it stands after two seconds, the Windows driver's limit |
 | `picture:` | `png::solid`, the colour the other drivers use |
 | `clipboard:PATH` | `arboard::Clipboard::set_image`, owner kept in `Run` |
-| `shot:` `film:` `endfilm:` | `Screen` |
-| `restart:` `kill:` `copies:` `remove:` `written:` `wait:` | as `macos.rs` |
+| `shot:` `film:` `endfilm:` | the functions of `screen.rs`. `shot:` is of the addressed window. `film:PATH\|W,H` records a region of that size from the top left of the window under test, or the window's own size with no `\|W,H`, as both drivers do; `endfilm:` writes `PATH.txt` with `frames=` and `distinct_frames=` |
+| `restart:` `copies:` `remove:` `written:` | as `macos.rs`. `written:` looks for up to five seconds; `restart:` waits ten seconds for the host to close and thirty for its new window |
+
+Not implemented on Linux: `kill`, `wiggle`, `wait`, `drag`, `dragedge`,
+`resize`. No test in either suite uses them, so nothing could show them
+working. A step file that uses one fails on Linux with `unknown step`.
+
+After the last step the window under test is photographed to the test's PNG,
+whichever window the steps were addressing, as both existing drivers do. A
+film still rolling after a failed step is stopped, as the macOS driver does;
+the Windows driver leaves it.
+
+The host is never left running. Whatever a step failed on, the window not
+appearing at launch included, the driver asks the host to close, waits ten
+seconds, and kills it if it is still there.
 
 File dialog paths: stage pictures `dialog-<n>-<stage>.png` in
-`.cache/uitests`, as `macos.rs` takes them. Precondition: `Cancel` is read on
-screen before anything is typed. Then Ctrl+L, the path typed, and the test's
+`.cache/uitests`, as `macos.rs` takes them. Precondition: the host's process
+has a portal request open, so nothing is typed into the editor by mistake.
+Then Ctrl+L, the path typed, and the test's
 own `{ENTER}` confirms. Whether a Save dialog takes the whole path in one go
 or needs the directory and the name separately is unknown U6.
 
@@ -374,38 +489,103 @@ Unknowns, each settled by a named test during an allowed UI run:
 |---|---|---|---|
 | U1 | A new reader of the portal stream gets a frame while the screen is still | `typing-goes-into-the-document` (`showing:`) | keep one reader attached for the whole run and take its latest frame |
 | U2 | `open_pipe_wire_remote` can be called once per picture | same | one reader for the run, as U1 |
-| U3 | A position given to the portal in stream coordinates is the position X reports for the pointer | the `QueryPointer` check on the first click | convert between the two with the measured ratio and offset |
-| U9 | A modifier pressed by keysym is held when the next key arrives | `editing-the-document` (`shortcut:` steps) | send shortcuts with `notify_keyboard_keycode` and the keys' evdev codes |
+| U3 | A position given to the portal in stream coordinates is the position X reports for the pointer | `editing-the-document`: the `QueryPointer` check on its first `cursor:` step. The baseline test never moves the pointer | convert between the two with the measured ratio and offset |
+| U9 | A modifier pressed by keysym is held when the next key arrives, and a keysym that needs Shift arrives as that character | `editing-the-document` (`shortcut:` steps, and the `X` it types) | send keys with `notify_keyboard_keycode`: the key's evdev code, inside a Shift of its own when the layout X reports says so, which is the Windows driver's way |
 | U4 | Raw step coordinates hit their targets with GNOME's title bar height | `editing-the-document` | stop; the choice touches step files shared with Windows and macOS and is the user's |
-| U5 | The frame's bottom right corner is a resize grip | `host-resize` | move the grab point along the frame edge, found from the test's pictures |
+| U5 | The frame's bottom right corner is a resize grip | `sections-and-files`, whose `dragto:` is the first one run | move the grab point along the frame edge, found from the test's pictures |
 | U6 | How GNOME's Open and Save dialogs take a typed path | `sections-and-files` stage pictures | directory first, then the name, as `macos.rs` does |
 | U7 | XWayland reports the cursor's picture through XFixes | `editing-the-document` (`cursor:`) | read the cursor from the picture of the screen with the portal's cursor mode on |
-| U8 | The editor keeps the keyboard after a preset dialog closes | `opening-a-note` | adjust `hold_keyboard` |
+| U8 | The plugin has the keyboard once its host's window is at the front, with nothing clicked | `typing-goes-into-the-document`, which types without clicking. No test types straight after a dialog closes: each clicks or restarts first | adjust `hold_keyboard` |
+| U10 | Reading a picture through `tesseract` at each of its enlargements (three for a window, two for the whole monitor, by the rule `enlargements` already has) is quick enough for the steps that look until a deadline | `typing-goes-into-the-document` (`showing:`) | read large pictures at fewer enlargements |
+| U11 | The portal lists the host's request while its file dialog is up, and the dialog shows `Cancel` and the word the step names on one row. The second part reads the whole monitor, so another window showing both words on one row could pass it wrongly | `sections-and-files` (`dialog:Save`, `nodialog:Save`) | for the first: fall back to reading the monitor and report that other windows can fool it. For the second: use the words its stage pictures show |
+| U13 | GNOME brings the window to the front on an `_NET_ACTIVE_WINDOW` request. It declares the property supported; whether it honours a request from a program that is not a pager is not known | `typing-goes-into-the-document` (the first `type:`) | stop and report it. The driver does not click a title bar it cannot tell is on top: the click could land in another program |
+| U14 | A file dialog has the keyboard when it opens | `sections-and-files` (the first path typed, by its stage pictures) | stop and report it. The driver does not click where it only read words: they could be another program's |
+| U15 | GNOME restores the grant from the token, so its dialog comes up once and not on every run | the second UI run of T5: `start` answers within two seconds | stop and report it: every run would then need the dialog answered |
+| U18 | `tesseract` reads the plugin's and the host's lettering: dark on light, light on dark, and white on the host's blue strip | `typing-goes-into-the-document` for the plugin, `opening-a-note` (`press:Save preset`) for the strip | change the enlargements, the grey-pulling or the page mode in `linux.rs`. If a word in a shared step file still cannot be read, stop: the file is shared with Windows and macOS |
+| U16 | The host writes its geometry report with no input arriving | T4's `the_editor_fills_the_window_below_the_strip` | on Linux the host asks for a repaint ten times a second while `--geometry` is given |
+| U17 | The plugin keeps drawing while the host's corner is dragged, so its text keeps its size | `host-resize`, by the frames of its film | stop and write the fix into this plan as an item of its own |
 
 ### 4.6 Documentation (M12)
 
-`docs/markdown-notes/DEVELOPERS.md` and `docs/mini-host/DEVELOPERS.md`: a
-Linux part covering what has to be installed (`tesseract-ocr`, GStreamer with
-`pipewiresrc`, ffmpeg), the portal's permission dialog, how input and
-pictures work. The root `README.md` is not edited.
+`docs/markdown-notes/DEVELOPERS.md`, three places:
 
-### 4.7 Rules that bind the work
+- line 38: what `binaries/` holds on Linux;
+- the install folders: Linux, as `docs/vst3-loader/USING.md` gives it;
+- the UI test section: the Linux tooling beside the Windows and macOS ones.
+  The portal's permission dialog, how input and pictures work, and what has
+  to be installed (`tesseract-ocr`, GStreamer with `pipewiresrc`, ffmpeg).
+
+`docs/mini-host/DEVELOPERS.md`: how the host holds the plugin's window on
+Linux.
+
+`docs/markdown-notes/PROJECT_DEFINITION.md`:
+
+- Status: what Linux adds to A1 (build targets) and W7 (per-platform build
+  scripts), each stated as verified only for what a test or a run showed.
+- Known gaps: what is not done or not proven on Linux by the end of this
+  plan. Known already: no drop target for files, and any unknown of 4.5 that
+  ended in "stop and report".
+- The criteria lists are the user's. No criterion is added or reworded there
+  by this work.
+
+Nothing else in these files is rewritten. The root `README.md` is not edited.
+
+### 4.7 What changes for Windows and macOS
+
+Files those platforms also build or run, and what shows the change is safe
+there. None of it can be run on this machine.
+
+| File | Change | Shown safe by |
+|---|---|---|
+| `markdown-notes/build.sh`, `markdown-notes/run.sh`, `tools/find-text/build.sh` | Darwin keeps the commands it had; Linux gets its own | nothing until they are run on a Mac. CI builds the plugin by calling cargo itself and runs none of these three scripts |
+| `xtask/src/main.rs` | `inner_binary_name`, `write_binary`, the `frames` task, module lines | CI: `cargo run -p xtask -- test` on Windows and macOS compiles it and runs its tests |
+| `xtask/src/uitest.rs`, `xtask/Cargo.toml` | a Linux `drive` and Linux-only dependencies | the same CI job compiles them out |
+| `mini-host` `main.rs`, `place.rs`, `Cargo.toml` | an `Xlib` arm in a match, Linux-only code and a Linux-only dependency, eframe's `wayland` feature dropped | CI: `cargo test` in `tools/mini-host` on Windows and macOS |
+| `tools/find-text` `main.rs`, `Cargo.toml` | cfg attributes and target tables | nothing: no CI job builds find-text |
+
+### 4.8 Added by this plan and not asked for
+
+Each can be struck out.
+
+- The host's socket window and the thread that resizes it (4.4). Without the
+  socket the plugin covers the host's strip; without the thread it trails the
+  host's window by a frame during a drag.
+- `the_editor_fills_the_window_below_the_strip` (T4.1). Without it the host
+  task has nothing of its own to show it works.
+- The tests in find-text (T2.4, T2.5) and the driver's unit tests (T5). The
+  existing find-text and drivers have none.
+- The `frames` task of xtask (T7.3). Without it the frames of a film are
+  taken out by a command typed once and thrown away, which the rules forbid.
+- Two checks in the driver (4.5): that the window about to get input is the
+  active one, and that no button or modifier is left pressed. Neither existing
+  driver makes them.
+
+### 4.9 Rules that bind the work
 
 From `.claude/CLAUDE.md` and `.claude/memory/`:
 
-- Nothing is created, changed or deleted outside the repository. `tesseract`
-  is installed by the user (`sudo apt install tesseract-ocr`).
+- Nothing is created, changed or deleted outside the repository. System
+  packages are not installed by this work. `tesseract` 5.5.0 with the `eng`
+  language is on the machine, as are `gst-launch-1.0` with `pipewiresrc` and
+  ffmpeg.
 - A UI run needs a yes first, per set of runs, and each run is announced. No
   screen capture and no input outside a test run.
-- Every check is a saved, named test. No scratch step files.
+- Every check is a saved, named test. No scratch step files and no throwaway
+  command lines: taking the frames out of a film is an xtask task (T7.3), not
+  an ffmpeg line typed by hand.
+- A file that differs from what was last written was changed by the user. It
+  is read again before it is touched, and never put back.
 - Only the tests a change affects are run, by name. A failed step is redone,
   not the procedure.
 - A deleting command runs only when asked for. The ones this plan runs:
-  - `./build.sh` replaces `binaries/find-text`, `binaries/mini-host`,
-    `binaries/vst3-loader`, `binaries/Markdown Notes.vst3`;
-  - `./test.sh` removes `binaries/Markdown Notes.vst3` before building;
-  - a UI run empties `markdown-notes/.cache/uitests` and carries out the step
-    files' `remove:` and `cleanup:` lines there and in
+  - `./build.sh` and each project's own `build.sh` replace that project's
+    result in `binaries/`: `find-text`, `mini-host`, `vst3-loader`,
+    `Markdown Notes.vst3`;
+  - `./test.sh` and `markdown-notes/test.sh` remove
+    `binaries/Markdown Notes.vst3` before building;
+  - a UI run rebuilds the plugin and the host (replacing both in `binaries/`),
+    empties `markdown-notes/.cache/uitests` and carries out the step files'
+    `remove:` and `cleanup:` lines there and in
     `binaries/presets/Markdown Notes/`.
 - No git. A file is copied to the scratchpad before each edit.
 - Existing files are edited, new ones written, moves are `mv`.
@@ -420,107 +600,177 @@ From `.claude/CLAUDE.md` and `.claude/memory/`:
 
 ## 5. Task list
 
-Each task ends with the check that says it is done.
+A task is one `T` heading. Its items are done in the order written, and the
+task ends with a check that shows it works.
 
 Work stops after each task is demonstrably completed, so that the user can
 form a git commit. The next task does not start until that has been done.
 
-### T1. Build on Linux (M1, M2, M4, M5)
+Order and what each task needs: T1, then T2, then T3 (needs T1 and T2), then
+T4 (needs the plugin T3 builds), then T5 (needs T2, T3 and T4), then T6, T7,
+T8, T9.
 
-- [ ] T1.1 `markdown-notes/build.sh`: `uname` case. Done when: read back.
-- [ ] T1.2 `markdown-notes/run.sh`: `.so` candidates.
-- [ ] T1.3 `xtask/src/main.rs`: `inner_binary_name`, `write_binary` copies the
+### T1. Build scripts and the bundle layout (M1, M4, M5)
+
+- [x] T1.1 `markdown-notes/build.sh`: the target in a variable, set on Darwin
+      only.
+- [x] T1.2 `markdown-notes/run.sh`: `.so` candidates.
+- [x] T1.3 `xtask/src/main.rs`: `inner_binary_name`, `write_binary` copies the
       bundle on Linux, doc comments.
-- [ ] T1.4 Unit test `the_linux_bundle_holds_a_so_named_after_the_bundle` in
-      `xtask/src/main.rs`. Done when: it fails before T1.3 and passes after
-      (`cargo test -p xtask the_linux_bundle`).
-- [ ] T1.5 `tools/find-text/build.sh`: `uname` case (needs T2).
-- [ ] T1.6 Run `./build.sh`. Done when: it ends with "all projects built",
-      `binaries/Markdown Notes.vst3/Contents/x86_64-linux/Markdown Notes.so`
-      exists and `bundle` prints its `loads:` line.
+- [x] T1.4 Unit test `the_linux_bundle_holds_a_so_named_after_the_bundle` in
+      `xtask/src/main.rs`.
 
-### T2. find-text on Linux (M3)
+Done when: `cargo test -p xtask the_linux_bundle` in `markdown-notes` fails
+against the old naming and passes after T1.3. The scripts themselves are run
+in T3.
 
-- [ ] T2.1 `Cargo.toml`: target tables.
+### T2. find-text on Linux (M2, M3)
+
+- [ ] T2.1 `Cargo.toml`: target tables, description, and for Linux only the
+      dev-dependencies T2.5 draws with: `font-kit` and `pathfinder_geometry`,
+      whose types font-kit's drawing calls take and font-kit does not
+      re-export.
 - [ ] T2.2 `src/main.rs`: cfg attributes, `mod linux`.
 - [ ] T2.3 `src/linux.rs`: `read`, `at_scale`, `parse_tsv`.
 - [ ] T2.4 Unit tests in `src/linux.rs`:
       `a_word_row_becomes_a_word_with_its_box_scaled_back`,
       `words_on_one_line_are_one_line_in_reading_order`,
       `rows_that_are_not_words_are_dropped`; in `src/main.rs`:
-      `a_run_of_words_is_boxed_on_its_own`. Done when: `cargo test` in
-      `tools/find-text` passes.
-- [ ] T2.5 Check on a real picture: a test
-      `the_words_in_a_rendered_picture_are_read` that draws known text into a
-      PNG and reads it back through `tesseract`. Done when: it passes with
-      tesseract installed and fails with the tesseract call stubbed out.
+      `a_run_of_words_is_boxed_on_its_own`.
+- [ ] T2.5 Tests on a picture the test makes itself. The test draws two lines
+      of words at places it chooses, in the system's sans-serif face (loaded
+      with `font-kit`, a dev-dependency), writes the PNG under
+      `tools/find-text/.cache/`, and reads it back through `tesseract`:
+      `words_drawn_into_a_picture_are_read_where_they_were_drawn` (each line is
+      found, and its box is within a few pixels of where it was drawn) and
+      `words_that_were_not_drawn_are_not_found`. No picture that existed
+      before the test is read.
+- [x] T2.6 `tools/find-text/build.sh`: the compile step chosen by `uname -s`
+      (edit made during T1).
 
-### T3. Host and loader on Linux (M6, M7, M8)
+Done when: `cargo test` in `tools/find-text` passes, and
+`tools/find-text/build.sh` ends with its `binary:` line and
+`binaries/find-text` exists.
 
-- [ ] T3.1 Fetch baseview 0.3.4 (`cargo fetch` in `markdown-notes`) and read
-      its `platform/x11` for the parent handling. Done when: the socket design
-      is confirmed against 0.3.4 or section 4.4 is corrected.
-- [ ] T3.2 `vst3-loader/src/lib.rs`: `Xlib` arm, with unit tests
-      `an_xlib_window_is_one_a_plugin_can_use` and
-      `an_xcb_window_is_one_a_plugin_can_use`. Done when:
-      `cargo test` in `tools/vst3-loader` passes.
-- [ ] T3.3 `mini-host/Cargo.toml`: drop `wayland`, add `x11rb`.
-- [ ] T3.4 `mini-host/src/main.rs`: `Xlib` arm, Linux attach through the
-      socket, `hold_keyboard` call.
-- [ ] T3.5 `mini-host/src/app/place.rs`: the Linux module of 4.4, and an empty
-      `hold_keyboard` in the Windows, macOS and catch-all modules.
-- [ ] T3.6 Done when: `./test.sh` in `tools/mini-host` passes and
-      `tools/mini-host/build.sh` builds. What it does on screen is checked
-      by T5.
+### T3. Everything builds and the tests without a desktop pass (goal)
 
-### T4. The Linux driver (M9, M10, M11)
+- [ ] T3.1 `./build.sh` from the root. Done when: it ends with "all projects
+      built", `binaries/Markdown Notes.vst3/Contents/x86_64-linux/Markdown Notes.so`
+      exists and `bundle` prints its `loads:` line.
+- [ ] T3.2 `./test.sh` from the root, no `--full`: unit tests, scenarios,
+      headless pixel tests. Done when: it ends with "all projects passed".
+- [ ] T3.3 Every failure in T3.1 or T3.2 is written into this list as an item
+      of its own before it is worked on, and only the failing test is rerun.
+      A failure that needs something installed on the system is reported and
+      not worked around.
 
-- [ ] T4.1 `xtask/Cargo.toml`: Linux dependencies.
-- [ ] T4.2 `xtask/src/main.rs`: module lines.
-- [ ] T4.3 `linux/keys.rs` with tests
+### T4. The host on Linux (M6, M7, M8)
+
+- [ ] T4.1 New test file
+      `tools/mini-host/src/crates/mini-host/tests/editor_under_the_strip.rs`,
+      Linux only, `#[ignore]` because it opens a window:
+      `the_editor_fills_the_window_below_the_strip` starts the host on
+      `binaries/Markdown Notes.vst3` with `--geometry`, waits up to 30 seconds
+      for a report with `editor=0,26,` and `inset=0,26,0,0`, then kills the
+      host. The bundle is built first with `markdown-notes/build.sh`, since
+      T3.2 removed it.
+- [ ] T4.2 Run it against the host as it is. Needs a yes: a window opens.
+      Expected: it fails, no report is written.
+- [ ] T4.3 `mini-host/Cargo.toml`: drop `wayland`, add `x11rb`.
+- [ ] T4.4 `mini-host/src/main.rs`: `Xlib` arm, Linux attach through the
+      socket, Linux-only `hold_keyboard` call.
+- [ ] T4.5 `mini-host/src/app/place.rs`: the Linux module of 4.4, the
+      `track_editor` thread included. The catch-all module's cfg excludes
+      Linux. The Windows and macOS modules are not edited.
+
+Done when: `./test.sh` in `tools/mini-host` passes, and
+`cargo test --test editor_under_the_strip -- --ignored` in `tools/mini-host`
+passes (needs a yes; settles U16).
+
+### T5. The Linux driver (M9, M10, M11)
+
+- [ ] T5.1 `xtask/Cargo.toml`: Linux dependencies, description.
+- [ ] T5.2 `xtask/src/main.rs`: module lines.
+- [ ] T5.3 `linux/keys.rs` with tests
       `a_character_is_sent_as_its_own_keysym`,
       `named_keys_and_repeats_are_read_out_of_braces`,
       `bracket_escapes_are_literal_brackets`,
       `a_name_that_is_not_a_key_is_refused`.
-- [ ] T4.4 `linux/portal.rs`: the session, the token file, the refusal message.
-      `linux/input.rs` on top of it.
-- [ ] T4.5 `linux/xwindows.rs` with test
+- [ ] T5.4 `linux/portal.rs`: the session, the token file, the refusal message,
+      `request_open`, with test
+      `the_senders_with_open_requests_are_read_out_of_the_portals_tree`.
+      `linux/input.rs` on top of it, with the release of whatever a failed
+      step left pressed.
+- [ ] T5.5 `linux/xwindows.rs` with test
       `a_frame_is_the_client_area_grown_by_its_extents`.
-- [ ] T4.6 `linux/cursor.rs` with tests
+- [ ] T5.6 `linux/cursor.rs` with tests
       `the_shown_cursor_is_named_by_its_picture`,
       `a_cursor_no_stock_picture_matches_is_other`.
-- [ ] T4.7 `linux/screen.rs` with tests
-      `a_region_is_cropped_in_stream_pixels`,
+- [ ] T5.7 `linux/screen.rs` with tests
+      `a_region_is_cut_out_at_the_frames_scale`,
       `a_region_hanging_off_the_monitor_is_clamped`.
-- [ ] T4.8 `linux/look.rs` with tests
+- [ ] T5.8 `linux/look.rs` with tests
       `find_text_output_is_read_as_boxes`,
       `the_box_nearest_the_expected_spot_wins`.
-- [ ] T4.9 `linux.rs`: `Run`, `launch`, `finish`, `play`, every step of 4.5.
-- [ ] T4.10 `uitest.rs`: Linux `drive`.
-- [ ] T4.11 Done when: `./test.sh` in `markdown-notes` (no `--full`) passes,
-      which runs these unit tests with the rest of the workspace.
+- [ ] T5.9 `linux.rs`: `Run`, `launch`, `finish`, `play`, every step in the
+      table of 4.5, the portal session opened before the first launch, the
+      active-window check before input, and the host never left running.
+- [ ] T5.10 `uitest.rs`: Linux `drive`.
 
-### T5. UI tests, one at a time (settles U1 to U9)
+Done when: `cargo test -p xtask` in `markdown-notes` passes, and
+`./test.sh --ui typing-goes-into-the-document` in `markdown-notes` passes
+(needs a yes; settles U1, U2, U8, U10, U13, U18 for the plugin). The
+first run raises GNOME's dialog, which the person at the machine answers. It
+then passes a second time with `start` answering within two seconds (U15).
+Its picture is sent. The baseline uses `type:`, `showing:` and `shot:` only
+and never moves the pointer. Every other step, and the pointer, are proven by
+T6 and T7.
 
-Each needs a yes before its set of runs. Each is run with
+### T6. The markdown-notes UI suite
+
+Needs a yes before the set of runs. Each test is run alone with
 `./test.sh --ui <name>` in `markdown-notes`, fixed and rerun alone until it
 passes, and its picture is sent.
 
-- [ ] T5.1 `typing-goes-into-the-document` (U1, U2, U3).
-- [ ] T5.2 `editing-the-document` (U4, U7, U9).
-- [ ] T5.3 `sections-and-files` (U6, and `dragto:`).
-- [ ] T5.4 `opening-a-note` (U8).
-- [ ] T5.5 `pictures-in-a-note`.
-- [ ] T5.6 `host-preset-across-runs`.
-- [ ] T5.7 `host-preset-dialogs`.
-- [ ] T5.8 `host-resize` (U5). The film is compared with
-      `host-resize-target.mp4`: text keeps its size during the drag.
-- [ ] T5.9 `./test.sh --full` from the root, once. Done when: it ends with
-      "all projects passed".
+- [ ] T6.1 `editing-the-document` (U3, U4, U7, U9).
+- [ ] T6.2 `sections-and-files` (U5, U6, U11, U14).
+- [ ] T6.3 `opening-a-note` (U18 for the strip).
+- [ ] T6.4 `pictures-in-a-note`.
 
-A bug found in T5 gets a saved test that fails before its fix.
+Done when: each of the four has passed.
 
-### T6. Documentation (M12)
+### T7. The mini-host UI suite
 
-- [ ] T6.1 `docs/markdown-notes/DEVELOPERS.md`: Linux part.
-- [ ] T6.2 `docs/mini-host/DEVELOPERS.md`: Linux part.
+As T6.
+
+- [ ] T7.1 `host-preset-across-runs`.
+- [ ] T7.2 `host-preset-dialogs`.
+- [ ] T7.3 A task in `xtask/src/main.rs`, `frames FILM DIR`: it runs ffmpeg to
+      write two frames a second of FILM into DIR as PNGs. It is the same code
+      on every platform, and ffmpeg is already what all three drivers count a
+      film's frames with. The task is added to xtask's `help` text.
+- [ ] T7.4 `host-resize` (U17). The film the test recorded is read as what it
+      is, frames: `cargo run -p xtask -- frames` takes them out of it, and out
+      of `host-resize-target.mp4`, into `.cache/uitests`, and they are looked
+      at as images. Text keeps its size in every frame while the window
+      changes size.
+
+Done when: each of the three tests has passed and the frames of T7.4 have
+been looked at.
+
+A bug found in T5, T6 or T7 gets a saved test that fails before its fix.
+
+### T8. The whole run
+
+- [ ] T8.1 `./test.sh --full` from the root, once. Needs a yes.
+
+Done when: it ends with "all projects passed".
+
+### T9. Documentation (M12)
+
+- [ ] T9.1 `docs/markdown-notes/DEVELOPERS.md`: the three places of 4.6.
+- [ ] T9.2 `docs/mini-host/DEVELOPERS.md`: the one place of 4.6.
+- [ ] T9.3 `docs/markdown-notes/PROJECT_DEFINITION.md`: the Status rows and
+      the Known gaps of 4.6.
+
+Done when: all three read back.

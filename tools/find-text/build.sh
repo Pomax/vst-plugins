@@ -6,6 +6,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 binaries=$here/../../binaries
 
 mkdir -p "$binaries"
-swiftc -O -o "$binaries/find-text" "$here/find-text.swift"
+if [ "$(uname -s)" = Darwin ]; then
+    swiftc -O -o "$binaries/find-text" "$here/find-text.swift"
+else
+    (cd "$here" && cargo build --release)
+    rm -f "$binaries/find-text"
+    cp "$here/.cache/release/find-text" "$binaries/find-text"
+fi
 
 echo "binary: $binaries/find-text"
