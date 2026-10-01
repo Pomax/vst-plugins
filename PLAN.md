@@ -552,8 +552,8 @@ Each can be struck out.
   host's window by a frame during a drag.
 - `the_editor_fills_the_window_below_the_strip` (T4.1). Without it the host
   task has nothing of its own to show it works.
-- The tests in find-text (T2.4, T2.5) and the driver's unit tests (T5). The
-  existing find-text and drivers have none.
+- The tests in find-text (T2.4, T2.5, T2.7) and the driver's unit tests (T5).
+  The existing find-text and drivers have none.
 - The `frames` task of xtask (T7.3). Without it the frames of a film are
   taken out by a command typed once and thrown away, which the rules forbid.
 - Two checks in the driver (4.5): that the window about to get input is the
@@ -626,31 +626,74 @@ in T3.
 
 ### T2. find-text on Linux (M2, M3)
 
-- [ ] T2.1 `Cargo.toml`: target tables, description, and for Linux only the
+- [x] T2.1 `Cargo.toml`: target tables, description, and for Linux only the
       dev-dependencies T2.5 draws with: `font-kit` and `pathfinder_geometry`,
       whose types font-kit's drawing calls take and font-kit does not
       re-export.
-- [ ] T2.2 `src/main.rs`: cfg attributes, `mod linux`.
-- [ ] T2.3 `src/linux.rs`: `read`, `at_scale`, `parse_tsv`.
-- [ ] T2.4 Unit tests in `src/linux.rs`:
+- [x] T2.2 `src/main.rs`: cfg attributes, `mod linux`.
+- [x] T2.3 `src/linux.rs`: `read`, `at_scale`, `parse_tsv`.
+- [x] T2.4 Unit tests in `src/linux.rs`:
       `a_word_row_becomes_a_word_with_its_box_scaled_back`,
       `words_on_one_line_are_one_line_in_reading_order`,
       `rows_that_are_not_words_are_dropped`; in `src/main.rs`:
       `a_run_of_words_is_boxed_on_its_own`.
-- [ ] T2.5 Tests on a picture the test makes itself. The test draws two lines
-      of words at places it chooses, in the system's sans-serif face (loaded
-      with `font-kit`, a dev-dependency), writes the PNG under
-      `tools/find-text/.cache/`, and reads it back through `tesseract`:
-      `words_drawn_into_a_picture_are_read_where_they_were_drawn` (each line is
-      found, and its box is within a few pixels of where it was drawn) and
-      `words_that_were_not_drawn_are_not_found`. No picture that existed
+- [x] T2.5 Tests that run the program on a picture the test makes itself, in
+      `tools/find-text/tests/the_program.rs`, Linux only. The test draws three
+      lines of words at places it chooses, in the system's sans-serif face
+      (loaded with `font-kit`, a dev-dependency), writes the PNG under
+      `tools/find-text/.cache/tests/`, runs `find-text` on it, and checks what
+      the program prints and its exit code:
+      `words_drawn_into_a_picture_are_read_where_they_were_drawn` (exit 0, the
+      picture's size, and every box within a few pixels of where the words
+      were drawn), `words_that_were_not_drawn_are_not_found` (exit 1 and
+      nothing printed, on a picture in which a drawn word is found),
+      `an_exact_match_is_printed_before_one_that_holds_the_text`,
+      `with_no_text_every_line_read_is_printed`. No picture that existed
       before the test is read.
 - [x] T2.6 `tools/find-text/build.sh`: the compile step chosen by `uname -s`
       (edit made during T1).
+- [x] T2.7 Tests of the program's errors, in the same file, each checking
+      exit 2 and the message: `a_file_that_is_not_there_is_an_error`,
+      `a_file_that_is_not_a_picture_is_an_error`,
+      `without_tesseract_the_error_says_so` (the program is run with a `PATH`
+      that holds no programs).
+- [x] T2.8 Every test of T2.4, T2.5 and T2.7 is seen to fail. The code the
+      test covers is broken, the test is run by name and fails, and the code
+      is put back. The breaks:
+  - [x] `parse_tsv` does not divide by the scale:
+        `a_word_row_becomes_a_word_with_its_box_scaled_back`,
+        `words_drawn_into_a_picture_are_read_where_they_were_drawn`.
+  - [x] `parse_tsv` ignores the line number:
+        `words_on_one_line_are_one_line_in_reading_order`.
+  - [x] `parse_tsv` never joins words:
+        `with_no_text_every_line_read_is_printed`.
+  - [x] `parse_tsv` keeps rows of other levels, keeps rows with no text,
+        keeps rows with a negative confidence, one at a time:
+        `rows_that_are_not_words_are_dropped`, three times.
+  - [x] `parse_tsv` reports a word that is not in the table:
+        `words_that_were_not_drawn_are_not_found`.
+  - [x] `words_matching` keeps the first run it finds:
+        `a_run_of_words_is_boxed_on_its_own`.
+  - [x] `main` prints the containing matches first:
+        `an_exact_match_is_printed_before_one_that_holds_the_text`.
+  - [x] `read` calls every failure "not a picture":
+        `a_file_that_is_not_there_is_an_error`.
+  - [x] `read` calls every failure "could not read":
+        `a_file_that_is_not_a_picture_is_an_error`.
+  - [x] `at_scale` has no message of its own for a missing `tesseract`:
+        `without_tesseract_the_error_says_so`.
 
-Done when: `cargo test` in `tools/find-text` passes, and
+Done when: every break of T2.8 has made its test fail, `cargo test` in
+`tools/find-text` passes with the code put back, and
 `tools/find-text/build.sh` ends with its `binary:` line and
 `binaries/find-text` exists.
+
+Not shown by T2:
+
+- The Windows build of find-text (4.2).
+- `binaries/find-text` itself. The tests run the build of the program that
+  `cargo test` makes. `binaries/find-text` is the release build of the same
+  source, and the first thing to run it is the driver, in T5.
 
 ### T3. Everything builds and the tests without a desktop pass (goal)
 

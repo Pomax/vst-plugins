@@ -15,6 +15,11 @@ X is". These add words and no information.
 If a caveat matters, say it as a fact: *"The macOS build never reached
 markdown-notes-plugin, so there may be more errors."*
 
+Never write "byte for byte identical", "byte for byte equal" or any other
+"byte for byte". Two files are identical or they are not. The user,
+2026-10-01: *"FUCKING IDENTICAL ALREADY GODDAMN MEANS IDENTICAL"*. My reading
+of it: do not put an intensifier on a word that is already absolute.
+
 **Why:** *"FUCKING USE NORMAL LANGUAGE INSTEAD OF BULLSHIT LIKE 'Worth being
 straight about what this does and doesn't tell us:', YOU'RE NOT WRITING A
 FUCKING NOVEL."*

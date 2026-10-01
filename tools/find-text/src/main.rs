@@ -12,24 +12,39 @@
 //! could read, as `x y width height text`.
 
 use std::process::ExitCode;
+#[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(windows)]
 use windows::core::{Interface, RuntimeType, HSTRING};
+#[cfg(windows)]
 use windows::Globalization::Language;
+#[cfg(windows)]
 use windows::Graphics::Imaging::{
     BitmapAlphaMode, BitmapBufferAccessMode, BitmapDecoder, BitmapInterpolationMode,
     BitmapPixelFormat, BitmapTransform, ColorManagementMode, ExifOrientationMode, SoftwareBitmap,
 };
+#[cfg(windows)]
 use windows::Win32::System::WinRT::IMemoryBufferByteAccess;
+#[cfg(windows)]
 use windows::Media::Ocr::{OcrEngine, OcrLine};
+#[cfg(windows)]
 use windows::Storage::{FileAccessMode, StorageFile};
+#[cfg(windows)]
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+#[cfg(windows)]
 use windows_future::{AsyncStatus, IAsyncOperation};
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::read;
 
 /// Wait for an asynchronous call and hand back what it produced.
 ///
 /// The runtime's operations complete on a thread of their own, so this is a
 /// wait rather than a poll of anything this thread is responsible for.
+#[cfg(windows)]
 fn wait<T: RuntimeType>(op: IAsyncOperation<T>) -> windows::core::Result<T> {
     while op.Status()? == AsyncStatus::Started {
         std::thread::sleep(Duration::from_millis(1));
@@ -38,6 +53,7 @@ fn wait<T: RuntimeType>(op: IAsyncOperation<T>) -> windows::core::Result<T> {
 }
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
@@ -151,6 +167,7 @@ fn words_matching(line: &Line, wanted: &str) -> Option<(i32, i32, i32, i32)> {
     })
 }
 
+#[cfg(windows)]
 fn read(path: &str) -> Result<Reading, String> {
     let full = std::path::Path::new(path)
         .canonicalize()
@@ -191,6 +208,7 @@ fn read(path: &str) -> Result<Reading, String> {
 }
 
 /// Read the picture once, enlarged `scale` times over.
+#[cfg(windows)]
 fn at_scale(
     path: &str,
     decoder: &BitmapDecoder,
@@ -241,6 +259,7 @@ fn at_scale(
 /// pixels towards black and light ones towards white is what puts it there.
 /// Not all the way to black and white: a selected control is dark text on a
 /// strong fill, and flattening that would take the label with it.
+#[cfg(windows)]
 fn deepen(bitmap: &SoftwareBitmap) -> Result<(), String> {
     let buffer = bitmap
         .LockBuffer(BitmapBufferAccessMode::ReadWrite)
@@ -279,6 +298,7 @@ fn enlargements(size: (u32, u32)) -> Vec<u32> {
     if fits.is_empty() { vec![1] } else { fits }
 }
 
+#[cfg(windows)]
 fn one_line(line: &OcrLine, scale: u32) -> Result<Line, String> {
     let mut words = Vec::new();
     for word in line.Words().map_err(|e| e.to_string())? {
@@ -312,4 +332,26 @@ fn one_line(line: &OcrLine, scale: u32) -> Result<Line, String> {
         })
         .unwrap_or((0, 0, 0, 0));
     Ok(Line { text, box_of, words })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{words_matching, Line};
+
+    #[test]
+    fn a_run_of_words_is_boxed_on_its_own() {
+        let line = Line {
+            text: "Save preset Load preset".to_string(),
+            box_of: (10, 20, 230, 14),
+            words: vec![
+                ("Save".to_string(), (10, 20, 40, 14)),
+                ("preset".to_string(), (56, 22, 50, 12)),
+                ("Load".to_string(), (140, 20, 40, 14)),
+                ("preset".to_string(), (186, 22, 54, 12)),
+            ],
+        };
+        assert_eq!(words_matching(&line, "load preset"), Some((140, 20, 100, 14)));
+        assert_eq!(words_matching(&line, "save"), Some((10, 20, 40, 14)));
+        assert_eq!(words_matching(&line, "cancel"), None);
+    }
 }
