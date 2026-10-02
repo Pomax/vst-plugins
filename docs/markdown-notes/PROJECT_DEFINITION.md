@@ -45,7 +45,7 @@ Verified means checked by a test or by inspecting real output, not by reading th
 
 | | Criterion | Status |
 |---|---|---|
-| A1 | Universal VST3, Windows + macOS targets | **Partly.** Both platforms build and bundle in CI. Neither has been loaded in a DAW on macOS. Linux, which the criterion does not name, builds and bundles on one machine (x86_64), and the bundle loads in this project's host there. CI does not build it, and it has not been loaded in a DAW |
+| A1 | Universal VST3, Windows + macOS targets | **Partly.** Both platforms build and bundle in CI. Neither has been loaded in a DAW on macOS. Linux, which the criterion does not name, builds and bundles on one machine (x86_64), and the bundle loads in this project's host there. The workflows have a Linux job that builds and bundles it; that job has not run on GitHub yet. It has not been loaded in a DAW |
 | A2 | Notes in plugin state | Verified |
 | A3 | Typora-style conversion | Verified |
 | A4 | WYSIWYG / raw toggle | Verified |
@@ -65,7 +65,7 @@ Verified means checked by a test or by inspecting real output, not by reading th
 | W5 | Host documentation, any VST3 plugin | Verified |
 | W6 | Something that can see the GUI | Verified |
 | W7 | Per-platform build scripts | Verified. `build.bat` on Windows, `build.sh` on macOS and on Linux. On Linux `build.sh` has run at the root and in each project and leaves the four results in `binaries/`, and `test.sh --full` has run there and passed |
-| W8 | CI on pull requests, build and publish on main | **Partly.** Both build jobs pass; publishing has not run yet |
+| W8 | CI on pull requests, build and publish on main | **Partly.** Both build jobs pass; publishing has not run yet. The workflows also test, build and publish Linux, which the criterion does not name; none of the Linux jobs has run on GitHub yet |
 
 ## Open problem
 
@@ -115,8 +115,11 @@ passing test.
    remove the list entirely.
 7. **Linux is one machine.** The plugin, the host and every test have run on
    one Linux desktop: x86_64, GNOME on Wayland with the windows on XWayland,
-   one monitor at a scale of 1. CI builds and tests Windows and macOS only.
-   The plugin has not been loaded in a DAW on Linux.
+   one monitor at a scale of 1. The workflows have Linux jobs on
+   `ubuntu-latest`, and none of them has run on GitHub yet, so nothing but
+   that one machine has built or tested Linux. The UI tests run in no
+   workflow, on any platform. The plugin has not been loaded in a DAW on
+   Linux.
 8. **No drop target for files on Linux.** A picture pasted with Ctrl+V goes
    into the note there, and a file dropped on the window does not: `drop.rs`
    has a target for Windows and one for macOS.

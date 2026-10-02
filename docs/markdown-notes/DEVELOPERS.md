@@ -217,16 +217,24 @@ See [the mini host guide](../mini-host/DEVELOPERS.md) for how to use it, and
 Two workflows, because checking the code and shipping it are different jobs.
 
 `.github/workflows/markdown-notes-ci.yml` runs on every pull request touching this project or the mini host: `cargo run -p xtask -- test`,
-which is every test but the UI tests, the pixel tests included, on both
-`windows-latest` and `macos-14`, plus a
-[zizmor](https://docs.zizmor.sh) audit of the workflows themselves. Neither
-workflow builds or tests Linux.
+which is every test but the UI tests, the pixel tests included, on
+`windows-latest`, `macos-14` and `ubuntu-latest`, plus a
+[zizmor](https://docs.zizmor.sh) audit of the workflows themselves.
+
+The Linux job installs what a runner does not have before it builds:
+`pkg-config`, `libfontconfig-dev`, `libfreetype-dev` and `libwayland-dev`,
+which the build asks for; `mesa-vulkan-drivers`, the software Vulkan device
+the pixel tests draw on; `fonts-noto-core` and `fonts-dejavu-mono`, the
+sans-serif and monospace faces they draw in; and `ffmpeg`, which one of
+xtask's tests runs. The Linux jobs of both workflows have not run on GitHub
+yet: what they do has only been run by hand on one Linux machine.
 
 `.github/workflows/markdown-notes-build.yml` runs on pushes to `main` that
 change something under `markdown-notes/` or `tools/mini-host/` other than a
 markdown file, so editing the documents or the workflows does not cut a
-release. It builds and zips both
-platforms, then publishes them as a GitHub release. Before publishing, each job
+release. It builds and zips all three
+platforms, then publishes them as a GitHub release, and a build that fails on
+one of them holds the release back for all. Before publishing, each job
 loads the bundle it just built and asks the factory for its classes, so a build
 that produces something no host can open fails there rather than in a DAW.
 

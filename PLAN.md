@@ -1738,19 +1738,19 @@ Choices made here, each of which can be struck:
 Not changed: what starts each workflow (`on:` and its `paths`), the Windows
 and macOS jobs and steps, and the audit job.
 
-- [ ] T13.1 `markdown-notes-ci.yml`. `ubuntu-latest` joins the matrix. A step
+- [x] T13.1 `markdown-notes-ci.yml`. `ubuntu-latest` joins the matrix. A step
       before the tests, for Linux only (`if: runner.os == 'Linux'`), installs
       all eight packages of the table with `sudo apt-get`. Checked here:
       `cargo run -p xtask -- test`, run in `markdown-notes` with `DISPLAY`
       and `WAYLAND_DISPLAY` taken out of the environment, passes with no
       line of `warning`.
-- [ ] T13.2 `mini-host-ci.yml`. `ubuntu-latest` joins the matrix, and a
+- [x] T13.2 `mini-host-ci.yml`. `ubuntu-latest` joins the matrix, and a
       Linux-only step installs `libwayland-dev` and `pkg-config`. Checked
       here: `cargo test` in `tools/mini-host`, without a display, passes.
-- [ ] T13.3 `vst3-loader-ci.yml`. `ubuntu-latest` joins the matrix. Nothing
+- [x] T13.3 `vst3-loader-ci.yml`. `ubuntu-latest` joins the matrix. Nothing
       is installed. Checked here: `cargo test` in `tools/vst3-loader`,
       without a display, passes.
-- [ ] T13.4 `markdown-notes-build.yml`. A `linux` job beside `windows` and
+- [x] T13.4 `markdown-notes-build.yml`. A `linux` job beside `windows` and
       `macos`, with the same `needs` and `if`: it installs
       `libfontconfig-dev`, `libfreetype-dev`, `libwayland-dev` and
       `pkg-config`, runs `cargo run -p xtask -- bundle --release`, which
@@ -1761,21 +1761,21 @@ and macOS jobs and steps, and the audit job.
       run in the job's words with the zip going to `.cache/`, and
       `unzip -l` on it showing the bundle's folder with the `.so` and
       `moduleinfo.json` in it.
-- [ ] T13.5 `mini-host-build.yml`. A `linux` job: it installs
+- [x] T13.5 `mini-host-build.yml`. A `linux` job: it installs
       `libwayland-dev` and `pkg-config`, runs `./build.sh`, zips
       `../../binaries/mini-host` and uploads it. `release` needs it and lists
       the zip. Checked here as T13.4, and that the file in the zip is still
       marked as a program.
-- [ ] T13.6 `vst3-loader-build.yml`. The same job with nothing installed.
+- [x] T13.6 `vst3-loader-build.yml`. The same job with nothing installed.
       Checked here as T13.5.
-- [ ] T13.7 The audit. `markdown-notes-ci.yml` runs zizmor over every
+- [x] T13.7 The audit. `markdown-notes-ci.yml` runs zizmor over every
       workflow, at its strictest. So that it still passes, every new job and
       step is written as the ones beside it are: the same actions at the same
       pinned commits, `persist-credentials: false` on every checkout,
       `permissions` on every job, and nothing from `${{ }}` inside a `run:`.
       Checked here by reading each new job against the one beside it. Not
       run here: zizmor.
-- [ ] T13.8 The documents, once the workflows are changed.
+- [x] T13.8 The documents, once the workflows are changed.
       `docs/markdown-notes/DEVELOPERS.md`, the CI section: the three
       runners, the Linux packages, the third zip.
       `docs/markdown-notes/PROJECT_DEFINITION.md`: the A1 row, the W8 row
@@ -1793,6 +1793,38 @@ Done when: all six workflows have their Linux part, every check above that
 can be made on this machine has been made, and the documents say what the
 workflows do. Whether they pass on GitHub is T13.9, and until those runs
 have happened it is not shown.
+
+Results of T13.1 to T13.8, on this machine:
+
+- The three CI commands, each run with `DISPLAY` and `WAYLAND_DISPLAY` taken
+  out of the environment: `cargo run -p xtask -- test` passed (28 groups of
+  tests and 36 scenarios), `cargo test` in the host passed (21 tests), and
+  `cargo test` in the loader passed (27 tests). No line of `warning` in any
+  of the three outputs.
+- The three build jobs' commands, in the jobs' words but for where the zip
+  goes: `cargo run -p xtask -- bundle --release` built the bundle and loaded
+  it, and the two `./build.sh` built. No line of `warning`. The plugin's zip
+  holds `Markdown Notes.vst3/` with `Contents/x86_64-linux/Markdown Notes.so`
+  and `Contents/Resources/moduleinfo.json`. The host's and the loader's zips
+  each hold the one program, still marked as a program.
+- Read back against the copies from before: each workflow differs only by
+  its matrix entry, its Linux step or job, the `needs` of its release and the
+  third file the release lists. Every checkout has
+  `persist-credentials: false`, every job has `permissions`, the actions are
+  the five already in use at the commits already pinned, and no `run:` holds
+  a `${{ }}`.
+- The documents: the CI section of `DEVELOPERS.md`, and the A1 row, the W8
+  row and gap 7 of `PROJECT_DEFINITION.md`. Each says the Linux jobs have
+  not run on GitHub yet.
+
+Not shown, and not showable here:
+
+- That any of the six workflows is accepted by GitHub and passes. No
+  workflow has run. That is T13.9.
+- That the zizmor audit passes on the changed files. It was not run.
+- That the install steps name packages `ubuntu-latest` has. The names were
+  read from Ubuntu 26.04 with `dpkg -S`; the runner may be another release.
+- U19 to U22.
 
 Seen and left, because it is the user's: `markdown-notes/README.md` says
 there are only Windows and macOS releases "because Linux does not support
