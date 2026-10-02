@@ -1317,20 +1317,56 @@ Done when: each of the four has passed.
 
 As T6.
 
-- [ ] T7.1 `host-preset-across-runs`.
-- [ ] T7.2 `host-preset-dialogs`.
-- [ ] T7.3 A task in `xtask/src/main.rs`, `frames FILM DIR`: it runs ffmpeg to
+- [x] T7.1 `host-preset-across-runs`. Passed on its first run.
+- [x] T7.2 `host-preset-dialogs`. Passed on its first run.
+- [x] T7.3 A task in `xtask/src/main.rs`, `frames FILM DIR`: it runs ffmpeg to
       write two frames a second of FILM into DIR as PNGs. It is the same code
       on every platform, and ffmpeg is already what all three drivers count a
       film's frames with. The task is added to xtask's `help` text.
-- [ ] T7.4 `host-resize` (U17). The film the test recorded is read as what it
+      Done. A frame is `FILM's name-NNN.png`. Frames of the film that are in
+      DIR already stop the task: it writes over nothing. Two tests in
+      `main.rs`, seen to fail against four breaks:
+      `frames_are_named_after_their_film`, and
+      `two_frames_a_second_come_out_of_a_film`, which makes a film with
+      ffmpeg and is Linux only, because it needs ffmpeg and nothing says the
+      Windows and macOS CI machines have it.
+- [x] T7.4 `host-resize` (U17). The film the test recorded is read as what it
       is, frames: `cargo run -p xtask -- frames` takes them out of it, and out
       of `host-resize-target.mp4`, into `.cache/uitests`, and they are looked
       at as images. Text keeps its size in every frame while the window
       changes size.
+      Passed on its first run: the host reports 880x600 and then 620x420,
+      with the plugin filling it both times, and the film has 81 distinct
+      frames of 194. `frames` gave 13 frames of it and 16 of the target
+      film. All 13 were looked at, and five of the target's.
+      What the 13 show: frames 004, 005, 010 and 011 are of the window while
+      it is changing size. In each of them the lettering is the size it is
+      in the frames where the window is still, and the toolbar is laid out
+      for the width the window has in that frame (the buttons are at its
+      right edge, and in 011 the title is cut to "...project title goes...").
+      So the plugin draws during the drag and U17 holds.
+      One difference, in frame 011 only: the plugin's part of the window
+      looks to sit about a pixel lower than in the other twelve, and the tab
+      about a pixel wider. That is read off the picture by eye and not
+      measured. The host's strip and title bar are where they are in the
+      others. Not found: why. The frames are in `.cache/uitests` and were
+      sent to the user with the film.
 
 Done when: each of the three tests has passed and the frames of T7.4 have
 been looked at.
+
+Results. `host-preset-across-runs`, `host-preset-dialogs` and `host-resize`
+each passed, alone, on their first run. Nothing was changed for them.
+xtask's 31 tests pass.
+
+Not shown by T7:
+
+- That text keeps its size in the frames `frames` does not take: it takes
+  two a second, 13 of 194.
+- Whether frame 011 really has the plugin a pixel lower and the tab a pixel
+  wider, and if so why. It was judged by eye.
+- That the `frames` task runs on Windows and macOS. Its test that runs
+  ffmpeg is Linux only; the test of how frames are named runs everywhere.
 
 A bug found in T5, T6 or T7 gets a saved test that fails before its fix.
 

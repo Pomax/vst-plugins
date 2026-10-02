@@ -67,6 +67,18 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        "frames" => match frames(&args[1..]) {
+            Ok(written) => {
+                for frame in written {
+                    println!("frame:  {}", frame.display());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "clean" => {
             remove_build_dir(&workspace_root());
             ExitCode::SUCCESS
@@ -79,6 +91,7 @@ fn main() -> ExitCode {
                  test --only <name>                       one test and nothing else\n  \
                  test --ui <name>                         one UI test, or one suite\n  \
                  uitest [name]                            drive the real window\n  \
+                 frames <film> <dir>                      two frames a second of a film, as PNGs\n  \
                  clean                                    empty the build cache\n  \
                  \n  \
                  Build output goes to .cache/ and stays there, so a run only\n  \
@@ -286,6 +299,73 @@ fn verify_bundle(bundle: &Path) -> Result<(), String> {
         println!("loads:  {name} ({category})");
     }
     Ok(())
+}
+
+/// What the frames of a film are called before their number: the film's
+/// name without its extension, and a dash.
+fn frame_prefix(film: &Path) -> Result<String, String> {
+    film.file_stem()
+        .map(|stem| format!("{}-", stem.to_string_lossy()))
+        .ok_or_else(|| format!("{} has no name to call its frames by", film.display()))
+}
+
+/// The frames of a film that are in a directory, in order.
+fn frames_in(dir: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            name.is_some_and(|name| name.starts_with(prefix) && name.ends_with(".png"))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Take two frames a second out of a film and write them into a directory
+/// as PNGs, named after the film and numbered from 001.
+///
+/// `frames FILM DIR`. A film a UI test recorded is looked at as what it is,
+/// frames. Frames of the film that are in the directory already are not
+/// written over: the task stops instead.
+fn frames(args: &[String]) -> Result<Vec<PathBuf>, String> {
+    let [film, dir] = args else {
+        return Err("frames takes a film and a directory: frames FILM DIR".to_string());
+    };
+    let (film, dir) = (Path::new(film), Path::new(dir));
+    if !film.is_file() {
+        return Err(format!("{} is not a film", film.display()));
+    }
+    let prefix = frame_prefix(film)?;
+    fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    if !frames_in(dir, &prefix).is_empty() {
+        return Err(format!(
+            "{} already holds frames of {}",
+            dir.display(),
+            film.display()
+        ));
+    }
+
+    // A `%` in the name would be read as part of the numbering.
+    let numbered = dir.join(format!("{}%03d.png", prefix.replace('%', "%%")));
+    let out = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(film)
+        .args(["-vf", "fps=2"])
+        .arg(&numbered)
+        .output()
+        .map_err(|e| format!("running ffmpeg: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "ffmpeg could not take the frames out of {}: {}",
+            film.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(frames_in(dir, &prefix))
 }
 
 /// Drive the real plugin window with real clicks and keystrokes.
@@ -860,5 +940,60 @@ mod tests {
             inner_binary_name("x86_64-pc-windows-msvc"),
             "Markdown Notes.vst3"
         );
+    }
+
+    #[test]
+    fn frames_are_named_after_their_film() {
+        assert_eq!(
+            frame_prefix(Path::new("uitests/host-resize.mp4")),
+            Ok("host-resize-".to_string())
+        );
+        assert_eq!(
+            frame_prefix(Path::new("host-resize-target.mp4")),
+            Ok("host-resize-target-".to_string())
+        );
+        assert!(frame_prefix(Path::new("..")).is_err());
+    }
+
+    /// A film three seconds long, made here, comes out as two frames a
+    /// second, each a picture the film's size.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn two_frames_a_second_come_out_of_a_film() {
+        let work = workspace_root()
+            .join(BUILD_DIR)
+            .join("tests")
+            .join(format!("frames-{}", std::process::id()));
+        fs::create_dir_all(&work).expect("could not make the test's directory");
+        let film = work.join("three seconds.mp4");
+        let made = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=3:size=64x48:rate=10")
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&film)
+            .output()
+            .expect("ffmpeg did not start");
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+
+        let out = work.join("out");
+        let args = [film.display().to_string(), out.display().to_string()];
+        let written = frames(&args).expect("no frames came out");
+
+        assert!((6..=7).contains(&written.len()), "{} frames: {written:?}", written.len());
+        assert_eq!(written[0], out.join("three seconds-001.png"));
+        for frame in &written {
+            let picture = image::open(frame).expect("a frame is not a picture");
+            assert_eq!((picture.width(), picture.height()), (64, 48));
+        }
+
+        // Asked again, it writes over nothing.
+        let again = frames(&args).expect_err("frames were written over");
+        assert!(again.contains("already holds frames"), "{again}");
+        assert_eq!(frames_in(&out, "three seconds-"), written);
+
+        // A film that is not there, and a call with too little.
+        let missing = [work.join("none.mp4").display().to_string(), out.display().to_string()];
+        assert!(frames(&missing).expect_err("a missing film gave frames").contains("is not a film"));
+        assert!(frames(&args[..1]).is_err());
     }
 }
