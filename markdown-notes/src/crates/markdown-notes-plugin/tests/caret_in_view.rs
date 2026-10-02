@@ -33,14 +33,41 @@ fn render(text: &str, caret: usize) -> image::RgbaImage {
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 
+    #[cfg(target_os = "linux")]
+    let mut fonts_installed = false;
     let mut harness = Harness::builder()
         .with_size(egui::vec2(WIDTH, HEIGHT))
         .wgpu()
-        .build_ui(move |ui| markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state));
+        .build_ui(move |ui| {
+            #[cfg(target_os = "linux")]
+            if fonts_first(ui, &mut fonts_installed) {
+                return;
+            }
+            markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state)
+        });
 
     markdown_notes_plugin::gui::TestGui::install_fonts(&harness.ctx);
     harness.run_steps(3);
     harness.render().expect("rendering failed")
+}
+
+/// Install the fonts on the first frame asked for, in place of drawing it.
+/// True when this frame was that one.
+///
+/// The harness draws a frame as it is built, before a test can reach its
+/// context, and egui lays that frame out in its built-in font. The document
+/// is scrolled to its caret on that frame and not again. The system's font
+/// here has taller rows than the built-in one, so when it arrives the caret
+/// is left below the window. Opening a real window installs the fonts before
+/// its first frame, and this does the same.
+#[cfg(target_os = "linux")]
+fn fonts_first(ui: &egui::Ui, installed: &mut bool) -> bool {
+    if *installed {
+        return false;
+    }
+    markdown_notes_plugin::gui::TestGui::install_fonts(ui.ctx());
+    *installed = true;
+    true
 }
 
 fn saved(image: &image::RgbaImage, name: &str) -> String {
@@ -75,10 +102,18 @@ fn open(text: &str, caret: usize, mode: markdown_notes_core::ViewMode) -> Harnes
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 
+    #[cfg(target_os = "linux")]
+    let mut fonts_installed = false;
     let mut harness = Harness::builder()
         .with_size(egui::vec2(WIDTH, HEIGHT))
         .wgpu()
-        .build_ui(move |ui| markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state));
+        .build_ui(move |ui| {
+            #[cfg(target_os = "linux")]
+            if fonts_first(ui, &mut fonts_installed) {
+                return;
+            }
+            markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state)
+        });
 
     markdown_notes_plugin::gui::TestGui::install_fonts(&harness.ctx);
     harness.run_steps(3);
@@ -128,9 +163,11 @@ fn changing_the_view_arrives_at_the_caret() {
     let button = harness.get_by_label("Markdown source").rect().center();
 
     click(&mut harness, button);
+    let formatted = harness.render().expect("rendering failed");
     assert!(
-        caret_row(&harness.render().expect("rendering failed")).is_some(),
-        "the formatted view is not at the caret"
+        caret_row(&formatted).is_some(),
+        "the formatted view is not at the caret\n      rendering: {}",
+        saved(&formatted, "view-changed-to-formatted")
     );
 
     click(&mut harness, button);

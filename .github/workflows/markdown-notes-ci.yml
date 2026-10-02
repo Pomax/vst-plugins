@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14]
+        os: [windows-latest, macos-14, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -37,6 +37,18 @@ jobs:
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      # The build asks pkg-config for fontconfig, freetype and wayland-client.
+      # The rendering tests draw through Vulkan, which a runner only has in
+      # software, in the system's sans-serif and monospace faces. One of the
+      # build tool's own tests runs ffmpeg.
+      - name: Install what the Linux build and tests need
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            pkg-config libfontconfig-dev libfreetype-dev libwayland-dev \
+            mesa-vulkan-drivers fonts-noto-core fonts-dejavu-mono ffmpeg
 
       - name: Unit tests, scenarios and rendering tests
         run: cargo run -p xtask -- test

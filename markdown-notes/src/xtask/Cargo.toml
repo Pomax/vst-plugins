@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Build tasks: assembling the VST3 bundle for Windows and macOS"
+description = "Build tasks: assembling the VST3 bundle for Windows, macOS and Linux"
 publish = false
 
 [dependencies]
@@ -38,3 +38,23 @@ objc2-foundation = { version = "0.3.2", features = ["std", "NSData"] }
 # is how its tests know it is a picture at all.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# The window driver for Linux is built in as well, see src/linux.rs.
+[target.'cfg(target_os = "linux")'.dependencies]
+# Finding the host's windows, asking where they and the pointer are, and
+# reading the cursor on screen and the desktop's cursor theme.
+x11rb = { version = "0.13", features = ["xfixes", "resource_manager"] }
+# The desktop portal: keys and pointer moves handed to the desktop, and the
+# stream the screen is read from.
+ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
+# Waiting on a portal call from code that is not asynchronous.
+pollster = "0.4"
+# The pictures of the cursor theme's cursors, to name the one on screen by.
+xcursor = "0.3"
+# Leaving a picture on the clipboard for a `clipboard:` step.
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+# Cutting a window out of a picture of the screen.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+# Handing the screen stream's file descriptor to the program that reads it,
+# and asking that program to stop.
+libc = "0.2"

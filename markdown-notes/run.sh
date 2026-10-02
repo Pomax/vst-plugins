@@ -15,7 +15,9 @@ for candidate in \
     ".cache/release/bundle/Markdown Notes.vst3" \
     ".cache/debug/bundle/Markdown Notes.vst3" \
     .cache/release/libmarkdown_notes_plugin.dylib \
-    .cache/debug/libmarkdown_notes_plugin.dylib
+    .cache/debug/libmarkdown_notes_plugin.dylib \
+    .cache/release/libmarkdown_notes_plugin.so \
+    .cache/debug/libmarkdown_notes_plugin.so
 do
     if [ -e "$candidate" ]; then plugin=$candidate; break; fi
 done

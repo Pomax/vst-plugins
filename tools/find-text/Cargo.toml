@@ -6,14 +6,24 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["markdown-notes"]
-description = "Where a piece of text is in a picture, on Windows"
+description = "Where a piece of text is in a picture, on Windows and Linux"
 publish = false
 
 [[bin]]
 name = "find-text"
 path = "src/main.rs"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+# Decoding the picture, enlarging it, and encoding what `tesseract` is given.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The tests draw the words they then look for, in a face of this machine's.
+font-kit = "0.14.3"
+# The types font-kit's drawing calls take, which it does not re-export.
+pathfinder_geometry = "0.5"
+
+[target.'cfg(windows)'.dependencies]
 # The asynchronous half of the runtime, which the calls below hand back and
 # this waits on.
 windows-future = "0.3.2"

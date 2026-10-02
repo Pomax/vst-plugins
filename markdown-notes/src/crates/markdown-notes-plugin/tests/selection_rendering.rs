@@ -27,6 +27,14 @@ fn render(text: &str, selection: std::ops::Range<usize>) -> image::RgbaImage {
         if !selection.is_empty() {
             e.select(selection);
         }
+        // The caret is as dark as the words and a whole row tall. In the font
+        // these tests get on Linux its top touches the descenders of the row
+        // above, and the two rows are then read as one line. These tests are
+        // not about the caret, so here it is not drawn.
+        #[cfg(target_os = "linux")]
+        {
+            e.colours.light.caret = markdown_notes_core::Rgba::rgba(0, 0, 0, 0);
+        }
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 

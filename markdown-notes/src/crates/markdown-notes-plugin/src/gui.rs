@@ -12,9 +12,11 @@
 //!
 //! # A note on bold
 //!
-//! egui ships no bold font family, so bold is drawn the way egui draws its own
-//! emphasis: a stronger foreground colour. Italic, strikethrough and underline
-//! are real text formatting.
+//! egui ships no bold font family, and none is bundled. Bold is drawn in the
+//! machine's own bold face, which [`crate::fonts::install_base`] loads beside
+//! the regular one, and in the scheme's bold text colour. On a machine with no
+//! bold face it is the regular face in that colour. Italic, strikethrough and
+//! underline are real text formatting.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -300,6 +302,19 @@ fn settings(width: i32, height: i32) -> EguiWindowSettings {
         }))
 }
 
+/// The same settings, asking for a framebuffer that is not sRGB capable.
+///
+/// The window asks GLX for one that is, and an X server drawing in software
+/// may have none of those to give. egui does its own colour conversion and
+/// draws the same into either.
+#[cfg(target_os = "linux")]
+fn without_srgb(settings: EguiWindowSettings) -> EguiWindowSettings {
+    settings.with_graphics_config(egui_baseview::GraphicsConfig {
+        gl_config: baseview::gl::GlConfig { srgb: false, ..Default::default() },
+        ..Default::default()
+    })
+}
+
 impl App for Gui {
     /// Fonts before the first frame: `set_fonts` binds them for the pass after
     /// the one it is called in, and the first pass already draws text in every
@@ -332,9 +347,18 @@ pub fn open(
     width: i32,
     height: i32,
 ) -> Option<Window> {
+    #[cfg(target_os = "linux")]
+    let again = (editor.clone(), incoming.clone());
     let mut gui = Gui::new(editor);
     gui.incoming = incoming;
-    let window = EguiWindow::create(settings(width, height).with_parent(parent), gui).ok()?;
+    let window = EguiWindow::create(settings(width, height).with_parent(parent), gui);
+    #[cfg(target_os = "linux")]
+    let window = window.or_else(|_| {
+        let mut gui = Gui::new(again.0);
+        gui.incoming = again.1;
+        EguiWindow::create(without_srgb(settings(width, height)).with_parent(parent), gui)
+    });
+    let window = window.ok()?;
     // `create` builds the window without opening it. The standalone path gets
     // that from `run_until_closed`; a window inside a host does not, and stays
     // black until it is shown.
@@ -487,13 +511,18 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
             state.bg_fill = handle;
         }
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Frame::default()
-                    .inner_margin(DOCUMENT_MARGIN)
-                    .show(ui, |ui| document(ui, gui));
-            });
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        // A scroll to the caret takes effect in the pass that asks for it. An
+        // animated area takes the new offset up at the start of the next
+        // pass, after that pass's contents are placed, so the pass drawn again
+        // after a caret move would still show the place the caret has left.
+        #[cfg(target_os = "linux")]
+        let area = area.animated(false);
+        area.show(ui, |ui| {
+            egui::Frame::default()
+                .inner_margin(DOCUMENT_MARGIN)
+                .show(ui, |ui| document(ui, gui));
+        });
     });
 
     settings_dialog(ui, gui);
@@ -590,6 +619,8 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
             let text_came = i.events.iter().any(|e| {
                 matches!(e, egui::Event::Text(_) | egui::Event::Paste(_))
             });
+            #[cfg(target_os = "linux")]
+            let text_came = text_came && !only_empty_text(&i.events);
             pasted && !text_came
         });
         if pasted_a_key {
@@ -605,6 +636,19 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
         }
         editor.tidy_images();
     }
+}
+
+/// Whether every text event among these is empty.
+///
+/// On X11 egui-baseview answers the paste key with whatever the clipboard
+/// gives it as text, and a clipboard that holds a picture gives it none and
+/// no error: the text event comes, and is empty.
+#[cfg(target_os = "linux")]
+fn only_empty_text(events: &[egui::Event]) -> bool {
+    events.iter().all(|e| match e {
+        egui::Event::Text(text) | egui::Event::Paste(text) => text.is_empty(),
+        _ => true,
+    })
 }
 
 fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
@@ -2295,8 +2339,6 @@ fn span_format(
     if span.style.contains(Style::STRIKE) {
         fmt.strikethrough = Stroke::new(1.0, palette.strike);
     }
-    // egui has no bold family, so bold is a stronger colour — the same trick
-    // egui's own `RichText::strong` uses.
     // The bold face the machine has, at the size this text is already using.
     if span.style.contains(Style::BOLD) {
         fmt.font_id = FontId::new(fmt.font_id.size, bold.clone());
@@ -2438,6 +2480,29 @@ fn translate_key(key: egui::Key, ctrl: bool) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The paste key over a clipboard that holds a picture, as it arrives on
+    /// X11: the key, and a text event with nothing in it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_paste_that_brought_only_empty_text_brought_no_text() {
+        let key = egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        };
+        let text = |text: &str| egui::Event::Text(text.to_string());
+        let pasted = |text: &str| egui::Event::Paste(text.to_string());
+
+        assert!(only_empty_text(&[key.clone(), text("")]));
+        assert!(only_empty_text(&[key.clone(), pasted("")]));
+        assert!(only_empty_text(&[key.clone()]));
+        assert!(!only_empty_text(&[key.clone(), text("kick")]));
+        assert!(!only_empty_text(&[key.clone(), pasted("kick")]));
+        assert!(!only_empty_text(&[key, text(""), text("kick")]));
+    }
 
     /// The caret goes after a bold word, not inside it.
     ///

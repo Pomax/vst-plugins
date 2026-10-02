@@ -351,7 +351,14 @@ fn a_cut_name_is_whole_again_while_it_is_being_edited() {
 /// row to the bottom of it. No letter is, since none fills both the room above
 /// the small letters and the room below the line.
 fn caret_column(image: &image::RgbaImage, rect: egui::Rect) -> Option<u32> {
-    (rect.left() as u32..rect.right() as u32).find(|&x| {
+    #[cfg(not(target_os = "linux"))]
+    let end = rect.right() as u32;
+    // With the fonts these tests get on Linux the field's right edge is part
+    // of the way across a pixel, and a caret at the end of the field is drawn
+    // on that pixel's column, so the column counts as the field's.
+    #[cfg(target_os = "linux")]
+    let end = rect.right().ceil() as u32;
+    (rect.left() as u32..end).find(|&x| {
         (rect.top() as u32 + 4..rect.bottom() as u32 - 4).all(|y| is_ink(image.get_pixel(x, y).0))
     })
 }

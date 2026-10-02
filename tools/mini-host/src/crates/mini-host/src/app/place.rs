@@ -375,7 +375,230 @@ mod platform {
 
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+mod platform {
+    //! On Linux the plugin's editor is an X11 window, and it makes itself the
+    //! size of the window it is put in. So it is not put in the host's window
+    //! but in a window of the host's own, the socket, which sits under the
+    //! strip and is kept the size of everything below it. Sizing the socket
+    //! is how the editor is sized.
+
+    use super::c_void;
+    use std::num::NonZeroU32;
+    use std::sync::{Mutex, OnceLock};
+
+    use raw_window_handle::{
+        HandleError, HasWindowHandle, RawWindowHandle, WindowHandle, XcbWindowHandle,
+    };
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt, CreateWindowAux, EventMask,
+        InputFocus, Window, WindowClass,
+    };
+    use x11rb::protocol::Event;
+    use x11rb::rust_connection::RustConnection;
+
+    /// The socket, and the connection it was made on.
+    struct Held {
+        conn: RustConnection,
+        socket: Window,
+        /// How much of the host's window the strip takes off the top.
+        top: i32,
+    }
+
+    static HELD: OnceLock<Mutex<Held>> = OnceLock::new();
+
+    fn held<T>(ask: impl FnOnce(&Held) -> Option<T>) -> Option<T> {
+        ask(&*HELD.get()?.lock().ok()?)
+    }
+
+    /// The host's window, from the handle the window system handed over.
+    fn host_window(handle: *mut c_void) -> Window {
+        handle as usize as Window
+    }
+
+    /// The window the plugin's editor is put in.
+    pub struct Socket(Window);
+
+    impl HasWindowHandle for Socket {
+        fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+            let window = NonZeroU32::new(self.0).ok_or(HandleError::Unavailable)?;
+            let raw = RawWindowHandle::Xcb(XcbWindowHandle::new(window));
+            // The socket lives for as long as the host's window does.
+            Ok(unsafe { WindowHandle::borrow_raw(raw) })
+        }
+    }
+
+    /// Make the socket: a window inside the host's, `top` pixels down, as wide
+    /// as the host's window and as tall as what is left of it.
+    pub fn make_socket(handle: *mut c_void, top: i32) -> Result<Socket, String> {
+        let host = host_window(handle);
+        let said = |what: &str, e: &dyn std::fmt::Display| format!("{what}: {e}");
+
+        let (conn, _) = x11rb::connect(None).map_err(|e| said("no connection to the X server", &e))?;
+        let size = conn
+            .get_geometry(host)
+            .map_err(|e| said("could not measure the host's window", &e))?
+            .reply()
+            .map_err(|e| said("could not measure the host's window", &e))?;
+        let socket = conn
+            .generate_id()
+            .map_err(|e| said("could not make a window for the editor", &e))?;
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            socket,
+            host,
+            0,
+            top as i16,
+            size.width,
+            (size.height as i32 - top).max(1) as u16,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &CreateWindowAux::new(),
+        )
+        .map_err(|e| said("could not make a window for the editor", &e))?
+        .check()
+        .map_err(|e| said("could not make a window for the editor", &e))?;
+        conn.map_window(socket)
+            .map_err(|e| said("could not show the editor's window", &e))?
+            .check()
+            .map_err(|e| said("could not show the editor's window", &e))?;
+
+        HELD.set(Mutex::new(Held { conn, socket, top }))
+            .map_err(|_| "the editor already has a window".to_string())?;
+        Ok(Socket(socket))
+    }
+
+    /// Put the socket `top` pixels down a host window of this size, filling
+    /// the rest of it.
+    fn fit(conn: &impl Connection, socket: Window, top: i32, width: u16, height: u16) -> Option<()> {
+        let area = ConfigureWindowAux::new()
+            .x(0)
+            .y(top)
+            .width(width as u32)
+            .height((height as i32 - top).max(1) as u32);
+        conn.configure_window(socket, &area).ok()?;
+        conn.flush().ok()
+    }
+
+    /// The same, for the size the host's window is now.
+    fn fit_to_host(held: &Held, host: Window, top: i32) -> Option<()> {
+        let size = held.conn.get_geometry(host).ok()?.reply().ok()?;
+        fit(&held.conn, held.socket, top, size.width, size.height)
+    }
+
+    /// Not needed here: a dialog is a window of its own, and the window
+    /// manager gives it the keyboard when it opens.
+    pub fn set_enabled(_handle: *mut c_void, _enabled: bool) {}
+
+    /// Keep the socket filling the host's window as the host is dragged.
+    ///
+    /// The host draws when an event arrives and not before, so a socket sized
+    /// from the host's own frame would be a frame behind for every step of a
+    /// drag. This watches the host's window from a thread of its own and
+    /// sizes the socket the moment the X server says the host's window has
+    /// changed. The plugin's window follows the socket by itself.
+    pub fn track_editor(handle: *mut c_void, top: i32) {
+        let host = host_window(handle);
+        let Some(socket) = held(|held| Some(held.socket)) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let Ok((conn, _)) = x11rb::connect(None) else {
+                return;
+            };
+            let watch = ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY);
+            if conn.change_window_attributes(host, &watch).is_err() || conn.flush().is_err() {
+                return;
+            }
+            while let Ok(event) = conn.wait_for_event() {
+                match event {
+                    Event::ConfigureNotify(e) if e.window == host => {
+                        fit(&conn, socket, top, e.width, e.height);
+                    }
+                    Event::DestroyNotify(e) if e.window == host => return,
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    /// Put the socket under the strip and size it to what is left.
+    pub fn inset_editor(handle: *mut c_void, top: i32) {
+        held(|held| fit_to_host(held, host_window(handle), top));
+    }
+
+    /// Size the socket to the host's window as it is now, in this frame.
+    pub fn follow_resize(handle: *mut c_void) {
+        held(|held| fit_to_host(held, host_window(handle), held.top));
+    }
+
+    /// The plugin's window: the biggest window in the socket.
+    fn editor_window(held: &Held) -> Option<Window> {
+        let tree = held.conn.query_tree(held.socket).ok()?.reply().ok()?;
+        tree.children
+            .into_iter()
+            .filter_map(|child| {
+                let size = held.conn.get_geometry(child).ok()?.reply().ok()?;
+                Some((child, size.width as u32 * size.height as u32))
+            })
+            .max_by_key(|(_, area)| *area)
+            .map(|(child, _)| child)
+    }
+
+    /// Give the plugin's editor the keyboard.
+    pub fn focus_editor(_handle: *mut c_void) {
+        held(|held| {
+            let editor = editor_window(held)?;
+            held.conn
+                .set_input_focus(InputFocus::PARENT, editor, x11rb::CURRENT_TIME)
+                .ok()?;
+            held.conn.flush().ok()
+        });
+    }
+
+    /// Give the keyboard to the plugin's editor whenever the host's own
+    /// window has it.
+    ///
+    /// The window manager puts the keyboard on the host's window every time
+    /// that window comes to the front: when it opens, and when a dialog over
+    /// it closes. Nothing in the host's own window takes typing, so it is
+    /// passed on.
+    pub fn hold_keyboard(handle: *mut c_void) {
+        let host = host_window(handle);
+        held(|held| {
+            let focus = held.conn.get_input_focus().ok()?.reply().ok()?.focus;
+            if focus != host {
+                return None;
+            }
+            let editor = editor_window(held)?;
+            held.conn
+                .set_input_focus(InputFocus::PARENT, editor, x11rb::CURRENT_TIME)
+                .ok()?;
+            held.conn.flush().ok()
+        });
+    }
+
+    /// Where the plugin's window sits inside the host's, measured from the
+    /// top left: the socket's place in the host's window, and the editor's in
+    /// the socket.
+    pub fn editor_in_host(_handle: *mut c_void) -> Option<(i32, i32, i32, i32)> {
+        held(|held| {
+            let socket = held.conn.get_geometry(held.socket).ok()?.reply().ok()?;
+            let editor = editor_window(held)?;
+            let inside = held.conn.get_geometry(editor).ok()?.reply().ok()?;
+            Some((
+                socket.x as i32 + inside.x as i32,
+                socket.y as i32 + inside.y as i32,
+                inside.width as i32,
+                inside.height as i32,
+            ))
+        })
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 mod platform {
     use super::c_void;
 
@@ -398,3 +621,5 @@ mod platform {
 pub use platform::{
     editor_in_host, focus_editor, follow_resize, inset_editor, set_enabled, track_editor,
 };
+#[cfg(target_os = "linux")]
+pub use platform::{hold_keyboard, make_socket};
