@@ -99,38 +99,5 @@ jobs:
           path: tools/vst3-loader/vst3-loader-linux-x86_64.zip
           if-no-files-found: error
 
-  release:
-    name: Publish release
-    needs: [windows, macos, linux]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # uploads the release assets
-    defaults:
-      run:
-        working-directory: .
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Number this release
-        id: number
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          published=$(gh api --paginate 'repos/{owner}/{repo}/releases' --jq 'length' \
-            | awk '{ total += $1 } END { print total + 0 }')
-          echo "n=$((published + 1))" >> "$GITHUB_OUTPUT"
-
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          tag_name: vst3-loader-${{ steps.number.outputs.n }}
-          name: VST3 loader ${{ steps.number.outputs.n }}
-          files: |
-            artifacts/vst3-loader-windows-x86_64.zip
-            artifacts/vst3-loader-macos-arm64.zip
-            artifacts/vst3-loader-linux-x86_64.zip
-          fail_on_unmatched_files: true
+# The loader is a test utility. It is built here to prove it still builds on
+# all three platforms, and it is not published.
