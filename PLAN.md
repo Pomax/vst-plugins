@@ -550,6 +550,7 @@ there. None of it can be run on this machine.
 | `markdown-notes-plugin/tests/caret_in_view.rs` (T3.7, T3.8) | Linux-only lines, and for every platform: `changing_the_view_arrives_at_the_caret` keeps its rendering when it fails | the same CI job runs the test. It passes there by the same assertion as before |
 | `markdown-notes-plugin/tests/selection_rendering.rs` (T3.10), `title_field.rs` (T3.15) | Linux-only lines | the same CI job compiles them out |
 | `markdown-notes-plugin/src/gui.rs` (T6.16) | one Linux-only statement after `text_came` in `take_in_pictures`, and a Linux-only function it calls. Windows and macOS make the calls they made before | the same CI job compiles them out |
+| `markdown-notes-plugin/src/drop.rs` (T10.1) | `take` is compiled for Windows and macOS only. Both compile it as before; Linux, which never called it, no longer does | the same CI job builds the plugin with it and runs the plugin's tests |
 | `markdown-notes-plugin/tests/source_view.rs` (T3.13) | the heading may measure `SLACK` rows taller than the body. `SLACK` is 0 on Windows and macOS, which is the check they had | the same CI job runs the test |
 
 ### 4.8 Added by this plan and not asked for
@@ -1483,9 +1484,61 @@ Not shown by T8:
 
 ### T9. Documentation (M12)
 
-- [ ] T9.1 `docs/markdown-notes/DEVELOPERS.md`: the three places of 4.6.
-- [ ] T9.2 `docs/mini-host/DEVELOPERS.md`: the one place of 4.6.
-- [ ] T9.3 `docs/markdown-notes/PROJECT_DEFINITION.md`: the Status rows and
-      the Known gaps of 4.6.
+- [x] T9.1 `docs/markdown-notes/DEVELOPERS.md`: the three places of 4.6.
+      What `binaries/` holds on Linux, the Linux VST3 folders, and after the
+      macOS paragraph of the UI tests: the Linux driver, the portal and its
+      dialog, and what has to be installed.
+- [x] T9.2 `docs/mini-host/DEVELOPERS.md`: the one place of 4.6. A paragraph
+      after the one on where the window was left.
+- [x] T9.3 `docs/markdown-notes/PROJECT_DEFINITION.md`: the Status rows and
+      the Known gaps of 4.6. A sentence each on A1 and W7, and gaps 12 to 15.
+      No criterion is added or reworded.
 
 Done when: all three read back.
+
+Read back, each against its copy from before the edit: only the lines above
+differ.
+
+Seen and left as they are, because 4.6 says nothing else in these files is
+rewritten:
+
+- `DEVELOPERS.md`, under Pictures: "egui-baseview turns Ctrl+V into a text
+  event only when the clipboard holds text". On Linux it sends an empty one
+  when the clipboard holds a picture (T6.16).
+- `DEVELOPERS.md`, under Testing: "There are four" UI tests. `order.txt`
+  lists five.
+- `PROJECT_DEFINITION.md`: A5 to A8, W7 and gaps 1, 3, 5, 6 and 9 say of
+  macOS, the resize, the dialogs, the keyboard and the mouse that they are
+  untested. The UI suites test them.
+- `docs/mini-host/DEVELOPERS.md`, Layout: it lists `src/bin/mini-host/` and
+  `src/bin/vst3-host.rs`. The host is `src/main.rs` and `src/app/`.
+
+### T10. No warnings
+
+The user, after T9: "CODE THAT HAS WARNINGS IS NOT FUCKING DONE".
+
+Both full runs of T8 printed a compiler warning, nine lines of `warning:` in
+each run's output: "function `take` is never used", at
+`markdown-notes-plugin/src/drop.rs:42`. It was there from T3 on. It was seen
+in every run and left, and T8 was called done with it in the output.
+
+- [x] T10.1 `drop.rs`: `take` queues dropped files and is called by the
+      Windows and the macOS drop targets. Linux has neither, so there it is
+      never called. It is compiled for Windows and macOS only, as the two
+      modules that call it are. Listed in 4.7.
+- [x] T10.2 Every project is built and its tests compiled on this machine,
+      and the whole of each output is searched for `warning`: `./build.sh`
+      at the root, `./test.sh --full` at the root, and find-text's tests,
+      which the root `test.sh` does not run. Any warning found is an item of
+      its own here and is fixed.
+      No other warning was found. Lines with `warning` in them, in the whole
+      output of each: `./build.sh`, 0; find-text's tests, 0, 17 passed; the
+      host's two window tests, 0, both passed; `./test.sh --full`, 0, and it
+      ends with "=== all projects passed ===", 8 UI tests of 8.
+
+Done when: none of those outputs has a line with `warning` in it, and
+`./test.sh --full` ends with "all projects passed".
+
+Not shown by T10: that Windows and macOS build without warnings. Neither can
+be built here. `take` is still compiled there, by the same line of `cfg` the
+modules that call it are under.

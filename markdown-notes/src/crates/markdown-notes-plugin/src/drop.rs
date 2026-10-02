@@ -39,6 +39,7 @@ pub fn accept(parent: &ParentWindow, incoming: Incoming) -> Option<DropTarget> {
 }
 
 /// Queue the PNG and JPEG files among `paths`.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn take(incoming: &Incoming, paths: impl IntoIterator<Item = std::path::PathBuf>) {
     let pictures: Vec<crate::pictures::Incoming> = paths
         .into_iter()

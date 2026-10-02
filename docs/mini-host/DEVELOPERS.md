@@ -88,6 +88,17 @@ and the position is kept in `.cache/mini-host-window.txt`. The title bar icon
 is drawn in memory rather than shipped as a resource; on macOS an application
 icon comes from a bundle, which a bare cargo build does not produce.
 
+On Linux a plugin's editor is an X11 window, so the host's window is one as
+well: on a Wayland desktop it is XWayland's. An editor there makes itself the
+size of the window it is put in, so the host does not put it in its own
+window. It makes a window of its own inside that one, under the strip and as
+large as everything below it, and hands the plugin that. Sizing that window
+is how the editor is sized: a thread watches the host's window and resizes
+it the moment the X server says the host's has changed, and the editor
+follows by itself. The window manager gives the keyboard to the host's window
+whenever that comes to the front, and the host passes it on to the editor.
+This is the Linux part of `src/crates/mini-host/src/app/place.rs`.
+
 ## Using the library
 
 See [USING.md](USING.md), which covers the command-line tool in full and shows

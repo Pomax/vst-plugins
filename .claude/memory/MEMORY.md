@@ -30,3 +30,4 @@
 - [Window Shot rebuild resets its grant](window-shot-rebuild-resets-its-grant.md) — its build script drops the stale screen recording entry itself; never tell the user to flip the toggle
 - [Resize keeps text size](resize-keeps-text-size.md) — the confirmed target: text stays the same size through a live resize; the reference film sits beside the host-resize test
 - [Find it by looking, not by numbers](find-it-by-looking-not-by-numbers.md) — when a UI test's coordinates miss, the driver finds the thing on screen and acts there; not a question for the user
+- [Warnings mean not done](warnings-mean-not-done.md) — count the `warning` lines in the whole output of every build and test run; it is 0 before a task is called done

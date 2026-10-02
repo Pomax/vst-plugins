@@ -35,12 +35,15 @@ binaries/
   Markdown Notes.vst3
 ```
 
-On Windows and Linux that is the plugin binary; on macOS it is the `.vst3`
-bundle directory, which is the only form a plugin can take there. Either way it
+On Windows that is the plugin binary; on macOS it is the `.vst3` bundle
+directory, which is the only form a plugin can take there. On Linux it is a
+bundle directory too, the form the VST3 Plugin Format page gives for Linux,
+with the library at `Contents/x86_64-linux/Markdown Notes.so`. Either way it
 is what gets copied into the VST3 folder:
 
 - Windows: `C:\Program Files\Common Files\VST3\`
 - macOS: `~/Library/Audio/Plug-Ins/VST3/`
+- Linux: `~/.vst3/`, or `/usr/lib/vst3/`
 
 This project's own result in `binaries/` is replaced by every build, so it only
 ever holds the current one.
@@ -144,6 +147,29 @@ window to photograph.
 
 On macOS the UI tests photograph the window themselves, through the `Window
 Shot` app in `tools/window-shot`.
+
+On Linux the driver is `src/xtask/src/linux.rs`, and it is written for one
+desktop: GNOME on Wayland. The host and the plugin are X11 windows there, so
+where they are and which is in front is asked of the X server. Input and
+pictures go through the desktop portal, in one session:
+
+- Keys, pointer moves and clicks are handed to the desktop through the
+  portal's RemoteDesktop interface. The desktop delivers them with its own
+  pointer and its own keyboard focus, so they arrive as a hand's would.
+- Pictures and films come from the portal's ScreenCast stream of the monitor,
+  read with `gst-launch-1.0`, and are cut down to the window.
+- Text in a picture is found by `binaries/find-text`, which on Linux reads it
+  with the `tesseract` program.
+
+The desktop asks before it allows any of that: the first run puts up its
+dialog for sharing the screen and for remote control, and waits for it to be
+allowed. The answer is kept in `markdown-notes/.cache/portal-token`, and runs
+after that are not asked again.
+
+What has to be installed for the UI tests on Linux: `tesseract` with its
+English data (the `tesseract-ocr` package), GStreamer's `gst-launch-1.0` with
+the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux` elements, and `ffmpeg`.
+`./test.sh --ui NAME` runs one test or one suite there.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
