@@ -218,7 +218,7 @@ Two workflows, because checking the code and shipping it are different jobs.
 
 `.github/workflows/markdown-notes-ci.yml` runs on every pull request touching this project or the mini host: `cargo run -p xtask -- test`,
 which is every test but the UI tests, the pixel tests included, on
-`windows-latest`, `macos-14` and `ubuntu-latest`, plus a
+`windows-latest`, `macos-15` and `ubuntu-latest`, plus a
 [zizmor](https://docs.zizmor.sh) audit of the workflows themselves.
 
 The Linux job installs what a runner does not have before it builds:
