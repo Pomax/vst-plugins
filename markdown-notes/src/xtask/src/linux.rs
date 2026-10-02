@@ -10,6 +10,7 @@
 //! front is asked of the X server, see `xwindows.rs`.
 
 mod cursor;
+mod dialog;
 mod input;
 mod keys;
 mod look;
@@ -296,6 +297,95 @@ impl Run {
         })
     }
 
+    /// Where a click sent to a point of the addressed window goes: to the
+    /// middle of a `+` that is read close to the point, and to the point
+    /// itself when there is none. Found by looking at the part of the window
+    /// around the point.
+    fn click_target(&self, x: i32, y: i32) -> Result<(i32, i32), String> {
+        const ACROSS: i32 = 120;
+        const DOWN: i32 = 40;
+        let area = self.area()?;
+        let (left, top) = ((x - ACROSS).max(0), (y - DOWN).max(0));
+        let (right, bottom) = ((x + ACROSS).min(area.width), (y + DOWN).min(area.height));
+        if right <= left || bottom <= top {
+            return Ok((x, y));
+        }
+        let around = Rect {
+            x: area.x + left,
+            y: area.y + top,
+            width: right - left,
+            height: bottom - top,
+        };
+        let probe = self.work.join("click.png");
+        let lines = look::read_in(self.portal, around, &probe)?;
+        let _ = std::fs::remove_file(&probe);
+        Ok(match look::plus_near(&lines, (x - left, y - top)) {
+            Some(plus) => {
+                let (x, y) = (left + plus.x + plus.width / 2, top + plus.y + plus.height / 2);
+                println!("click:  + at {x},{y}");
+                (x, y)
+            }
+            None => (x, y),
+        })
+    }
+
+    /// What the cursor on screen is, as a `cursor:` step names it.
+    fn cursor(&self) -> &'static str {
+        self.desktop
+            .cursor_image()
+            .map(|picture| cursor::name_of(&picture, &self.stock))
+            .unwrap_or("unreadable")
+    }
+
+    /// Where the window under test can be taken hold of to drag its bottom
+    /// right corner: the first place, going out from the corner of what the
+    /// window shows, where the pointer turns into the corner's arrow. The
+    /// pointer is left there. Nothing is pressed on the way.
+    fn resize_grip(&mut self) -> Result<(i32, i32), String> {
+        const REACH: i32 = 16;
+        let frame = self.desktop.frame_rect(self.host)?;
+        let corner = (frame.right() - 1, frame.bottom() - 1);
+        self.input.glide(corner, Duration::from_millis(200))?;
+        for out in 0..=REACH {
+            let (x, y) = (corner.0 + out, corner.1 + out);
+            self.input.jump(x, y)?;
+            let turned = wait_until(Duration::from_millis(250), || {
+                (self.cursor() == cursor::CORNER).then_some(())
+            });
+            if turned.is_some() {
+                return Ok((x, y));
+            }
+        }
+        Err(format!(
+            "from the window's bottom right corner at {},{} to {REACH} out, the pointer never \
+             turned into the corner's arrow (it is {}), so nothing was dragged",
+            corner.0,
+            corner.1,
+            self.cursor()
+        ))
+    }
+
+    /// The button that accepts the host's file dialog, from one look at the
+    /// host's window: a line under the host's strip that says one of `says`.
+    /// The picture is left in `dialog.png`.
+    fn accept_button(&self, says: &[&str]) -> Result<Option<Rect>, String> {
+        let frame = self.desktop.frame_rect(self.host)?;
+        let below = self.desktop.frame_extents(self.host)[2] + STRIP;
+        let lines = look::read_in(self.portal, frame, &self.work.join("dialog.png"))?;
+        Ok(dialog::accept_button(&lines, says, below))
+    }
+
+    /// Wait for the host's file dialog to have taken the keyboard from the
+    /// host, which it does when it comes up. The portal has the host's
+    /// request before that, and until the dialog is up what is under the
+    /// host's strip is still the plugin.
+    fn dialog_has_the_keyboard(&self) -> Result<(), String> {
+        wait_until(Duration::from_secs(10), || {
+            (self.desktop.active() != Some(self.host)).then_some(())
+        })
+        .ok_or_else(|| "a file dialog is open, but the host still has the keyboard".to_string())
+    }
+
     /// Fail unless the pointer is where it was just sent.
     fn arrived(&self, x: i32, y: i32) -> Result<(), String> {
         let there = wait_until(Duration::from_millis(500), || {
@@ -439,6 +529,12 @@ fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
 /// nothing is typed until it is: the keys would land in the editor instead.
 /// Ctrl+L is how its path field is asked for. The test's own Enter confirms
 /// the dialog afterwards, the same keystroke it is on the other platforms.
+///
+/// The path field takes places that exist, and entering one goes there: to
+/// a folder, or to a file's folder with the file chosen, which the test's
+/// Enter then opens. A file being saved may not exist, so a dialog that
+/// saves is given the folder there, and the file's name in the name it shows
+/// beside its button, which is a field once it is clicked.
 fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     // Numbered pictures of every stage, because none of this is visible in
     // the test's own output when it goes wrong. They are of the whole
@@ -456,16 +552,57 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     if opened.is_none() {
         return Err("no file dialog is open, so there is nowhere to type a path".to_string());
     }
+    run.dialog_has_the_keyboard()?;
     sleep(Duration::from_millis(500));
     let _ = screen::frame(run.portal, &picture("opened"));
+
+    let frame = run.desktop.frame_rect(run.host)?;
+    let probe = run.work.join("dialog.png");
+    let save = run.accept_button(&dialog::says("Save"))?;
+    let (place, name) = match (save, path.rsplit_once('/')) {
+        (Some(_), Some((folder, name))) => (folder, Some(name)),
+        _ => (path, None),
+    };
 
     run.input.shortcut(keys::CONTROL, keys::keysym_of('l'))?;
     sleep(Duration::from_millis(400));
     let _ = screen::frame(run.portal, &picture("path-field"));
 
-    run.input.write(path)?;
+    run.input.write(place)?;
     sleep(Duration::from_millis(400));
     let _ = screen::frame(run.portal, &picture("path-typed"));
+
+    run.input.send_keys("{ENTER}")?;
+    sleep(Duration::from_millis(600));
+    let _ = screen::frame(run.portal, &picture("path-entered"));
+    let (Some(save), Some(name)) = (save, name) else {
+        let _ = std::fs::remove_file(&probe);
+        return Ok(());
+    };
+
+    let lines: Vec<Rect> = look::read_in(run.portal, frame, &probe)?
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect();
+    let shown = dialog::name_beside(&lines, save).ok_or_else(|| {
+        format!(
+            "the dialog shows no name beside its Save button to type a name over; see {}",
+            probe.display()
+        )
+    })?;
+    let _ = std::fs::remove_file(&probe);
+    let (x, y) = (frame.x + shown.x + shown.width / 2, frame.y + shown.y + shown.height / 2);
+    // The dialog is not an X window, and the X server is not told where the
+    // pointer is while it is over one: there is no asking whether it arrived.
+    run.input.move_to(x, y)?;
+    run.input.click(x, y)?;
+    sleep(Duration::from_millis(400));
+    let _ = screen::frame(run.portal, &picture("name-field"));
+
+    run.input.shortcut(keys::CONTROL, keys::keysym_of('a'))?;
+    run.input.write(name)?;
+    sleep(Duration::from_millis(400));
+    let _ = screen::frame(run.portal, &picture("name-typed"));
     Ok(())
 }
 
@@ -481,8 +618,9 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
         }
         "click" => {
             let (x, y) = pair(value, "click")?;
-            let (x, y) = run.at(x, y)?;
             run.at_the_front()?;
+            let (x, y) = run.click_target(x, y)?;
+            let (x, y) = run.at(x, y)?;
             run.input.click(x, y)?;
             run.arrived(x, y)?;
             sleep(HAND);
@@ -645,7 +783,9 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     run.portal.request_open(run.pid).ok().filter(|open| !*open)
                 });
                 if closed.is_none() {
-                    return Err(format!("a {want} dialog is still open"));
+                    let seen = run.work.join("dialog-still-open.png");
+                    let _ = screen::frame(run.portal, &seen);
+                    return Err(format!("a {want} dialog is still open; see {}", seen.display()));
                 }
                 println!("nodialog: {want}");
                 return Ok(());
@@ -656,26 +796,23 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             if opened.is_none() {
                 return Err(format!("no {want} dialog is open, so the button did nothing"));
             }
-            // Which dialog it is, is read off the screen: the word has to be
-            // on the row its Cancel button is on.
+            run.dialog_has_the_keyboard()?;
+            // Which dialog it is, is read off the screen. The dialog sits
+            // over the host's window from just under the host's strip, so
+            // what the window's place shows below the strip is the dialog.
             let probe = run.work.join("dialog.png");
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let says = dialog::says(want);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut before = None;
             loop {
-                screen::frame(run.portal, &probe)?;
-                let (_, cancels) = look::find_all(&probe, "Cancel")?;
-                let (_, words) = look::find_all(&probe, want)?;
-                let on_one_row = cancels.iter().any(|cancel| {
-                    words.iter().any(|word| {
-                        let apart = (cancel.y + cancel.height / 2) - (word.y + word.height / 2);
-                        apart.abs() <= cancel.height.max(word.height)
-                    })
-                });
-                if on_one_row {
+                let button = run.accept_button(&says)?;
+                if dialog::settled(before, button) {
                     break;
                 }
+                before = button;
                 if Instant::now() >= deadline {
                     return Err(format!(
-                        "a dialog is open, but nothing beside its Cancel says {want:?}; see {}",
+                        "a dialog is open, but nothing on it says {want:?}; see {}",
                         probe.display()
                     ));
                 }
@@ -722,11 +859,11 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     .filter(|(found, _)| found.y >= below)
                     .map(|(_, text)| text)
                     .collect();
-                let _ = std::fs::remove_file(&probe);
                 let complaint = if wanted { "does not show" } else { "still shows" };
                 return Err(format!(
-                    "the document {complaint} {text:?}; below {below} the window reads: {}",
-                    saw.join(" | ")
+                    "the document {complaint} {text:?}; below {below} the window reads: {}; see {}",
+                    saw.join(" | "),
+                    probe.display()
                 ));
             }
             let _ = std::fs::remove_file(&probe);
@@ -793,19 +930,19 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let want = want.trim();
             let (x, y) = pair(where_at, "cursor")?;
             let (x, y) = run.at(x, y)?;
-            run.input.jump(x, y)?;
+            run.input.go_to(x, y)?;
             run.arrived(x, y)?;
             // The window only changes it when it next redraws, so it is
             // looked at until it is what was asked for.
-            let shown = || {
-                run.desktop
-                    .cursor_image()
-                    .map(|picture| cursor::name_of(&picture, &run.stock))
-                    .unwrap_or("unreadable")
-            };
-            let right = wait_until(Duration::from_secs(2), || (shown() == want).then_some(()));
+            let right = wait_until(Duration::from_secs(2), || (run.cursor() == want).then_some(()));
             if right.is_none() {
-                return Err(format!("cursor at {where_at} is {}, expected {want}", shown()));
+                let seen = run.work.join("cursor.png");
+                let _ = screen::frame(run.portal, &seen);
+                return Err(format!(
+                    "cursor at {where_at} is {}, expected {want}; see {}",
+                    run.cursor(),
+                    seen.display()
+                ));
             }
             Ok(())
         }
@@ -876,13 +1013,12 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let (now_width, now_height) = reported_host_size(&run.reported)
                 .ok_or("the host has not reported its size")?;
             let (dx, dy) = (width - now_width, height - now_height);
-            let frame = run.desktop.frame_rect(run.host)?;
-            let corner = (frame.right() - 3, frame.bottom() - 3);
             if !run.desktop.wait_active(run.host, Duration::from_secs(2)) {
                 return Err("the window under test is not at the front, so its corner was \
                             not taken hold of"
                     .to_string());
             }
+            let corner = run.resize_grip()?;
             run.input.take_hold(corner.0, corner.1)?;
             run.input
                 .glide((corner.0 + dx, corner.1 + dy), Duration::from_millis(over.max(0) as u64))?;

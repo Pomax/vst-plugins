@@ -68,11 +68,17 @@ impl Input {
         self.portal.button(false)
     }
 
+    /// Move the pointer somewhere and leave it there, quickly, the way a
+    /// hand goes to a thing it is about to use.
+    pub fn go_to(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.glide((x, y), Duration::from_millis(120))
+    }
+
     /// A click the window can see: the pointer moves, settles, presses, and
     /// only then releases. Sent back to back, the press and release land in
     /// one frame and are missed.
     pub fn click(&mut self, x: i32, y: i32) -> Result<(), String> {
-        self.jump(x, y)?;
+        self.go_to(x, y)?;
         sleep(Duration::from_millis(120));
         self.press()?;
         sleep(Duration::from_millis(120));

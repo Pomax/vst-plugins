@@ -548,6 +548,7 @@ there. None of it can be run on this machine.
 | `xtask/src/main.rs` (T3.12) | two Linux-only lines that set `RUST_TEST_THREADS` | the same CI job compiles them out |
 | `markdown-notes-plugin/tests/caret_in_view.rs` (T3.7, T3.8) | Linux-only lines, and for every platform: `changing_the_view_arrives_at_the_caret` keeps its rendering when it fails | the same CI job runs the test. It passes there by the same assertion as before |
 | `markdown-notes-plugin/tests/selection_rendering.rs` (T3.10), `title_field.rs` (T3.15) | Linux-only lines | the same CI job compiles them out |
+| `markdown-notes-plugin/src/gui.rs` (T6.16) | one Linux-only statement after `text_came` in `take_in_pictures`, and a Linux-only function it calls. Windows and macOS make the calls they made before | the same CI job compiles them out |
 | `markdown-notes-plugin/tests/source_view.rs` (T3.13) | the heading may measure `SLACK` rows taller than the body. `SLACK` is 0 on Windows and macOS, which is the check they had | the same CI job runs the test |
 
 ### 4.8 Added by this plan and not asked for
@@ -1029,10 +1030,286 @@ Needs a yes before the set of runs. Each test is run alone with
 `./test.sh --ui <name>` in `markdown-notes`, fixed and rerun alone until it
 passes, and its picture is sent.
 
-- [ ] T6.1 `editing-the-document` (U3, U4, U7, U9).
-- [ ] T6.2 `sections-and-files` (U5, U6, U11, U14).
-- [ ] T6.3 `opening-a-note` (U18 for the strip).
-- [ ] T6.4 `pictures-in-a-note`.
+- [x] T6.1 `editing-the-document` (U3, U4, U7, U9). Passed, with the step
+      files' coordinates as they are. All four unknowns hold for this test.
+- [x] T6.2 `sections-and-files` (U5, U6, U11, U14). Passed, after T6.6 to
+      T6.15, with the step file as it is. The host reports 620x420 after
+      the drag. U11 holds for its first half only (T6.6), U14 holds, U6 is
+      settled by T6.7 and T6.14, and U5 does not hold (T6.15).
+- [x] T6.3 `opening-a-note` (U18 for the strip). Passed on its first run.
+      `Save preset` on the host's strip is read and pressed, so U18 holds
+      for the strip.
+- [x] T6.4 `pictures-in-a-note`. Passed, after T6.16 and T6.17.
+- [x] T6.5 Bug found by T6.1, "cursor at 60,155 is other, expected ibeam".
+      The pointer was where it was sent (so U3 holds), and no picture of the
+      theme matched the cursor on screen. `cursor::stock` builds each pixel
+      from the xcursor crate's `pixels_argb` bytes as if they were in the
+      file's order. They are not: the crate rotates them. Its `pixels_rgba`
+      is the one in the file's order, which is the order the X server's
+      pixels are in. Saved test, failing before the fix:
+      `a_theme_file_is_read_as_the_pixels_the_server_shows` in
+      `linux/cursor.rs`, which reads a cursor file it builds itself.
+
+- [x] T6.6 Found by T6.2, "a dialog is open, but nothing beside its Cancel
+      says "Save"". The first half of U11 holds: the portal lists the host's
+      request while its dialog is up. The second half does not: GNOME 50's
+      file dialog has no Cancel button. Its picture shows a header with the
+      folder path and the window buttons, and along the bottom the file type,
+      the name and a `Save` button. It sits over the host's window from just
+      under the host's strip, covering the plugin's toolbar. So the word is
+      looked for where the dialog is: in the picture of the host's window,
+      below the host's strip. The whole monitor is no longer read for it.
+- [x] T6.7 Found by T6.2 once T6.6 let it on: "a Save dialog is still open".
+      The stage pictures show the dialog has the keyboard (U14), that Ctrl+L
+      turns its folder path into a field, and that the typed path lands in
+      that field (first half of U6). After the test's Enter the dialog is
+      still up. There is no picture of that moment, so a `nodialog` that
+      fails now photographs the monitor into `dialog-still-open.png` and
+      names it. What the picture shows decides the fix, which is written
+      here before it is made.
+      The picture shows the dialog's own message: "Unable to find
+      .../round-trip.md. Please check the spelling and try again." Its path
+      field takes places that exist, and a file being saved does not exist
+      yet. Nautilus 50.2 is the dialog (`src/nautilus-file-chooser.c` and
+      `src/resources/ui/nautilus-file-chooser.blp` in its source): the name
+      is shown on a button beside `Save`, pressing that button turns it into
+      a field, and Enter in that field is `Save`. So, in a dialog that has a
+      `Save` button, the folder is typed into the path field and entered,
+      the name beside `Save` is found by looking and clicked, and the file's
+      name is typed over what is there. The test's own Enter then saves.
+      A dialog without a `Save` button is given the whole path as before.
+      The two things read off the picture, which box is the `Save` button
+      and which is the name beside it, go in `linux/dialog.rs` with tests.
+      Both tests were seen to fail against four breaks of the two functions.
+      The run after it failed the same way and never reached the new steps:
+      see T6.8 and T6.9.
+- [x] T6.8 Found by T6.7's run. `binaries/find-text` does not read the
+      dialog's `Save` button: asked for `Save` in the picture of the host's
+      window with the dialog over it, it prints only the `Save preset` of
+      the host's strip. The button is white lettering on a pill of the
+      desktop's orange. The strip's white lettering on blue is read. A test
+      in `tools/find-text/tests/the_program.rs` draws such a button and is
+      seen to fail first; the fix goes in `tools/find-text/src/linux.rs` and
+      is written here once the test says which one works.
+      The test, `white_lettering_on_a_coloured_button_is_read`, failed with
+      the button not found. The fix: a picture with coloured grounds in it is
+      read a second time at each enlargement, as a picture of only what is
+      lettered on those grounds, dark on white. A pixel is on a coloured
+      ground when more than half of the 25 by 25 pixels around it are
+      coloured, and coloured means its strongest and weakest channels are 96
+      or more apart. What the first reading finds is unchanged. Three tests
+      in `linux.rs` hold the two new functions; with the program's test they
+      were seen to fail against four breaks. The other fourteen tests of
+      find-text pass. Not measured: what the second reading adds to the time
+      a look takes (U10).
+- [x] T6.9 Found by T6.7's run. `dialog:Save` passed although the dialog's
+      button cannot be read (T6.8): the portal has the host's request before
+      the dialog has drawn, and until it has, the plugin's own toolbar is
+      under the host's strip with `Save`, `Save As` and `Open` on it. So the
+      step also waits for the host to stop being the window with the
+      keyboard, which the dialog takes when it comes up (U14), before it
+      looks. Not closed by this: a dialog that has the keyboard and is still
+      fading in shows the toolbar through it. Not shown: that the wait is
+      what stops the false pass. No run was made with T6.8 fixed and this
+      left out, and it has no test of its own.
+- [x] T6.10 Found by the run after T6.8 and T6.9, which got as far as the
+      click on the name beside `Save`: "the pointer was sent to 1194,802 and
+      is at Some((1035, 297))". The click went where it was sent (the name's
+      button, on its pencil). The check is what failed: the X server is asked
+      where the pointer is, and it is not told while the pointer is over the
+      dialog, which is not an X window. The click in the dialog is made
+      without that check; the stage picture after it shows what it did.
+      The run after it saved twice through the dialog and both `written:`
+      steps passed. T6.7 is fixed by this, and U6 is settled for saving.
+- [x] T6.11 Found by the same run, further on: after the second save,
+      `click:239,113` on the tab row's `+` is followed by "the document does
+      not show "Section Title"; below 140 the window reads: Dlaviaameles |
+      Drum bus | Drum bus". The same click after the first save was not
+      tried: there the next step is a `press:`, which takes a look first.
+      The failing step deleted its picture, so there is nothing to see what
+      the window held. A `showing:` or `hidden:` that fails now keeps its
+      picture and names it. What the picture shows decides the fix, which is
+      written here before it is made.
+      The picture shows the click missed. With two sections the `+` is at x
+      243 to 259 in the window, and `plugin:239,87` clicks at 239. The first
+      `+` click, `plugin:129,87`, lands: with one section the `+` is at 127
+      to 143. A section tab here is 109 wide and the next starts 117 further
+      on; the step file's own note puts the centres 110 apart.
+      A tab is as wide as "this many words" in the plugin's sans-serif face
+      (`fixed_width` in `gui.rs`). `fonts.rs` asks font-kit for
+      `FamilyName::SansSerif`, and font-kit 0.14.3 (`src/source.rs`) makes
+      that Arial on Windows and macOS and fontconfig's `sans-serif`
+      elsewhere, which on this machine is Noto Sans. This machine gives
+      Liberation Sans when asked for Arial. Not measured: that the face is
+      the whole of the difference in width.
+      This is U4 not holding, for a reason other than the title bar: stopped
+      for the user's choice. Nothing is changed for it.
+      The user's answer: "just fucking find the thing you need, then click
+      where you now know it exists". See T6.12.
+- [x] T6.12 The `+` is found by looking. The step file is shared and is not
+      edited, and a `click:` step carries no word, so this is in the Linux
+      driver's `click:`: before it clicks, it photographs the part of the
+      window around the point and reads it, and when a `+` standing alone is
+      read close to the point, the click goes to the middle of that `+`.
+      Otherwise the click goes where the step says, as now.
+      First a test in `tools/find-text/tests/the_program.rs` that draws a
+      section tab and the `+` button beside it as the plugin draws them and
+      asks for a line that is `+` alone. If `tesseract` does not read it,
+      the `+` is found in the picture's pixels instead, and that is written
+      here before it is made. The rule for which `+` is close enough goes in
+      `linux/look.rs` with a test.
+      `tesseract` reads it: `a_plus_alone_on_a_button_is_read` passes, and
+      fails when one-character words are dropped. The rule's test,
+      `a_click_beside_a_plus_is_for_the_plus`, was seen to fail against
+      three breaks; the first break was not caught at first, because the
+      test's click on a document line starting with `+` was out of reach of
+      it, and the test was changed to click within reach. In the run after,
+      both `+` clicks were found ("click:  + at 134,120" and "+ at 250,120")
+      and the test went on through the three tab drags and the three tabs
+      read in turn.
+- [x] T6.13 Found by that run, at the third save: "a Save dialog is still
+      open". The document has a path by then, so the dialog opens on
+      `round-trip.md`, which is there, and its button says `Replace` and not
+      `Save`. The driver found no `Save` button, took the dialog for one
+      that opens, and typed the whole path into the path field.
+      `dialog:Save` had passed all the same, which is T6.9's hole.
+      The fix: a dialog a step calls `Save` is one whose button says `Save`
+      or `Replace`. The button is taken from the lines read under the
+      host's strip, as a line that says one of those and nothing else. And
+      `dialog:` passes only when two looks running find the button in the
+      same place, which the plugin's toolbar showing through a dialog that
+      is fading in cannot give. Tests in `linux/dialog.rs`.
+      Three tests, seen to fail against six breaks. In the run after, the
+      third save went through and its `written:` passed.
+- [x] T6.14 Found by that run: "a dialog is open, but nothing on it says
+      "Open"". The dialog that opens a file has `Select` on its button, pale
+      until a file is chosen. A dialog a step calls `Open` is one whose
+      button says `Open` or `Select`. Whether the pale button is read, and
+      what the dialog does with a typed path and the test's Enter (the Open
+      half of U6), the next run's pictures show; what they call for is
+      written here before it is made.
+      The pale button is read: `dialog:Open` passed. The run then failed
+      with "a Open dialog is still open". Its picture shows what the path
+      and the test's Enter did: the dialog went to the file's folder and
+      chose the file ("round-trip.md" selected), and `Select` is no longer
+      pale. Entering a path chooses; it does not open. So the driver enters
+      the path it typed itself, in a dialog that opens as in one that saves,
+      and the test's Enter is then the one that opens the chosen file.
+      The run after opened the file: `nodialog:Open` and the five steps
+      after it passed. U6 is settled for opening too, and U11 and U14 hold.
+- [x] T6.15 Found by that run, at `dragto:620,420,500`: "the document still
+      shows "sprinkles"", and the picture after the drag is of a window that
+      is still 900 wide. U5 does not hold: three pixels inside the bottom
+      right corner of what the window shows is the plugin, not a grip. The
+      drag went into the editor.
+      The grip is found, not assumed: the pointer is moved out from the
+      corner a pixel at a time, without pressing, and the first place where
+      it turns into the corner's arrow is where the drag takes hold. The
+      frame is an X window (`mutter-x11-frames`), so the cursor it asks for
+      there can be read the way `cursor:` reads the plugin's. The cursor
+      theme's `se-resize`, `nwse-resize` and `bottom_right_corner` pictures
+      are what the corner's arrow is known by. If the pointer never turns
+      into it, the step fails without pressing anything.
+      The run after passed the whole test. Not shown by a test of its own:
+      the search for the grip, which has only this UI test, and how far out
+      the grip was found, which the run does not print.
+- [x] T6.16 Found by T6.4: "the document does not show "images"". Ctrl+V
+      with a picture on the clipboard pastes nothing. The plugin takes the
+      clipboard's picture when the paste key comes with no text event
+      (`take_in_pictures` in `gui.rs`). On X11 a text event always comes:
+      egui-baseview 0.7.2 (`window.rs`) pushes `Event::Text` with whatever
+      copypasta's `get_contents` gives, copypasta 0.10.2 gives what
+      x11-clipboard's `load` gives, and x11-clipboard 0.9.3 (`lib.rs`, at
+      "the conversion requested could not be made") answers a clipboard
+      that has no text with an empty result and no error. So the event is
+      there, and empty. The fix, for Linux only: text events that are all
+      empty are not text that came. A test in `gui.rs` holds the rule.
+      The test, `a_paste_that_brought_only_empty_text_brought_no_text`, was
+      seen to fail against a break. In the run after, both pictures were
+      pasted and the images tab was found and pressed.
+- [x] T6.17 Found by that run: "the document does not show "base64"". The
+      window shows `data:image/png;base64,` plainly, and `tesseract` reads
+      it as `data:image/png;base6é4,` at every enlargement. This is U18 for
+      a word the earlier tests did not have. A test in
+      `tools/find-text/tests/the_program.rs` draws that line as the plugin
+      does, light on dark, and asks for `base64`; it has to fail first.
+      What makes it pass, within what U18 allows (the enlargements, the
+      greys, the page mode, what `tesseract` is asked for), is written here
+      before it is kept.
+      The drawn test, `digits_among_letters_and_marks_are_read_as_digits`,
+      does not fail: the line drawn with font-kit at the plugin's size and
+      grey is read as `base64`. The misread is of the plugin's own drawing
+      of it. So the test that fails first is `pictures-in-a-note` itself,
+      and the drawn test stays only to hold that a remedy does not lose
+      digits and marks.
+      Remedies, one at a time, each kept only if `pictures-in-a-note` gets
+      past `showing:base64`:
+      1. `tesseract` without its word lists (`load_system_dawg=0`,
+         `load_freq_dawg=0`), so that what is read is not pulled towards
+         words. No: the line is read as `base6é4` all the same. Taken out.
+      2. Dark on light. `tesseract` is given the plugin's light lettering on
+         its dark ground as it is. When more of the picture is dark than
+         light, the greys are turned over before it is read, so that the
+         ground there is most of is light and its lettering dark. No: the
+         line is read as `base6é4` all the same. Taken out, with its two
+         tests.
+      3. `tesseract` may only answer with the characters from `!` to `~`
+         (`tessedit_char_whitelist`). No step in either suite has a
+         character outside those. What it costs: lettering outside them
+         cannot be read on Linux. Yes, with the space among them: without
+         it words came back run together (`Savepreset`), which three of
+         find-text's own tests failed on. With the characters from the space
+         to `~`, `pictures-in-a-note` passed. The drawn test was seen to
+         fail when digits are left out of them.
+- [x] T6.18 The reader and the driver changed after `editing-the-document`,
+      `sections-and-files` and `opening-a-note` passed (T6.8, T6.12, T6.13,
+      T6.17). Each of the three is run again, alone, as they now stand.
+      `sections-and-files` and `opening-a-note` passed again.
+      `editing-the-document` did not: see T6.19.
+- [x] T6.19 Found by T6.18: `editing-the-document`, which passed as T6.1,
+      now fails at its first `cursor:` step, twice running: "cursor at
+      60,155 is arrow, expected ibeam". The step keeps no picture, so what
+      was on screen is not known. A `cursor:` that fails now photographs
+      the monitor into `cursor.png` and names it. What the picture shows
+      decides the fix, which is written here before it is made.
+      It depends on what ran before. Run after another test, it failed
+      three times out of three; run after itself, it passed twice out of
+      two, as it did for T6.1. After itself the pointer is already on the
+      spot the step sends it to when the window opens. After another test
+      it is somewhere else and is sent there in one jump. The picture shows
+      the window as it should be, with the text the step points at.
+      Not found: why a jump leaves the arrow up. baseview 0.3.4
+      (`platform/x11/event_loop.rs`) passes the place on when the pointer
+      enters its window, and egui-baseview 0.7.2 sets the cursor after each
+      frame it draws.
+      The fix is to what the driver does, which a hand does not do: `click:`
+      and `cursor:` put the pointer on their point in one jump. They now
+      move it there, as `hold:` and `moveto:` do. Kept only if
+      `editing-the-document` passes when run after `opening-a-note`.
+      It did, and again when run after `pictures-in-a-note`: two out of two
+      in the order that had failed three out of three.
+
+Results. With the driver and the reader as they stand at the end of T6,
+each of `pictures-in-a-note`, `editing-the-document`, `sections-and-files`,
+`opening-a-note` and `typing-goes-into-the-document` was run alone, in that
+order, and passed. xtask's 29 tests and find-text's 17 pass.
+
+Not shown by T6:
+
+- Why a jump of the pointer leaves the plugin's arrow up (T6.19). The
+  driver no longer jumps; the cause is not known.
+- That `editing-the-document` passes after every other test. It was run
+  after two of them.
+- T6.9: that waiting for the dialog to take the keyboard is needed.
+- T6.15: the search for the resize grip has no test of its own.
+- T6.17: lettering outside the characters from the space to `~` is not read
+  on Linux. No step has any.
+- What the second reading of a picture (T6.8) and the look before every
+  `click:` (T6.12) add to the time a test takes. U10 stays open.
+- A save over a file that is there already, where the dialog asks before
+  it replaces. No test of this suite does it.
+- Anything on Windows or macOS. The one shared file changed is `gui.rs`
+  (T6.16), by lines that only Linux compiles.
 
 Done when: each of the four has passed.
 

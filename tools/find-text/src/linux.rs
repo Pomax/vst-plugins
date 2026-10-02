@@ -8,11 +8,21 @@ use image::{GrayImage, ImageError, ImageFormat, Luma, RgbImage};
 
 use crate::{enlargements, Line, Reading};
 
+/// How far apart a pixel's strongest and weakest channels are before the
+/// pixel counts as coloured. Greys, black and white are not apart at all.
+const COLOURED: u8 = 96;
+
+/// How far around a pixel is looked at to say whether it is on a coloured
+/// ground, in the picture's own pixels: more than a line of interface text
+/// is tall, so that lettering never fills what is looked at.
+const AROUND: u32 = 12;
+
 /// Everything readable in the picture at `path`.
 ///
 /// The picture is read once at each of its enlargements and everything found
 /// at any of them is kept, so the same words can be in the answer more than
-/// once.
+/// once. At each enlargement it is read twice when it has coloured grounds
+/// in it: as greys, and as what is lettered on those grounds.
 pub fn read(path: &str) -> Result<Reading, String> {
     let picture = image::open(path)
         .map_err(|e| match e {
@@ -21,44 +31,118 @@ pub fn read(path: &str) -> Result<Reading, String> {
         })?
         .to_rgb8();
     let size = picture.dimensions();
+    let grounds = coloured_grounds(&picture);
+    let any_ground = grounds.iter().any(|on_one| *on_one);
 
     let mut lines = Vec::new();
     for scale in enlargements(size) {
-        lines.extend(at_scale(&picture, scale)?);
+        // Cubic, the filter the Windows reader enlarges with: interface text
+        // is drawn a stroke wide, and a smoothing filter spreads those
+        // strokes into the background.
+        let enlarged = imageops::resize(
+            &picture,
+            size.0 * scale,
+            size.1 * scale,
+            FilterType::CatmullRom,
+        );
+        lines.extend(read_greys(&greys(&enlarged), scale)?);
+        if any_ground {
+            lines.extend(read_greys(&on_colour(&enlarged, &grounds, scale), scale)?);
+        }
     }
     Ok(Reading { lines, size })
 }
 
-/// Read the picture once, enlarged `scale` times over.
-fn at_scale(picture: &RgbImage, scale: u32) -> Result<Vec<Line>, String> {
-    // Cubic, the filter the Windows reader enlarges with: interface text is
-    // drawn a stroke wide, and a smoothing filter spreads those strokes into
-    // the background.
-    let (width, height) = picture.dimensions();
-    let enlarged = imageops::resize(
-        picture,
-        width * scale,
-        height * scale,
-        FilterType::CatmullRom,
-    );
+/// How far apart the strongest and weakest channels of a pixel are.
+fn spread(pixel: [u8; 3]) -> u8 {
+    let [red, green, blue] = pixel;
+    red.max(green).max(blue) - red.min(green).min(blue)
+}
 
+/// Which pixels of the picture are on a coloured ground, row by row: those
+/// with more coloured pixels around them than not.
+///
+/// White lettering on a coloured button is on one, and so is the button
+/// under it. Coloured lettering on a plain ground is not: around any pixel
+/// of it there is more ground than lettering.
+fn coloured_grounds(picture: &RgbImage) -> Vec<bool> {
+    let (width, height) = (picture.width() as usize, picture.height() as usize);
+
+    // How many coloured pixels there are above and to the left of each
+    // place, so that the count inside any rectangle is four lookups.
+    let across = width + 1;
+    let mut before = vec![0u32; across * (height + 1)];
+    for y in 0..height {
+        let mut in_row = 0;
+        for x in 0..width {
+            let pixel = picture.get_pixel(x as u32, y as u32).0;
+            in_row += u32::from(spread(pixel) >= COLOURED);
+            before[(y + 1) * across + x + 1] = before[y * across + x + 1] + in_row;
+        }
+    }
+
+    let around = AROUND as usize;
+    let mut grounds = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let (top, bottom) = (y.saturating_sub(around), (y + around + 1).min(height));
+        for x in 0..width {
+            let (left, right) = (x.saturating_sub(around), (x + around + 1).min(width));
+            let coloured = before[bottom * across + right] + before[top * across + left]
+                - before[top * across + right]
+                - before[bottom * across + left];
+            let looked_at = ((bottom - top) * (right - left)) as u32;
+            grounds.push(coloured * 2 > looked_at);
+        }
+    }
+    grounds
+}
+
+/// The enlarged picture as greys.
+fn greys(enlarged: &RgbImage) -> GrayImage {
     // The greys are pulled apart with the weights and the doubling of the
     // Windows reader's `deepen`, so that mid grey lettering on light grey
     // comes out dark on white.
-    let grey = GrayImage::from_fn(enlarged.width(), enlarged.height(), |x, y| {
+    GrayImage::from_fn(enlarged.width(), enlarged.height(), |x, y| {
         let [red, green, blue] = enlarged.get_pixel(x, y).0;
         let grey = (blue as u32 * 29 + green as u32 * 150 + red as u32 * 77) / 256;
         Luma([((grey as i32 - 128) * 2 + 128).clamp(0, 255) as u8])
-    });
+    })
+}
+
+/// The enlarged picture as what is lettered on its coloured grounds: on one,
+/// colour is white and whatever has no colour is dark, and everything that
+/// is not on one is white. `grounds` is of the picture before it was
+/// enlarged `scale` times.
+fn on_colour(enlarged: &RgbImage, grounds: &[bool], scale: u32) -> GrayImage {
+    let width = enlarged.width() / scale;
+    GrayImage::from_fn(enlarged.width(), enlarged.height(), |x, y| {
+        let on_a_ground = grounds[((y / scale) * width + x / scale) as usize];
+        if !on_a_ground {
+            return Luma([255]);
+        }
+        let spread = spread(enlarged.get_pixel(x, y).0) as u32;
+        Luma([(spread * 255 / COLOURED as u32).min(255) as u8])
+    })
+}
+
+/// Read a picture of greys that was enlarged `scale` times over.
+fn read_greys(grey: &GrayImage, scale: u32) -> Result<Vec<Line>, String> {
     let mut png = Vec::new();
     grey.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
         .map_err(|e| format!("could not encode the enlarged picture: {e}"))?;
 
     // Page mode 11 is sparse text: words wherever they are, in no particular
-    // layout, which is what a window is. `-l` and `--psm` have to come before
-    // `tsv`, which names the config file that makes the output a table.
+    // layout, which is what a window is. It may answer only with the
+    // characters from the space to `~`: left to itself the English model
+    // puts accented letters among digits where there are none. Without the
+    // space in them, words come back run together. `-l`, `--psm` and `-c`
+    // have to come before `tsv`, which names the config file that makes the
+    // output a table.
+    let answers: String = (' '..='~').collect();
     let mut child = Command::new("tesseract")
-        .args(["stdin", "stdout", "--psm", "11", "-l", "eng", "tsv"])
+        .args(["stdin", "stdout", "--psm", "11", "-l", "eng", "-c"])
+        .arg(format!("tessedit_char_whitelist={answers}"))
+        .arg("tsv")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -165,7 +249,59 @@ fn parse_tsv(text: &str, scale: u32) -> Vec<Line> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_tsv;
+    use image::{Rgb, RgbImage};
+
+    use super::{coloured_grounds, on_colour, parse_tsv};
+
+    const WHITE: Rgb<u8> = Rgb([255, 255, 255]);
+    const ORANGE: Rgb<u8> = Rgb([233, 84, 32]);
+
+    /// A white picture 100 wide and 80 high with an orange block from 20,20
+    /// to 80,60 and a white bar across the block's middle, as lettering is.
+    fn a_button() -> RgbImage {
+        RgbImage::from_fn(100, 80, |x, y| {
+            let in_the_block = (20..80).contains(&x) && (20..60).contains(&y);
+            let in_the_bar = (30..70).contains(&x) && (38..42).contains(&y);
+            if in_the_block && !in_the_bar { ORANGE } else { WHITE }
+        })
+    }
+
+    #[test]
+    fn what_is_lettered_on_colour_is_on_a_coloured_ground() {
+        let grounds = coloured_grounds(&a_button());
+        let on_a_ground = |x: usize, y: usize| grounds[y * 100 + x];
+
+        // The lettering and the block under it.
+        assert!(on_a_ground(50, 40));
+        assert!(on_a_ground(50, 25));
+        // The block's edge, and the white just outside it.
+        assert!(on_a_ground(20, 40));
+        assert!(!on_a_ground(19, 40));
+        assert!(on_a_ground(50, 59));
+        assert!(!on_a_ground(50, 60));
+        assert!(!on_a_ground(5, 5));
+    }
+
+    #[test]
+    fn coloured_lettering_on_a_plain_ground_is_not_on_a_coloured_ground() {
+        // An orange bar four pixels thick on white, and nothing else.
+        let picture = RgbImage::from_fn(100, 80, |x, y| {
+            if (30..70).contains(&x) && (38..42).contains(&y) { ORANGE } else { WHITE }
+        });
+        assert!(coloured_grounds(&picture).iter().all(|on_one| !on_one));
+    }
+
+    #[test]
+    fn on_a_coloured_ground_the_lettering_is_dark_and_the_rest_is_white() {
+        let picture = a_button();
+        let grounds = coloured_grounds(&picture);
+        let seen = on_colour(&picture, &grounds, 1);
+
+        assert_eq!(seen.get_pixel(50, 40).0, [0], "the lettering");
+        assert_eq!(seen.get_pixel(50, 25).0, [255], "the block");
+        assert_eq!(seen.get_pixel(19, 40).0, [255], "beside the block");
+        assert_eq!(seen.get_pixel(5, 5).0, [255], "the plain ground");
+    }
 
     #[test]
     fn a_word_row_becomes_a_word_with_its_box_scaled_back() {

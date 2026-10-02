@@ -617,6 +617,8 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
             let text_came = i.events.iter().any(|e| {
                 matches!(e, egui::Event::Text(_) | egui::Event::Paste(_))
             });
+            #[cfg(target_os = "linux")]
+            let text_came = text_came && !only_empty_text(&i.events);
             pasted && !text_came
         });
         if pasted_a_key {
@@ -632,6 +634,19 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
         }
         editor.tidy_images();
     }
+}
+
+/// Whether every text event among these is empty.
+///
+/// On X11 egui-baseview answers the paste key with whatever the clipboard
+/// gives it as text, and a clipboard that holds a picture gives it none and
+/// no error: the text event comes, and is empty.
+#[cfg(target_os = "linux")]
+fn only_empty_text(events: &[egui::Event]) -> bool {
+    events.iter().all(|e| match e {
+        egui::Event::Text(text) | egui::Event::Paste(text) => text.is_empty(),
+        _ => true,
+    })
 }
 
 fn sync_window_size(ui: &mut egui::Ui, gui: &mut Gui) {
@@ -2465,6 +2480,29 @@ fn translate_key(key: egui::Key, ctrl: bool) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The paste key over a clipboard that holds a picture, as it arrives on
+    /// X11: the key, and a text event with nothing in it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_paste_that_brought_only_empty_text_brought_no_text() {
+        let key = egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        };
+        let text = |text: &str| egui::Event::Text(text.to_string());
+        let pasted = |text: &str| egui::Event::Paste(text.to_string());
+
+        assert!(only_empty_text(&[key.clone(), text("")]));
+        assert!(only_empty_text(&[key.clone(), pasted("")]));
+        assert!(only_empty_text(&[key.clone()]));
+        assert!(!only_empty_text(&[key.clone(), text("kick")]));
+        assert!(!only_empty_text(&[key.clone(), pasted("kick")]));
+        assert!(!only_empty_text(&[key, text(""), text("kick")]));
+    }
 
     /// The caret goes after a bold word, not inside it.
     ///
