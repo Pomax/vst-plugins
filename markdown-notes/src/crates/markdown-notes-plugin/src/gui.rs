@@ -12,9 +12,11 @@
 //!
 //! # A note on bold
 //!
-//! egui ships no bold font family, so bold is drawn the way egui draws its own
-//! emphasis: a stronger foreground colour. Italic, strikethrough and underline
-//! are real text formatting.
+//! egui ships no bold font family, and none is bundled. Bold is drawn in the
+//! machine's own bold face, which [`crate::fonts::install_base`] loads beside
+//! the regular one, and in the scheme's bold text colour. On a machine with no
+//! bold face it is the regular face in that colour. Italic, strikethrough and
+//! underline are real text formatting.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -2337,8 +2339,6 @@ fn span_format(
     if span.style.contains(Style::STRIKE) {
         fmt.strikethrough = Stroke::new(1.0, palette.strike);
     }
-    // egui has no bold family, so bold is a stronger colour — the same trick
-    // egui's own `RichText::strong` uses.
     // The bold face the machine has, at the size this text is already using.
     if span.style.contains(Style::BOLD) {
         fmt.font_id = FontId::new(fmt.font_id.size, bold.clone());

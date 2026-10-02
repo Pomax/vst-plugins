@@ -2,7 +2,7 @@
 //!
 //! A VST3 plugin is not a bare shared library — it is a *bundle*: a directory
 //! named `Something.vst3` with a prescribed layout that differs per platform.
-//! Hosts scan for that directory, so a raw `.dll` sitting in `target/debug`
+//! Hosts scan for that directory, so a raw `.dll` sitting in `.cache/debug`
 //! will not be found by any DAW. This task builds the library and assembles
 //! the bundle around it.
 //!
@@ -498,8 +498,9 @@ fn remove_build_dir(root: &Path) {
 
 /// Delete `dir` from a process that outlives this one.
 ///
-/// Windows refuses to unlink a running executable, and `cargo dist` runs this
-/// tool out of `target/`, so the last of it has to go after this process ends.
+/// Windows refuses to unlink a running executable, and cargo runs this tool
+/// out of the directory being deleted, so the last of it has to go after this
+/// process ends.
 fn schedule_removal(dir: &Path) -> bool {
     // Forward slashes so the path works in a POSIX shell on every platform.
     let path = dir.display().to_string().replace('\\', "/");

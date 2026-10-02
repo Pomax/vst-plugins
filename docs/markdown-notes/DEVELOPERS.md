@@ -14,10 +14,10 @@ complete VST3 bindings with no C++ SDK dependency, and supports both
 |---|---|
 | `src/crates/markdown-notes-core` | The editor: a document, WYSIWYG layout, as-you-type conversion, plugin state, file I/O. No UI, no plugin dependencies. The buffer, caret, selection and undo are [`kode-markdown`](https://crates.io/crates/kode-markdown)'s; see [EDITOR_CHOICE.md](EDITOR_CHOICE.md). |
 | `src/crates/markdown-notes-plugin` | The VST3 plugin, plus the egui GUI. |
-| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the mini host in `../tools/mini-host`. |
+| `src/crates/markdown-notes-testrunner` | Runs scripted editing scenarios against the real plugin binary, through the loader in `../tools/vst3-loader`. |
 | `src/vendor` | A cut-down copy of `merman`, which draws the mermaid blocks. See [The fork](#the-fork). |
-| `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite. |
-| `src/tools` | Screenshot helpers for the real editor window. |
+| `src/xtask` | Build tasks: assembles the `.vst3` bundle, runs the test suite, drives the UI tests. |
+| `src/tools` | The UI tests: their step files and the order they run in, in `uitests/`. |
 
 The VST3 host this project tests against is a separate project:
 `../tools/mini-host`, documented in [docs/mini-host](../mini-host/DEVELOPERS.md).
@@ -48,10 +48,8 @@ is what gets copied into the VST3 folder:
 This project's own result in `binaries/` is replaced by every build, so it only
 ever holds the current one.
 
-**A successful build deletes `target/`.** Everything worth keeping has been
-copied to `binaries/`; what remains only helps when something went wrong, so it
-survives a *failed* build and not a successful one. The trade is that the next
-build is a cold one.
+Build output goes to `.cache/` and stays there, so the next build compiles
+only what changed. `cargo run -p xtask -- clean` empties it.
 
 `cargo dist` is an alias for `cargo run -p xtask -- bundle --release`; plain
 `cargo build` cannot do any of this, because cargo has no post-build hook that
@@ -71,11 +69,10 @@ cargo run -p xtask -- bundle --release --target aarch64-apple-darwin
 cargo run -p xtask -- test
 ```
 
-That builds the plugin, then runs the unit tests and the scenario suite in that
-order, and, since it too is a build, clears this project's result from
-`binaries/` first and deletes
-`target/` when everything passes. `--keep-target` leaves the build output in
-place for a faster next run. The order is the point: the scenario runner loads the plugin binary at
+That clears this project's result from `binaries/`, since what is there would
+describe older code, then builds the plugin and runs the unit tests, the
+scenario suite and the pixel tests, in that order. `--full` runs the UI tests
+after them. The order is the point: the scenario runner loads the plugin binary at
 runtime rather than linking it, so cargo has no idea the two are related and
 will happily run the suite against a stale `.dll`. (The runner refuses to run
 if it spots one, because that actually happened here — a deliberately broken
@@ -99,14 +96,14 @@ To use the built plugin without a DAW — the real thing, loaded through the
 factory and attached to a window:
 
 ```bash
-test.bat
+run.bat
 ```
 
 ```bash
-./test.sh
+./run.sh
 ```
 
-Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first.
+Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first. Neither builds anything.
 
 The test task runs the pixel tests along with everything else. They sit behind
 the `snapshots` feature because the headless renderer pulls in the whole
@@ -138,9 +135,10 @@ is the renderer's clear colour rather than anything egui draws, run the UI
 tests: they open the plugin in the mini host and photograph it.
 
 ```bash
-powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Exe ../binaries/mini-host.exe -Title "Mini VST Host" -Out window.png
+powershell -ExecutionPolicy Bypass -File tools/capture-window.ps1 -Exe binaries/mini-host.exe -Title "Mini VST Host" -Out window.png
 ```
 
+That is run from the repository's root, where `tools/` and `binaries/` are.
 `-ExecutionPolicy Bypass` is needed wherever unsigned scripts are blocked. It
 takes `-ExeArgs` for what to launch the host with, and `-Title` to say which
 window to photograph.
@@ -173,18 +171,24 @@ the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux` elements, and `ffmpeg`.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
-There are four, and each is one long run that covers a whole area rather than a
+There are five, and each is one long run that covers a whole area rather than a
 launch of the host per behaviour: `typing-goes-into-the-document` (the
-baseline), `editing-the-document`, `sections-and-files` and `opening-a-note`.
+baseline), `editing-the-document`, `sections-and-files`, `opening-a-note` and
+`pictures-in-a-note`.
 A new behaviour goes into the run whose note it can reuse, not into a new file
 that types the same title, heading and body again.
+
+That is the `markdown-notes` suite. The host has one of its own, `mini-host`,
+in `tools/mini-host/src/tools/uitests/`: `host-preset-across-runs`,
+`host-preset-dialogs` and `host-resize`. The same task runs both, and
+`test.bat --full` runs both after everything else.
 
 No step pauses for a length of time, and there is no `wait:` step. A step that
 needs the window to have caught up says what it is waiting to see, and the
 driver looks until it is there: `showing:`, `hidden:`, `press:`, `dragtext:`,
 `written:`, `cursor:`, `window:`, `nowindow:` and `dialog:` all poll, and a
 window that has just opened is waited on until it has drawn something that can
-drawn. The only timing in the driver is a hand's: keys go one at a time, a
+be read. The only timing in the driver is a hand's: keys go one at a time, a
 click holds the button for a moment, the pointer travels rather than jumps, and
 a click, a drag or a dialog opening is followed by the moment a hand takes to
 get to the next thing. Input sent faster than a person can make it reaches the
@@ -202,23 +206,26 @@ The host is also a standalone tool that loads **any** VST3 plugin, not just
 this one:
 
 ```bash
-cd ../tools/mini-host && cargo run --bin vst3-host -- ../../binaries/Markdown Notes.vst3
+cd ../tools/mini-host && cargo run --bin mini-host -- "../../binaries/Markdown Notes.vst3"
 ```
 
-See [the mini host guide](../mini-host/DEVELOPERS.md) for how to use it and how a
-VST3 plugin is loaded.
+See [the mini host guide](../mini-host/DEVELOPERS.md) for how to use it, and
+[the loader's guide](../vst3-loader/USING.md) for how a VST3 plugin is loaded.
 
 ## CI
 
 Two workflows, because checking the code and shipping it are different jobs.
 
-`.github/workflows/markdown-notes-ci.yml` runs on every pull request touching this project or the mini host: the full suite including
-the pixel tests, on both `windows-latest` and `macos-14`, plus a
-[zizmor](https://docs.zizmor.sh) audit of the workflows themselves.
+`.github/workflows/markdown-notes-ci.yml` runs on every pull request touching this project or the mini host: `cargo run -p xtask -- test`,
+which is every test but the UI tests, the pixel tests included, on both
+`windows-latest` and `macos-14`, plus a
+[zizmor](https://docs.zizmor.sh) audit of the workflows themselves. Neither
+workflow builds or tests Linux.
 
-`.github/workflows/markdown-notes-build.yml` runs on pushes to `main` that change the code.
-Markdown, `docs/`, `.github/`, `LICENSE` and `.gitignore` are ignored, so
-editing the workflows does not cut a release. It builds and zips both
+`.github/workflows/markdown-notes-build.yml` runs on pushes to `main` that
+change something under `markdown-notes/` or `tools/mini-host/` other than a
+markdown file, so editing the documents or the workflows does not cut a
+release. It builds and zips both
 platforms, then publishes them as a GitHub release. Before publishing, each job
 loads the bundle it just built and asks the factory for its classes, so a build
 that produces something no host can open fails there rather than in a DAW.
@@ -320,10 +327,13 @@ Where a picture comes from:
   `drop.rs`, an `IDropTarget` on Windows, an overlay `NSView` registered for
   file URLs on macOS. Both queue the files for the next frame. The Windows
   target is proven by hand: a file dragged from Explorer lands. The macOS one
-  has not been run.
-- A paste. egui-baseview turns Ctrl+V into a text event only when the
-  clipboard holds text, so on that key with no text the plugin reads the
-  clipboard's picture with `arboard` and encodes it as PNG.
+  has not been run. Linux has no target: a file dropped on the window there
+  is not taken in.
+- A paste. On Windows and macOS egui-baseview turns Ctrl+V into a text event
+  only when the clipboard holds text, so on that key with no text the plugin
+  reads the clipboard's picture with `arboard` and encodes it as PNG. On
+  Linux the text event comes either way, and is empty when the clipboard
+  holds no text, so there an empty one counts as none.
 
 The real-window test `pictures-in-a-note` pastes; nothing in the driver can
 drag a file. The headless `pictures_in_notes` tests drop through egui's own
@@ -342,8 +352,8 @@ capped at the width of the string `this many words`; anything longer is cut
 with `...` and shown in full on hover. Every section is that same width, so
 typing a heading never shifts the strip sideways.
 
-Click a section to switch, drag it to reorder, `+` to add one, middle-click or
-right-click to close. Closing the last one empties it instead of removing it.
+Click a section to switch, drag it to reorder, `+` to add one, middle-click to
+close it, or right-click it and pick **Close section**. Closing the last one empties it instead of removing it.
 
 ## Mermaid
 
@@ -391,9 +401,11 @@ matches upstream Mermaid exactly.
 Updating merman means redoing the cut. The alternative is asking upstream for
 features that select diagram types.
 
-Rows are 100 apart (`rankSpacing`), which is the room the edges are routed in.
+merman is asked for a `rankSpacing` of 85 between rows, which is the room the
+edges are routed in.
 [`node_widths.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/node_widths.rs)
-widens a node narrower than 72 to that width.
+redraws at 120 wide any node narrower than that which carries a state
+diagram's class.
 
 merman draws edges as splines and reads no setting for it, so
 [`elbows.rs`](../../markdown-notes/src/crates/markdown-notes-plugin/src/elbows.rs)
@@ -462,7 +474,11 @@ persisted by the processor, and splitting them into two objects would mean
 marshalling the whole note text through parameters or `IMessage` on every
 keystroke.
 
-**State** is JSON: notes, view mode, theme, window size, caret, and file path.
+**State** is JSON: the document, the note's name, both colour schemes, the
+view mode and the theme. The sections, the caret, the window's size and the
+file the document was last written to are not kept: they are how the document
+was being looked at, and state that carries any of them is read for its
+document and the rest ignored.
 Anything that fails to parse as JSON is kept as raw note text rather than
 discarded, so a malformed blob loses formatting but never the user's words.
 Unknown fields are ignored and missing ones default, so a project saved before
@@ -487,10 +503,12 @@ running the plugin.
 
 ## Known limitations
 
-- **Bold is drawn as a stronger colour, not a bold typeface.** egui ships no
-  bold font family; this is the same approach egui uses for its own emphasis.
-  Embedding a bold font would fix it properly.
+- **Bold needs a bold face on the machine.** None is bundled: bold text is
+  drawn in the system's bold sans-serif face, loaded beside the regular one
+  (`fonts::bold_family`), and in the scheme's bold text colour. On a machine
+  with no bold face it is drawn in the regular one, and only the colour
+  tells it apart.
 - **Input ownership.** When the host has attached a window, the GUI receives
   key events natively and `onKeyDown` returns `kResultFalse` — handling both
   would type every character twice. Without a window, `onKeyDown` is the only
-  input path, which is how the test host drives the plugin.
+  input path, which is how the scenario runner drives the plugin.

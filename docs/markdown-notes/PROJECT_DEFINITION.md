@@ -49,10 +49,10 @@ Verified means checked by a test or by inspecting real output, not by reading th
 | A2 | Notes in plugin state | Verified |
 | A3 | Typora-style conversion | Verified |
 | A4 | WYSIWYG / raw toggle | Verified |
-| A5 | Resizable, size in state | **Partly.** State verified; host→window resize unverified |
-| A6 | Load .md from disk | **Partly.** Logic verified; dialog untested |
-| A7 | Save | **Partly.** Logic verified; dialog untested |
-| A8 | Save As | **Partly.** Logic verified; dialog untested |
+| A5 | Resizable, size in state | **Partly.** Resizable is verified: the UI test `host-resize` drags the corner of the host's real window bigger and smaller, and the plugin's window fills it each time. The size is not in plugin state. It is the host's to keep, and a size in old state is ignored: the scenarios "the window is resizable, and its size is the host's to keep" and "a window size in a project is ignored, however absurd" |
+| A6 | Load .md from disk | Verified. The UI test `sections-and-files` opens a file through the native dialog |
+| A7 | Save | Verified. The same test saves through the native dialog and reads the file that was written |
+| A8 | Save As | Verified. The same test, twice: to the file the document already has, and to a new one |
 | A9 | Theme light/dark/auto, in state, tested | Verified |
 | A10 | Editor padding | Verified |
 | A11 | Audio passes through untouched | Verified, including mono |
@@ -64,7 +64,7 @@ Verified means checked by a test or by inspecting real output, not by reading th
 | W4 | Rust, after establishing feasibility | Verified |
 | W5 | Host documentation, any VST3 plugin | Verified |
 | W6 | Something that can see the GUI | Verified |
-| W7 | Per-platform build scripts | **Partly.** `build.bat` verified; `build.sh` has never run. On Linux `build.sh` has run, at the root and in each project, and leaves the four results in `binaries/`; `test.sh --full` has run there and passed |
+| W7 | Per-platform build scripts | Verified. `build.bat` on Windows, `build.sh` on macOS and on Linux. On Linux `build.sh` has run at the root and in each project and leaves the four results in `binaries/`, and `test.sh --full` has run there and passed |
 | W8 | CI on pull requests, build and publish on main | **Partly.** Both build jobs pass; publishing has not run yet |
 
 ## Open problem
@@ -90,54 +90,45 @@ Next step: install `binaries/Markdown Notes.vst3`, rescan a DAW, report what it 
 Things that are not done, or are done but unproven. None are hidden behind a
 passing test.
 
-1. **macOS builds but has never been run.** A Windows machine cannot link a
-   Mach-O binary, so CI is the only way to build it. The bundle now compiles and
-   packages there, GUI included, but no Mac has ever launched it: the window,
-   the font resolution and the file dialogs are unproven on that platform.
+1. **macOS runs in this project's host; a DAW there is not recorded.** The UI
+   tests have a macOS driver (`src/xtask/src/macos.rs`) and a screen tool
+   (`tools/window-shot`), and the film beside the `host-resize` test was
+   recorded on a Mac, with the plugin drawn in the host's window. Nothing in
+   this repository says the plugin has been loaded in a DAW on macOS.
 2. **Barely exercised in a real DAW.** Every automated test drives the plugin
-   through this project's own host, which does not attach a window, implement
-   `IComponentHandler`, or use a connection proxy — it is forgiving in exactly
-   the ways a DAW is not.
-3. **The host→window resize path is unverified.** `onSize` updates the stored
-   size and the GUI follows it via `ViewportCommand::InnerSize`, but proving it
-   needs a real host window to drag.
-4. **`IPlugFrame::resizeView` is not called.** If the editor wants to resize
-   itself — restoring a project whose stored size differs while the window is
-   open — a well-behaved plugin asks the host first. We keep the frame pointer
-   and never use it.
-5. **File dialogs are untested end to end.** `open_path`/`save`/`save_as` have
-   unit tests, but nothing drives the native dialog.
-6. **The GUI keyboard path is untested.** Scenarios drive `onKeyDown`, which is
-   the only input path when no window exists. With a window, egui handles keys
-   natively and that translation has no automated coverage.
-7. **No HiDPI negotiation.** `IPlugViewContentScaleSupport` is not implemented,
+   through this project's own loader and host. The host attaches a window,
+   but neither implements `IComponentHandler` or `IPlugFrame`, and the
+   component and the controller are connected to each other directly, not
+   through a proxy. They are forgiving in exactly the ways a DAW is not.
+3. **`IPlugFrame::resizeView` is not called.** If the editor wants to resize
+   itself, a well-behaved plugin asks the host first. `setFrame` does not keep
+   the frame it is given, so there is nothing to ask through.
+4. **No HiDPI negotiation.** `IPlugViewContentScaleSupport` is not implemented,
    so a host on a scaled display cannot tell the plugin its scale factor.
-8. **Bold is a colour, not a typeface.** egui ships no bold family.
-9. **No mouse selection.** Clicking places the caret; selection is keyboard-only.
-10. **The host is never told the notes changed.** VST3 has no "state is dirty"
-    signal — the usual trick is a hidden parameter bumped on every edit. Without
-    one a DAW still saves the notes, but may not mark the project modified.
-11. **Script coverage depends on a list of font family names.** The names are
-    resolved against the running machine, but a system whose fonts are not in
-    the list gets no glyphs for that script. The platform per-character fallback
-    APIs (`IDWriteFontFallback::MapCharacters`, `CTFontCreateForString`) would
-    remove the list entirely.
-12. **Linux is one machine.** The plugin, the host and every test have run on
-    one Linux desktop: x86_64, GNOME on Wayland with the windows on XWayland,
-    one monitor at a scale of 1. CI builds and tests Windows and macOS only.
-    The plugin has not been loaded in a DAW on Linux.
-13. **No drop target for files on Linux.** A picture pasted with Ctrl+V goes
-    into the note there, and a file dropped on the window does not: `drop.rs`
-    has a target for Windows and one for macOS.
-14. **The Linux UI tests are written for that desktop.** The driver knows
-    GNOME's file dialog (its `Save`, `Replace` and `Select` buttons, and that
-    its path field takes only places that exist), finds a window's resize
-    grip by the cursor GNOME shows over it, and needs the desktop portal to
-    allow it the screen, the pointer and the keyboard. Its text reader answers
-    only with the characters from the space to `~`, so no step can look for
-    lettering outside them. How long one look at the screen takes was not
-    measured.
-15. **Not proven on Linux.**
+5. **The host is never told the notes changed.** VST3 has no "state is dirty"
+   signal — the usual trick is a hidden parameter bumped on every edit. Without
+   one a DAW still saves the notes, but may not mark the project modified.
+6. **Script coverage depends on a list of font family names.** The names are
+   resolved against the running machine, but a system whose fonts are not in
+   the list gets no glyphs for that script. The platform per-character fallback
+   APIs (`IDWriteFontFallback::MapCharacters`, `CTFontCreateForString`) would
+   remove the list entirely.
+7. **Linux is one machine.** The plugin, the host and every test have run on
+   one Linux desktop: x86_64, GNOME on Wayland with the windows on XWayland,
+   one monitor at a scale of 1. CI builds and tests Windows and macOS only.
+   The plugin has not been loaded in a DAW on Linux.
+8. **No drop target for files on Linux.** A picture pasted with Ctrl+V goes
+   into the note there, and a file dropped on the window does not: `drop.rs`
+   has a target for Windows and one for macOS.
+9. **The Linux UI tests are written for that desktop.** The driver knows
+   GNOME's file dialog (its `Save`, `Replace` and `Select` buttons, and that
+   its path field takes only places that exist), finds a window's resize
+   grip by the cursor GNOME shows over it, and needs the desktop portal to
+   allow it the screen, the pointer and the keyboard. Its text reader answers
+   only with the characters from the space to `~`, so no step can look for
+   lettering outside them. How long one look at the screen takes was not
+   measured.
+10. **Not proven on Linux.**
     - Whether the plugin's colours are what they are on the other platforms.
       On that machine its window can only be made without an sRGB framebuffer,
       and the two were not compared.

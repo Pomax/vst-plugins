@@ -1542,3 +1542,258 @@ Done when: none of those outputs has a line with `warning` in it, and
 Not shown by T10: that Windows and macOS build without warnings. Neither can
 be built here. `take` is still compiled there, by the same line of `cfg` the
 modules that call it are under.
+
+### T11. The documents say what is so
+
+The user, asked whether the four passages T9 left should be brought up to
+date: "yes of course the docs need to fucking reflect reality".
+
+- [x] T11.1 The four passages of T9.
+- [x] T11.2 Each of the three documents is read through against the
+      repository: every statement about a file, a command, a test or what
+      the code does is checked against the file, the script, the test or the
+      code. What the repository shows to be untrue is corrected. What cannot
+      be checked on this machine (a DAW, a Mac, a Windows machine, a release
+      on GitHub) is left as it stands and listed here.
+- [x] T11.3 Each change is listed here with what it was checked against.
+
+Done when: the three documents are read back and every corrected statement
+has what it was checked against beside it in this list.
+
+`docs/markdown-notes/DEVELOPERS.md`, what was corrected and against what:
+
+| Was | Is | Checked against |
+|---|---|---|
+| the scenario runner goes through the mini host | through the loader | the runner's `Cargo.toml` depends on `vst3-loader` |
+| `src/tools` holds screenshot helpers | it holds the UI tests' step files | the directory: `uitests/` and a sample note |
+| a successful build deletes `target/` | build output is in `.cache/` and stays | `.cargo/config.toml`, `bundle` and `remove_build_dir` in xtask |
+| the test task deletes `target/`, `--keep-target` | no such thing; it also runs the pixel tests, and `--full` the UI tests | `test` in xtask |
+| `test.bat` and `./test.sh` open the plugin in the host | `run.bat` and `./run.sh` do | the four scripts |
+| `-Exe ../binaries/mini-host.exe` beside `-File tools/capture-window.ps1` | both from the repository's root | where the script is, and its own default for `-Exe`. Not run: no Windows here |
+| four UI tests | five, and the host's suite of three | both `order.txt` files, `suites` in `uitest.rs` |
+| "something that can drawn" | "be read" | the `window:` step waits until something is read |
+| `cargo run --bin vst3-host` | `--bin mini-host`, the path quoted | the host's `Cargo.toml` has one binary |
+| CI runs "the full suite" | `cargo run -p xtask -- test`, which is not the UI tests | `markdown-notes-ci.yml` |
+| the build workflow ignores Markdown, `docs/`, `.github/`, `LICENSE`, `.gitignore` | it runs for changes under `markdown-notes/` or `tools/mini-host/` other than markdown | the `paths` of `markdown-notes-build.yml` |
+| the paste, as on Windows and macOS only | the Linux case beside it, and that Linux has no drop target | T6.16, `drop.rs` |
+| rows 100 apart, nodes widened to 72 | `rankSpacing` 85, state nodes redrawn at 120 | `diagram.rs`, `node_widths.rs` |
+| right-click closes a section | right-click opens a menu with **Close section** | `gui.rs` |
+| state holds the window size, the caret and the file path | it holds the document, the name, the colours, the view mode and the theme | `PluginState` and its tests in `state.rs` |
+| bold is a colour and not a typeface | bold is the system's bold face, and a colour | `fonts.rs`, `bold_family` |
+
+`docs/mini-host/DEVELOPERS.md`: the Layout table, the inspector, "The two
+binaries", how the window's place is remembered and where the library's
+guide is all described a host that held the loader and drew its window with
+baseview. Checked against the host's `Cargo.toml`, `main.rs`, `app/` and
+`presets.rs`, the loader's `Cargo.toml` and `run.sh`, and
+`docs/vst3-loader/USING.md`. Added, because they are there and were not
+said: the `--preset`, `--state` and `--geometry` arguments, the strip and
+its presets, and the two window tests.
+
+`docs/markdown-notes/PROJECT_DEFINITION.md`:
+
+| Was | Is | Checked against |
+|---|---|---|
+| A5: state verified, host to window resize unverified | resizable verified; the size is not in state | `host-resize`; `state.rs`; the two scenarios named in the row |
+| A6, A7, A8: dialog untested | verified | `sections-and-files` |
+| W7: `build.sh` has never run | verified | on Linux, run here. On macOS: the user's word that the macOS build and tests work, which this plan starts from |
+| gap 1: no Mac has ever launched it | it runs in the host on a Mac | `macos.rs`, `tools/window-shot`, and the frames of `host-resize-target.mp4`, which are of a Mac |
+| gap 2: the host attaches no window | it does; no `IComponentHandler`, no `IPlugFrame`, no proxy | the loader's and the host's source |
+| gap 3, resize unverified; gap 5, dialogs untested; gap 6, keyboard untested; gap 9, no mouse selection | taken out: the UI tests do each | `host-resize`, `sections-and-files`, `typing-goes-into-the-document`, the `dragtext:` steps of `editing-the-document` |
+| gap 4: "we keep the frame pointer" | `setFrame` keeps nothing | `lib.rs` |
+| gap 8: bold is a colour | taken out | `fonts.rs` |
+
+The gaps are numbered again, 1 to 10. No criterion is added or reworded.
+
+Left as they stand, because nothing on this machine can check them:
+
+- A1 and the Open problem: what a DAW does with the plugin, on any platform.
+- A13: that the macOS font family names have never been resolved on a Mac.
+- W8: that publishing a release has not run.
+- `DEVELOPERS.md`: that the macOS drop target has not been run, and that the
+  Windows one was proven by hand.
+- The sizes the fork saved (4.7 MB of 14.7 MB) and what was tried with
+  `mermaid-rs-renderer`.
+
+Not checked statement by statement: what the Opening, Pictures, Sections,
+Mermaid and Colours sections of `DEVELOPERS.md` say the code does, beyond
+the corrections above. Every file, function and constant they name is in the
+code, and the keys in the Keys table are the ones `handle_key` takes.
+
+Seen, not documents, and not changed: the note on bold at the top of
+`gui.rs` and the comment in `markdown-notes/.cargo/config.toml` about
+deleting `target/debug` say what these documents used to say.
+
+### T12. The two comments
+
+The user, asked whether those two comments should be corrected too: "yes".
+
+- [x] T12.1 `gui.rs`: the note on bold at the top says bold is drawn as a
+      stronger colour. `span_format` draws it in the machine's bold face
+      (`fonts::bold_family`) and in the scheme's bold text colour. The note
+      is made to say that. Inside `span_format` the same old sentence stands
+      above the comment that replaced it; it is taken out.
+- [x] T12.2 `markdown-notes/.cargo/config.toml`: the comment says xtask is
+      built in release so that it is not running out of `target/debug` when
+      it deletes `target/debug`. Nothing deletes it: `bundle` leaves the
+      cache alone. The sentence is taken out. No reason for the release
+      build is put in its place, because none is known. The first line calls
+      what lands in `binaries/` a single binary; on macOS and Linux it is a
+      bundle, and the line is made to say the plugin.
+- [x] T12.3 The same two facts, wherever else a comment in the same crates
+      has them: `xtask/src/main.rs` says the tool runs out of `target/`
+      (line 502) and speaks of a `.dll` in `target/debug` (line 5). Build
+      output is in `.cache/`. Both are made to say so.
+
+Comments only. Nothing that compiles changes. Done when: the plugin and
+xtask still build with no line of `warning`, and the comments are read back.
+
+Done. Read back against the copies from before: five comments in three
+files, and no line of code. The plugin builds, its 54 unit tests and xtask's
+31 pass, and `cargo doc` takes the note's new link, with no line of `warning`
+in any of it. `gui.rs` and `xtask/src/main.rs` are files Windows and macOS
+build too; only comments in them changed.
+
+Seen and not changed: `tools/mini-host/.cargo/config.toml` and
+`tools/vst3-loader/.cargo/config.toml` are copies of the markdown-notes one
+as it was. Their comments have the same sentence about `target/debug`, and
+speak of building "the plugin" with an xtask, and each has `dist` and
+`dist-debug` aliases that run `-p xtask`. Neither project has an xtask.
+
+- [x] T12.4 The user, asked whether those two files should be corrected,
+      the comments only or the aliases as well: "Yes, fix that". Both are
+      done: the comment in each is made to say what is so there, that build
+      output goes to `.cache/` and stays, and the `[alias]` table is taken
+      out. Nothing uses the aliases: each project's `build.sh` and
+      `build.bat` run `cargo build --release`, and no script, workflow or
+      document calls `cargo dist` outside markdown-notes. Done when: each
+      project still builds and its tests pass, with no line of `warning`.
+      Done: both build, the host's 21 tests and the loader's 27 pass, and
+      there is no line of `warning` in either's output.
+
+### T13. The workflows build and test Linux too
+
+The user: "we need to update all the workflows to work for windows, macos,
+and ubuntu linux. Not just windows and macos. Make this a T11 and write out
+the subtasks."
+
+It is T13 here and not T11: this file already had a T11 (the documents) and
+a T12 (the comments) when that was said. Section 1 lists CI and releases as
+not part of this plan. This task takes that back.
+
+What there is: six workflows in `.github/workflows`.
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `markdown-notes-ci.yml` | pull requests | `cargo run -p xtask -- test` on `windows-latest` and `macos-14`; a zizmor audit of every workflow |
+| `mini-host-ci.yml` | pull requests | `cargo test` on the same two |
+| `vst3-loader-ci.yml` | pull requests | `cargo test` on the same two |
+| `markdown-notes-build.yml` | pushes to `main`, when the version changed | builds the bundle on Windows and macOS, zips each, publishes a release |
+| `mini-host-build.yml` | pushes to `main` | `build.bat` and `build.sh`, zips each, publishes a numbered release |
+| `vst3-loader-build.yml` | pushes to `main` | the same for the loader |
+
+find-text has no workflow, and none is added. The UI tests are not run by
+any workflow on any platform, and that stays so: they need a desktop.
+
+What a Linux runner needs installed, and how each was found:
+
+| Package | For | Found from |
+|---|---|---|
+| `libfontconfig-dev`, `libfreetype-dev` | building the plugin | `yeslogic-fontconfig-sys` and `freetype-sys` are in the plugin's build (`cargo tree`), and their build scripts ask pkg-config. `dpkg -S` names the packages that hold the two `.pc` files |
+| `libwayland-dev` | building the plugin, xtask and the host | `wayland-sys` is in both builds, through `rfd` and `ashpd`, and its build script stops if pkg-config has no `wayland-client` |
+| `pkg-config` | all of the above | the build scripts run it |
+| `mesa-vulkan-drivers` | the pixel tests | they draw through Vulkan (T3.12), and every Vulkan driver on this machine comes from that package. Which of them the tests use here was not looked at. A runner has no graphics card, so there it would be the package's software one |
+| `fonts-noto-core`, `fonts-dejavu-mono` | the pixel tests | `fc-match` here gives Noto Sans for sans-serif and DejaVu Sans Mono for monospace, and T3 set the Linux allowances of four tests with those faces |
+| `ffmpeg` | xtask's test `two_frames_a_second_come_out_of_a_film` | it runs ffmpeg (T7.3), and `cargo test --workspace` runs it |
+
+The loader needs none of them: none of those crates is in its build.
+
+What cannot be shown on this machine: a workflow runs on GitHub and nowhere
+else, and nothing here pushes. zizmor is not installed, and installing it
+writes outside the repository. So each item below is checked two ways: the
+commands its Linux job runs are run here, in the same words, and the file is
+read back. The runs themselves are T13.9, and they are the user's to start.
+
+Unknowns, each settled only by a run on GitHub:
+
+| # | Unknown | If it does not hold |
+|---|---|---|
+| U19 | `ubuntu-latest` has `zip`, a C compiler and `sudo apt-get` without asking | add what is missing to the install step |
+| U20 | wgpu takes the software Vulkan device on the runner, and the pixel tests run on it | stop and report it with the run's log |
+| U21 | the pixel tests pass with the runner's versions of the two faces and of fontconfig. Their Linux allowances were set on Ubuntu 26.04 | each test that fails is an item of its own, with the picture it saves |
+| U22 | the tests without a desktop need no display. Checked here by running them with `DISPLAY` and `WAYLAND_DISPLAY` taken out of the environment, which is not the same as a machine that has no display server | stop and report it |
+
+Choices made here, each of which can be struck:
+
+- The runner is `ubuntu-latest`, on x86_64. What it builds needs that
+  release's C library or a newer one, so it will not load on an older Linux.
+- The Linux results are zipped with `zip`, as the other two are zips, and
+  named `markdown-notes-linux-x86_64.zip`, `mini-host-linux-x86_64.zip` and
+  `vst3-loader-linux-x86_64.zip`.
+- Each release waits for the Linux job as it waits for the other two, so a
+  Linux build that fails holds back the release for all three.
+- The faces are installed by name, so that the tests do not depend on what
+  the runner happens to have.
+
+Not changed: what starts each workflow (`on:` and its `paths`), the Windows
+and macOS jobs and steps, and the audit job.
+
+- [ ] T13.1 `markdown-notes-ci.yml`. `ubuntu-latest` joins the matrix. A step
+      before the tests, for Linux only (`if: runner.os == 'Linux'`), installs
+      all eight packages of the table with `sudo apt-get`. Checked here:
+      `cargo run -p xtask -- test`, run in `markdown-notes` with `DISPLAY`
+      and `WAYLAND_DISPLAY` taken out of the environment, passes with no
+      line of `warning`.
+- [ ] T13.2 `mini-host-ci.yml`. `ubuntu-latest` joins the matrix, and a
+      Linux-only step installs `libwayland-dev` and `pkg-config`. Checked
+      here: `cargo test` in `tools/mini-host`, without a display, passes.
+- [ ] T13.3 `vst3-loader-ci.yml`. `ubuntu-latest` joins the matrix. Nothing
+      is installed. Checked here: `cargo test` in `tools/vst3-loader`,
+      without a display, passes.
+- [ ] T13.4 `markdown-notes-build.yml`. A `linux` job beside `windows` and
+      `macos`, with the same `needs` and `if`: it installs
+      `libfontconfig-dev`, `libfreetype-dev`, `libwayland-dev` and
+      `pkg-config`, runs `cargo run -p xtask -- bundle --release`, which
+      loads the bundle it built before it calls it done, zips
+      `Markdown Notes.vst3` from inside `../binaries` so that the archive
+      holds the bundle's folder, and uploads it. `release` needs `linux` too
+      and lists the third zip. Checked here: the build and the zip commands,
+      run in the job's words with the zip going to `.cache/`, and
+      `unzip -l` on it showing the bundle's folder with the `.so` and
+      `moduleinfo.json` in it.
+- [ ] T13.5 `mini-host-build.yml`. A `linux` job: it installs
+      `libwayland-dev` and `pkg-config`, runs `./build.sh`, zips
+      `../../binaries/mini-host` and uploads it. `release` needs it and lists
+      the zip. Checked here as T13.4, and that the file in the zip is still
+      marked as a program.
+- [ ] T13.6 `vst3-loader-build.yml`. The same job with nothing installed.
+      Checked here as T13.5.
+- [ ] T13.7 The audit. `markdown-notes-ci.yml` runs zizmor over every
+      workflow, at its strictest. So that it still passes, every new job and
+      step is written as the ones beside it are: the same actions at the same
+      pinned commits, `persist-credentials: false` on every checkout,
+      `permissions` on every job, and nothing from `${{ }}` inside a `run:`.
+      Checked here by reading each new job against the one beside it. Not
+      run here: zizmor.
+- [ ] T13.8 The documents, once the workflows are changed.
+      `docs/markdown-notes/DEVELOPERS.md`, the CI section: the three
+      runners, the Linux packages, the third zip.
+      `docs/markdown-notes/PROJECT_DEFINITION.md`: the A1 row, the W8 row
+      and gap 7, which say CI does not build Linux. They are made to say
+      what the workflows do, and to say it is unverified until a run has
+      passed on GitHub. W8's criterion names Windows and macOS; it is the
+      user's and is not reworded.
+- [ ] T13.9 The runs, which are the user's to start: a pull request for the
+      three CI workflows, and a run by hand (`workflow_dispatch`) or a push
+      to `main` for the three build workflows. What each run shows is
+      written here. A failure is an item of its own and is fixed, and U19 to
+      U22 are settled by what the runs show.
+
+Done when: all six workflows have their Linux part, every check above that
+can be made on this machine has been made, and the documents say what the
+workflows do. Whether they pass on GitHub is T13.9, and until those runs
+have happened it is not shown.
+
+Seen and left, because it is the user's: `markdown-notes/README.md` says
+there are only Windows and macOS releases "because Linux does not support
+VST3". A Linux zip in the release is at odds with that sentence.
