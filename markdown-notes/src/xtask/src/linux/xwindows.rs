@@ -113,6 +113,36 @@ impl Desktop {
         })
     }
 
+    /// A window's width and height.
+    fn size(&self, window: Window) -> Option<(u16, u16)> {
+        let geometry = self.conn.get_geometry(window).ok()?.reply().ok()?;
+        Some((geometry.width, geometry.height))
+    }
+
+    /// The sizes of the host's window, of the window inside it that starts
+    /// `strip` down, which is the one the host puts the plugin's editor in,
+    /// and of the biggest window inside that, which is the editor.
+    pub fn sizes_inside(&self, host: Window, strip: i32) -> Option<[(u16, u16); 3]> {
+        let inside = self.conn.query_tree(host).ok()?.reply().ok()?.children;
+        let socket = inside.into_iter().find(|child| {
+            self.conn
+                .get_geometry(*child)
+                .ok()
+                .and_then(|asked| asked.reply().ok())
+                .is_some_and(|geometry| geometry.y as i32 == strip)
+        })?;
+        let editor = self
+            .conn
+            .query_tree(socket)
+            .ok()?
+            .reply()
+            .ok()?
+            .children
+            .into_iter()
+            .max_by_key(|child| self.size(*child).map(|(w, h)| w as u32 * h as u32))?;
+        Some([self.size(host)?, self.size(socket)?, self.size(editor)?])
+    }
+
     /// How much the window manager's frame adds on each side of a window:
     /// left, right, top, bottom.
     pub fn frame_extents(&self, window: Window) -> [i32; 4] {

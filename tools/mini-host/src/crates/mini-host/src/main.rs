@@ -326,6 +326,14 @@ impl Host {
             height - (y + editor_height),
         ));
         let _ = std::fs::write(path, text);
+        // On Linux the plugin sizes its own window, on a thread of its own,
+        // after the window it is in has changed size. A frame drawn before
+        // it has done so reports the size it had, and the host draws no
+        // other until something happens to it. So it asks for one.
+        #[cfg(target_os = "linux")]
+        if width != x + editor_width || height != y + editor_height {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 }
 

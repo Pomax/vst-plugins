@@ -1053,6 +1053,19 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let to = path_of(value);
             std::fs::write(&to, &text).map_err(|e| format!("writing {}: {e}", to.display()))?;
             println!("geometry: {}", text.replace('\n', " ").trim_end());
+            // A report that does not have the editor filling the window is
+            // either true or old: the host writes it when it draws. What
+            // the X server has says which.
+            if !filled(&text) {
+                match run.desktop.sizes_inside(run.host, STRIP) {
+                    Some([host, socket, editor]) => println!(
+                        "geometry: the X server has the host at {}x{}, the editor's socket at \
+                         {}x{} and the editor at {}x{}",
+                        host.0, host.1, socket.0, socket.1, editor.0, editor.1
+                    ),
+                    None => println!("geometry: the X server has no editor inside the host"),
+                }
+            }
             Ok(())
         }
         "remove" => {

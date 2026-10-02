@@ -541,6 +541,7 @@ there. None of it can be run on this machine.
 | `xtask/src/main.rs` | `inner_binary_name`, `write_binary`, the `frames` task, module lines | CI: `cargo run -p xtask -- test` on Windows and macOS compiles it and runs its tests |
 | `xtask/src/uitest.rs`, `xtask/Cargo.toml` | a Linux `drive` and Linux-only dependencies | the same CI job compiles them out |
 | `mini-host` `main.rs`, `place.rs`, `Cargo.toml` | an `Xlib` arm in a match, Linux-only code and a Linux-only dependency, eframe's `wayland` feature dropped | CI: `cargo test` in `tools/mini-host` on Windows and macOS |
+| `mini-host` `main.rs` (T8.4) | Linux-only lines at the end of `report_geometry` that ask for another frame while the report does not have the editor filling the window | the same CI job compiles them out |
 | `tools/find-text` `main.rs`, `Cargo.toml` | cfg attributes and target tables | nothing: no CI job builds find-text |
 | `markdown-notes-plugin/src/fonts.rs` (T3.4, T3.5) | the two loaders call `name_of(font)`, which on Windows and macOS is `font.full_name()`, the call they made before | the same CI job, which runs the plugin's tests |
 | `markdown-notes-plugin/src/gui.rs` (T3.7) | the document's scroll area is built in two statements so that one Linux-only line can go between them. Windows and macOS make the calls they made before | the same CI job: the pixel tests draw through this code |
@@ -562,6 +563,12 @@ Each can be struck out.
   task has nothing of its own to show it works.
 - The tests in find-text (T2.4, T2.5, T2.7) and the driver's unit tests (T5).
   The existing find-text and drivers have none.
+- `the_editor_fills_the_window_after_its_size_went_back_and_forth` (T8.3)
+  and the driver's line of what the X server has when a `geometry:` report
+  does not have the editor filling the window (T8.3a). The first was written
+  to reproduce a failure and did not; it is the only test of the socket
+  following the host's window through changes of size. The second is what
+  told an old report from a window left behind.
 - The `frames` task of xtask (T7.3). Without it the frames of a film are
   taken out by a command typed once and thrown away, which the rules forbid.
 - Two checks in the driver (4.5): that the window about to get input is the
@@ -1372,9 +1379,107 @@ A bug found in T5, T6 or T7 gets a saved test that fails before its fix.
 
 ### T8. The whole run
 
-- [ ] T8.1 `./test.sh --full` from the root, once. Needs a yes.
+- [x] T8.1 `./test.sh --full` from the root, once. Needs a yes.
+      Run. It did not end with "all projects passed". Every test of the
+      three projects passed and seven of the eight UI tests passed. The
+      last, `host-resize`, failed: after the first drag the host is 880x600
+      and the plugin's window is 880x576, two pixels taller than the 574 the
+      host leaves it (`inset=0,26,0,-2`), and it was still so two seconds
+      later. After the second drag it was right. The same test passed alone
+      in T7.4.
+- [x] T8.2 A cause the sources allow, which T8.3a showed is not what
+      happened. The plugin's window is made
+      the size of the socket by baseview 0.3.4
+      (`platform/x11/event_loop.rs`, `handle_coalesced_resize_events`): on a
+      `ConfigureNotify` of its parent it resizes itself, but only when the
+      parent's new size differs from the size it has on record, and that
+      record is also written from the `ConfigureNotify` of its own earlier
+      resizes, which arrive later. If the socket goes to a size, away from
+      it and back before those have arrived, the record can say the window
+      already has the size it is asked to take, and it is left at the size
+      before.
+      The host's socket can go back and forth in a drag that only goes one
+      way, because two things size it (`place.rs`, T4): the thread of
+      `track_editor`, from each `ConfigureNotify` of the host's window in
+      turn, and `follow_resize`, from the host's frame, with the size the
+      host's window has at that moment. When the thread is behind, it puts
+      the socket back to an older size after `follow_resize` has put it at
+      a newer one.
+      Not shown: that this is what happened in the run. It is what the
+      sources allow and it gives the size that was seen, the one before the
+      last.
+- [x] T8.3 A test in mini-host that was meant to fail first, and does not:
+      `tests/editor_follows_a_window_resized_quickly.rs`, Linux only and
+      `#[ignore]`d like T4's since it opens the host's window. It starts the
+      host on the plugin, changes the size of the host's window back and
+      forth many times quickly as an X client, lets it settle, and reads the
+      host's report: the editor has to fill the window below the strip. No
+      pointer or keyboard is used.
+      Written, as `the_editor_fills_the_window_after_its_size_went_back_and_forth`.
+      It asks the X server for the sizes of the host's window, the socket
+      and the editor, and then reads the host's report, twelve rounds of
+      forty changes each. It passes with the code as it is: it does not
+      reproduce the failure, so T8.2's cause is not shown and T8.4 is not
+      made on the strength of it.
+      A second cause the sources allow: the report is old, and the window is
+      right. The host writes its report when it draws a frame, and it draws
+      when an event arrives. The plugin's window is resized by baseview on a
+      thread of its own, after the socket. If the host's last frame of a
+      drag comes before that, the report has the editor's size from one step
+      earlier and nothing makes the host write another.
+- [x] T8.3a To tell the two apart the next time it happens: when a
+      `geometry:` step of the Linux driver ends with a report that does not
+      have the editor filling the window, the driver asks the X server for
+      the sizes of the host's window, the socket and the editor and prints
+      them. Then `host-resize` is run alone until it fails again or has
+      passed ten times.
+      It failed on the first run, with the report at `editor=0,26,881x576`
+      and `inset=0,26,-1,-2`, and the driver's line: "the X server has the
+      host at 880x600, the editor's socket at 880x574 and the editor at
+      880x574". The windows are right and the report is old. It is the
+      second cause. T8.2's cause is not what happened, and its fix (T8.4 as
+      first written) is not made.
+- [x] T8.4 The fix, as first written and not made: one thing sizes the
+      socket, the thread, and `follow_resize` does nothing on Linux. T8.3a
+      showed the socket and the editor are right, so `place.rs` is left as
+      it is.
+      The fix that is made, in the host's `report_geometry` (`main.rs`), for
+      Linux only: when the report it has just written does not have the
+      editor reaching the window's right and bottom edges, the host asks for
+      another frame 50 milliseconds on, and so writes the report again,
+      until it does. On Windows and macOS the host sizes the plugin's window
+      itself inside the resize, so the frame that reports has the size
+      already.
+      The test that fails first is `host-resize`: it failed in the full run
+      and in the first run alone. No test fails every time before the fix:
+      which comes first, the host's last frame or the plugin's resize, is
+      not something a test decides. After the fix `host-resize` is run alone
+      ten times.
+      Made. `host-resize` passed ten times out of ten, where before it had
+      failed two runs out of three. T8.3's test still passes, and was seen
+      to fail against two breaks: the socket made two pixels too tall, and
+      the report a pixel out. The host's 21 tests and its two window tests
+      pass.
+- [x] T8.5 `host-resize` alone, then `./test.sh --full` from the root again.
+      Alone: ten out of ten (T8.4). The second full run ended with
+      "=== all projects passed ===": every test of the three projects, 36
+      scenarios, and 8 UI tests of 8.
 
 Done when: it ends with "all projects passed".
+
+Not shown by T8:
+
+- That `host-resize` cannot fail this way again. Before the fix it failed
+  two runs of three; after it, it passed eleven of eleven. No test fails
+  every time without the fix.
+- T8.2's cause. The sources allow it and no run has shown it: a plugin's
+  window left behind when the socket's size goes back and forth faster than
+  baseview hears of its own resizes. T8.3's test changes the window's size
+  back and forth forty times in a row, twelve times over, and the editor
+  followed every time.
+- find-text's tests are not part of `./test.sh`: the root script runs
+  mini-host, vst3-loader and markdown-notes. They were last run in T6.
+- Anything on Windows or macOS.
 
 ### T9. Documentation (M12)
 
