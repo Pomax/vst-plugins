@@ -1,6 +1,6 @@
 @echo off
 REM Open Markdown Notes in the mini host.
-pushd markdown-notes
+pushd "%~dp0..\markdown-notes"
 call ".\run.bat" %*
 set CODE=%ERRORLEVEL%
 popd

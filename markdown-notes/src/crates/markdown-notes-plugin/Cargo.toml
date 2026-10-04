@@ -46,6 +46,10 @@ resvg = { version = "0.48.1", default-features = false, features = ["text", "sys
 # under egui, so measuring with it adds nothing and shapes the same way the
 # editor does.
 harfrust = "0.12.0"
+# The operating system's own icons: a dialog's close button is the system's
+# close-window icon. svg-rasterize turns the SVG a Linux icon theme gives into
+# pixels, with the resvg named above.
+native-theme = { version = "0.6", features = ["system-icons", "svg-rasterize"] }
 
 # The editor's renderer, chosen per platform.
 #
@@ -141,5 +145,9 @@ required-features = ["snapshots"]
 
 [[test]]
 name = "pictures_in_notes"
+required-features = ["snapshots"]
+
+[[test]]
+name = "clickable_cursor"
 required-features = ["snapshots"]
 

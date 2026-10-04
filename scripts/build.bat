@@ -1,6 +1,7 @@
 @echo off
 REM Build every project. Stops at the first failure.
 setlocal
+cd /d "%~dp0.."
 
 for %%p in (tools\find-text tools\mini-host tools\vst3-loader markdown-notes) do (
     echo === %%p ===
