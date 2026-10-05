@@ -1307,6 +1307,10 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // picture to confirm or correct the position, the picture is
             // deleted, and the click goes where the label really is. A label
             // that is not in its region is a failure, not a blind click.
+            //
+            // `press:LABEL|X,Y|smallest` and `|largest` say which of two sizes
+            // of the same label is meant. Here only the region round X,Y is
+            // looked at, which holds one of them, so the word is read past.
             let (label, at) = value
                 .split_once('|')
                 .ok_or_else(|| format!("cannot read press: {value}"))?;
@@ -1314,6 +1318,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             if label.is_empty() {
                 return Err("press: needs a label".to_string());
             }
+            let at = at.split_once('|').map_or(at, |(at, _)| at);
             let (x, y) = pair(at, "press")?;
             let window = window_rect(run.pid, &run.title)?;
             let region = Rect {

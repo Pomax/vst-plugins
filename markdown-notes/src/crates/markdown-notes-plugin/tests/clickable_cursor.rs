@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use egui_kittest::kittest::{By, Queryable};
 use egui_kittest::Harness;
 use markdown_notes_core::{Editor, Theme};
-use markdown_notes_plugin::gui::CLOSE_DIALOG;
+use markdown_notes_plugin::gui::{CLOSE_DIALOG, FILE_MENU};
 
 /// Tall enough for the whole settings dialog.
 const SIZE: (f32, f32) = (900.0, 800.0);
@@ -78,13 +78,90 @@ fn open_settings(harness: &mut Harness<'static>) {
 #[test]
 fn the_pointer_points_at_the_toolbar_buttons() {
     let mut harness = open();
-    for label in ["Open…", "Save", "Save As…", "Markdown source", THEME] {
+    for label in [FILE_MENU, "Markdown source", THEME] {
         assert_eq!(
             cursor_over(&mut harness, label),
             egui::CursorIcon::PointingHand,
             "over {label}"
         );
     }
+}
+
+/// The button shows three dots in a row: something is drawn at its middle and
+/// to either side of it, with the button's face between them.
+#[test]
+fn the_file_menu_button_shows_three_dots() {
+    let mut harness = open();
+    let button = harness.get_by_label(FILE_MENU).rect();
+    cursor_at(&mut harness, out_of_the_way());
+    let image = harness.render().expect("rendering failed");
+    saved(&image, "file-menu-button");
+
+    let face = pixel(&image, button.center() + egui::vec2(0.0, 5.0));
+    for dot in [-4.0, 0.0, 4.0] {
+        assert_ne!(
+            pixel(&image, button.center() + egui::vec2(dot, 0.0)),
+            face,
+            "no dot {dot} from the middle"
+        );
+    }
+    for gap in [-2.0, 2.0] {
+        assert_eq!(
+            pixel(&image, button.center() + egui::vec2(gap, 0.0)),
+            face,
+            "the dots run together {gap} from the middle"
+        );
+    }
+}
+
+/// What the file menu holds, in the order it shows them.
+const FILE_OPTIONS: [&str; 3] = ["Open…", "Save", "Save As…"];
+
+fn open_the_file_menu(harness: &mut Harness<'static>) {
+    let button = harness.get_by_label(FILE_MENU).rect().center();
+    press(harness, button, egui::PointerButton::Primary);
+}
+
+/// Open, Save and Save As are in the menu behind one button, and not on the
+/// toolbar.
+#[test]
+fn open_save_and_save_as_are_in_the_file_menu() {
+    let mut harness = open();
+    for option in FILE_OPTIONS {
+        assert!(
+            harness.query_by_label(option).is_none(),
+            "{option} is showing before the menu is opened"
+        );
+    }
+
+    open_the_file_menu(&mut harness);
+    saved(&harness.render().expect("rendering failed"), "file-menu");
+    for option in FILE_OPTIONS {
+        assert_eq!(
+            cursor_over(&mut harness, option),
+            egui::CursorIcon::PointingHand,
+            "over {option}"
+        );
+    }
+}
+
+/// Every option is as wide as the menu, and they are stacked with nothing
+/// between them, so there is no part of the menu that is not an option.
+#[test]
+fn the_file_menus_options_fill_it() {
+    let mut harness = open();
+    open_the_file_menu(&mut harness);
+
+    let options = FILE_OPTIONS.map(|option| harness.get_by_label(option).rect());
+    for (name, option) in FILE_OPTIONS.iter().zip(options) {
+        assert_eq!(
+            (option.left(), option.right()),
+            (options[0].left(), options[0].right()),
+            "{name} is not as wide as the first option"
+        );
+    }
+    assert_eq!(options[0].bottom(), options[1].top(), "a gap under Open");
+    assert_eq!(options[1].bottom(), options[2].top(), "a gap under Save");
 }
 
 #[test]

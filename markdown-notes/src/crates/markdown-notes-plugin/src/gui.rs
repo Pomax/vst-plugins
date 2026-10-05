@@ -901,35 +901,54 @@ fn toolbar_buttons(
 
     ui.separator();
 
-    if ui
-        .button("Save As…")
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::SaveAs);
-    }
-    let save = if unsaved {
-        egui::RichText::new("Save *").strong()
-    } else {
-        egui::RichText::new("Save")
-    };
-    let save_width = fixed_width(ui, &["Save", "Save *"]);
-    if ui
-        .add(egui::Button::new(save).min_size(save_width))
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::Save);
-    }
-    if ui
-        .button("Open…")
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::Open);
-    }
+    let file = file_menu_button(ui).on_hover_cursor(egui::CursorIcon::PointingHand);
+    menu(ui, egui::Popup::menu(&file), |ui| {
+        let save = if unsaved {
+            egui::RichText::new("Save *").strong()
+        } else {
+            egui::RichText::new("Save")
+        };
+        for (label, command) in [
+            (egui::RichText::new("Open…"), Command::Open),
+            (save, Command::Save),
+            (egui::RichText::new("Save As…"), Command::SaveAs),
+        ] {
+            if ui
+                .button(label)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                crate::files::perform_off_thread(&gui.editor, &gui.report, command);
+                ui.close();
+            }
+        }
+    });
 
     ui.separator();
+}
+
+/// What the button that opens the file menu (Open, Save, Save As) is called,
+/// to a screen reader. On screen it is three dots.
+pub const FILE_MENU: &str = "⋯";
+
+/// The button that opens the file menu: three dots in a frame like the other
+/// toolbar buttons'.
+///
+/// The dots are painted rather than typed: `⋯` is not in the interface font.
+fn file_menu_button(ui: &mut egui::Ui) -> egui::Response {
+    // A space for a label, so the button is as tall as its neighbours.
+    let response = ui.add(egui::Button::new(" ").min_size(egui::vec2(22.0, 0.0)));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, FILE_MENU)
+    });
+
+    let colour = ui.style().interact(&response).text_color();
+    let centre = response.rect.center();
+    for dot in [-1.0, 0.0, 1.0] {
+        ui.painter()
+            .circle_filled(centre + egui::vec2(dot * 4.0, 0.0), 1.0, colour);
+    }
+    response
 }
 
 /// A cog, painted and clickable. No frame, no label.
@@ -1335,7 +1354,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
                 gui.dragging = Some(index);
                 select = Some(index);
             }
-            context_menu(ui, &response, |ui| {
+            menu(ui, egui::Popup::context_menu(&response), |ui| {
                 if ui
                     .button("Delete section")
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1425,17 +1444,17 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
     }
 }
 
-/// A context menu whose options are each as wide as the menu and the whole of
-/// their row.
+/// Show `popup` as a menu whose options are each as wide as the menu and the
+/// whole of their row.
 ///
 /// The space a menu keeps round its contents is given to the options as
 /// padding instead, so each label sits where it would have and the highlight
 /// and the click reach the menu's edges, however many options there are.
-fn context_menu(ui: &egui::Ui, response: &egui::Response, options: impl FnOnce(&mut egui::Ui)) {
+fn menu(ui: &egui::Ui, popup: egui::Popup<'_>, options: impl FnOnce(&mut egui::Ui)) {
     let frame = egui::Frame::menu(ui.style());
     let margin = frame.inner_margin;
     let corners = frame.corner_radius;
-    egui::Popup::context_menu(response)
+    popup
         .frame(frame.inner_margin(egui::Margin::ZERO))
         .show(|ui| {
             let spacing = ui.spacing_mut();

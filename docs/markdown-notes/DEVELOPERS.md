@@ -264,6 +264,8 @@ binary came from, and nothing else writes it.
 | `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | Open / Save / Save As |
 | `Tab` / `Shift+Tab` | indent / outdent a list item |
 
+Open, Save and Save As are also in the menu behind the toolbar's three-dot button.
+
 Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
 `- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
 list item ends the list, numbered lists renumber themselves, and an opening
