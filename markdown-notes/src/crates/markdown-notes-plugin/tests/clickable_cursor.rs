@@ -44,8 +44,22 @@ fn cursor_at(harness: &mut Harness<'static>, at: egui::Pos2) -> egui::CursorIcon
     harness.output().platform_output.cursor_icon
 }
 
+/// The cursor asked for with the pointer resting on what is labelled `label`.
+///
+/// A dialog that has just opened can still be settling, and what is in it
+/// moves while it does. So the thing is looked for again after the pointer
+/// has been put on it, and the pointer follows it until it stays where it was
+/// found.
 fn cursor_over(harness: &mut Harness<'static>, label: &str) -> egui::CursorIcon {
-    let at = harness.get_by_label(label).rect().center();
+    let mut at = harness.get_by_label(label).rect().center();
+    for _ in 0..10 {
+        let cursor = cursor_at(harness, at);
+        let now = harness.get_by_label(label).rect().center();
+        if now == at {
+            return cursor;
+        }
+        at = now;
+    }
     cursor_at(harness, at)
 }
 
@@ -247,9 +261,14 @@ fn the_pointer_points_at_a_colour_swatch_in_settings() {
 fn the_pointer_points_at_reset_this_scheme_in_settings() {
     let mut harness = open();
     open_settings(&mut harness);
+    let cursor = cursor_over(&mut harness, "Reset this scheme");
+    let button = harness.get_by_label("Reset this scheme").rect();
     assert_eq!(
-        cursor_over(&mut harness, "Reset this scheme"),
-        egui::CursorIcon::PointingHand
+        cursor,
+        egui::CursorIcon::PointingHand,
+        "over the button at {button:?} in a window {} by {}",
+        SIZE.0,
+        SIZE.1
     );
 }
 
@@ -300,15 +319,21 @@ fn the_settings_close_button_closes_the_dialog() {
     );
 }
 
-/// The button shows the operating system's own close-window icon: the system
-/// has one to give, and something is drawn in the button.
+/// The button shows the operating system's own close-window icon, or a cross
+/// where the system has none to give: either way something is drawn in it.
+///
+/// Windows and macOS always have the icon. A Linux machine has it when an
+/// icon theme is installed, which a machine with no desktop need not have.
 #[test]
-fn the_settings_close_button_is_the_systems_own_icon() {
-    use native_theme::theme::{system_icon_set, IconRole};
-    assert!(
-        native_theme::icons::load_icon(IconRole::WindowClose, system_icon_set()).is_some(),
-        "the system gave no close-window icon"
-    );
+fn the_settings_close_button_shows_the_systems_icon_or_a_cross() {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        use native_theme::theme::{system_icon_set, IconRole};
+        assert!(
+            native_theme::icons::load_icon(IconRole::WindowClose, system_icon_set()).is_some(),
+            "the system gave no close-window icon"
+        );
+    }
 
     let (mut harness, close) = settings();
     cursor_at(&mut harness, out_of_the_way());

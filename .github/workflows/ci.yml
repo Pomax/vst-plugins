@@ -1,25 +1,17 @@
-name: Markdown Notes CI
+name: CI
 
 on:
   pull_request:
-    paths:
-      - "markdown-notes/**"
-      - "tools/mini-host/**"
-      - ".github/workflows/markdown-notes-ci.yml"
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: markdown-notes-ci-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-
-defaults:
-  run:
-    working-directory: markdown-notes
 
 jobs:
   test:
@@ -50,21 +42,11 @@ jobs:
             pkg-config libfontconfig-dev libfreetype-dev libwayland-dev \
             mesa-vulkan-drivers fonts-noto-core fonts-dejavu-mono ffmpeg
 
-      - name: Unit tests, scenarios and rendering tests
-        run: cargo run -p xtask -- test
+      - name: Every project's tests
+        if: runner.os != 'Windows'
+        run: sh scripts/test.sh
 
-  zizmor:
-    name: Workflow audit
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: .
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Audit workflows
-        run: pipx run zizmor --offline --persona=pedantic --min-severity=low .github/workflows
+      - name: Every project's tests
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\test.bat
