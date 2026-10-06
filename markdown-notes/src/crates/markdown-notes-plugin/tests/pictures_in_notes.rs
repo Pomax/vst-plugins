@@ -150,6 +150,22 @@ impl Window {
 }
 
 #[test]
+fn the_pointer_points_at_the_images_tab() {
+    let mut window = open("# Notes\n\nbefore");
+    window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
+    window.drop_file(picture_file("pointer-on-the-tab", "cat.png"));
+
+    let tab = window.images_tab().expect("there is no images tab after a picture went in");
+    window.harness.input_mut().events.push(egui::Event::PointerMoved(tab.center()));
+    window.step();
+
+    assert_eq!(
+        window.harness.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+}
+
+#[test]
 fn a_dropped_file_goes_in_at_the_caret_on_a_line_of_its_own() {
     let mut window = open("# Notes\n\nbefore");
     window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());

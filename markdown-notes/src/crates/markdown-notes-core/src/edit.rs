@@ -474,9 +474,9 @@ impl Editor {
         self.active
     }
 
-    /// Close section `index`. The last remaining section is emptied rather than
+    /// Delete section `index`. The last remaining section is emptied rather than
     /// removed, because there is always a buffer to type into.
-    pub fn close_section(&mut self, index: usize) {
+    pub fn delete_section(&mut self, index: usize) {
         if index >= self.sections.len() {
             return;
         }
@@ -1918,7 +1918,7 @@ mod section_tests {
     }
 
     #[test]
-    fn closing_a_section_keeps_the_neighbour_active() {
+    fn deleting_a_section_keeps_the_neighbour_active() {
         let mut e = Editor::with_text("# One");
         e.new_section();
         e.set_text("# Two");
@@ -1927,7 +1927,7 @@ mod section_tests {
         assert_eq!(e.section_count(), 3);
 
         e.set_active_section(1);
-        e.close_section(1);
+        e.delete_section(1);
         assert_eq!(e.section_count(), 2);
         assert_eq!(e.section_text(0), "# One");
         assert_eq!(e.section_text(1), "# Three");
@@ -1935,9 +1935,9 @@ mod section_tests {
     }
 
     #[test]
-    fn closing_the_last_section_empties_it_instead_of_removing_it() {
+    fn deleting_the_last_section_empties_it_instead_of_removing_it() {
         let mut e = Editor::with_text("# Only");
-        e.close_section(0);
+        e.delete_section(0);
         assert_eq!(e.section_count(), 1);
         assert_eq!(e.text(), sections::NEW_SECTION);
     }

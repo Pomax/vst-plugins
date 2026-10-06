@@ -771,6 +771,7 @@ const RENDERING_TESTS: &[&str] = &[
     "theme_rendering",
     "caret_in_view",
     "caret_rendering",
+    "clickable_cursor",
     "clicking_the_document",
     "block_spacing",
     "mermaid_blocks",

@@ -39,7 +39,7 @@ These mandatory rules describe actions that MUST BE FOLLOWED AT EVERY STEP BY TH
 - Cite the exact rule the judge rejects work over, if it rejects work
 - Call the judge "the judge"
 - Say "my action was disallowed by the judge" when your action was disallowed by the judge.
-- Tell the judge to do its job and retry, once, if the judge incorrectly denies something.
+- Tell the judge to do its job and retry, once, if the judge incorrectly denies something. This may only be done after citing which rule the judge used as justification.
 - Explain under which rule the judge disallowed a disallowed action
 - Answer the user's question, then stop.
 - Ask a question and wait for the user to answer it, when anything is unclear.

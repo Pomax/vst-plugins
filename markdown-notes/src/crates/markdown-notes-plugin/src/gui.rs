@@ -185,6 +185,9 @@ struct Gui {
     /// Pictures dropped on the window and not yet put into the note. The drop
     /// arrives outside the frame, so it is queued for the next one.
     incoming: Incoming,
+    /// The operating system's close-window icon, asked for once. The inner
+    /// `None` is a system that has none to give.
+    close_icon: Option<Option<egui::TextureHandle>>,
 }
 
 /// Pictures on their way into the note, shared with whatever receives drops.
@@ -245,6 +248,7 @@ impl Gui {
             keyboard: KeyboardReport::default(),
             album: crate::pictures::Album::default(),
             incoming: Incoming::default(),
+            close_icon: None,
         }
     }
 
@@ -836,7 +840,11 @@ fn toolbar_buttons(
     theme: Theme,
     unsaved: bool,
 ) {
-    if cog_button(ui, gui).on_hover_text("Settings").clicked() {
+    if cog_button(ui, gui)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Settings")
+        .clicked()
+    {
         gui.settings_open = !gui.settings_open;
     }
 
@@ -862,6 +870,7 @@ fn toolbar_buttons(
         );
         if ui
             .add(egui::Button::new(theme_label).min_size(theme_width))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Ctrl+T — cycles auto → light → dark")
             .clicked()
         {
@@ -880,6 +889,7 @@ fn toolbar_buttons(
                     .min_size(mode_width)
                     .selected(mode == ViewMode::Raw),
             )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Ctrl+/")
             .clicked()
         {
@@ -891,23 +901,54 @@ fn toolbar_buttons(
 
     ui.separator();
 
-    if ui.button("Save As…").clicked() {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::SaveAs);
-    }
-    let save = if unsaved {
-        egui::RichText::new("Save *").strong()
-    } else {
-        egui::RichText::new("Save")
-    };
-    let save_width = fixed_width(ui, &["Save", "Save *"]);
-    if ui.add(egui::Button::new(save).min_size(save_width)).clicked() {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::Save);
-    }
-    if ui.button("Open…").clicked() {
-        crate::files::perform_off_thread(&gui.editor, &gui.report, Command::Open);
-    }
+    let file = file_menu_button(ui).on_hover_cursor(egui::CursorIcon::PointingHand);
+    menu(ui, egui::Popup::menu(&file), |ui| {
+        let save = if unsaved {
+            egui::RichText::new("Save *").strong()
+        } else {
+            egui::RichText::new("Save")
+        };
+        for (label, command) in [
+            (egui::RichText::new("Open…"), Command::Open),
+            (save, Command::Save),
+            (egui::RichText::new("Save As…"), Command::SaveAs),
+        ] {
+            if ui
+                .button(label)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                crate::files::perform_off_thread(&gui.editor, &gui.report, command);
+                ui.close();
+            }
+        }
+    });
 
     ui.separator();
+}
+
+/// What the button that opens the file menu (Open, Save, Save As) is called,
+/// to a screen reader. On screen it is three dots.
+pub const FILE_MENU: &str = "⋯";
+
+/// The button that opens the file menu: three dots in a frame like the other
+/// toolbar buttons'.
+///
+/// The dots are painted rather than typed: `⋯` is not in the interface font.
+fn file_menu_button(ui: &mut egui::Ui) -> egui::Response {
+    // A space for a label, so the button is as tall as its neighbours.
+    let response = ui.add(egui::Button::new(" ").min_size(egui::vec2(22.0, 0.0)));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, FILE_MENU)
+    });
+
+    let colour = ui.style().interact(&response).text_color();
+    let centre = response.rect.center();
+    for dot in [-1.0, 0.0, 1.0] {
+        ui.painter()
+            .circle_filled(centre + egui::vec2(dot * 4.0, 0.0), 1.0, colour);
+    }
+    response
 }
 
 /// A cog, painted and clickable. No frame, no label.
@@ -1134,7 +1175,7 @@ fn title_field(ui: &mut egui::Ui, gui: &mut Gui) {
 /// The strip of sections: one button per section of the document.
 ///
 /// The sections are the same document seen in parts, so there is no unsaved
-/// one: closing a section removes it from what gets saved.
+/// one: deleting a section removes it from what gets saved.
 
 /// Which section a drag would land on, given where the pointer is.
 fn landing(rects: &[egui::Rect], x: f32) -> usize {
@@ -1263,7 +1304,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
     let section_width = section_size.x;
 
     let mut select: Option<usize> = None;
-    let mut close: Option<usize> = None;
+    let mut delete: Option<usize> = None;
     let mut added = false;
     let mut view_images = false;
     let mut drop_at: Option<(usize, usize)> = None;
@@ -1313,20 +1354,25 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
                 gui.dragging = Some(index);
                 select = Some(index);
             }
-            // Middle click closes, the way it does in a browser.
-            if response.middle_clicked() {
-                close = Some(index);
-            }
-            response.context_menu(|ui| {
-                if ui.button("Close section").clicked() {
-                    close = Some(index);
+            menu(ui, egui::Popup::context_menu(&response), |ui| {
+                if ui
+                    .button("Delete section")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    delete = Some(index);
                     ui.close();
                 }
             });
         }
 
         ui.set_opacity(1.0);
-        if ui.button("+").on_hover_text("New section").clicked() {
+        if ui
+            .button("+")
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("New section")
+            .clicked()
+        {
             if let Ok(mut e) = gui.editor.lock() {
                 e.new_section();
             }
@@ -1335,7 +1381,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
 
         // The images tab is the note's pictures, and it is always last: it
         // saves as the bottom of the document. It is read, not typed into,
-        // and it cannot be dragged, closed or moved past.
+        // and it cannot be dragged, deleted or moved past.
         if let Some(in_front) = images {
             ui.add_space(8.0);
             let response = ui
@@ -1344,6 +1390,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
                         .selected(in_front)
                         .min_size(egui::Vec2::new(section_width, 0.0)),
                 )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text("The pictures in this note, as they are saved");
             if response.clicked() {
                 view_images = true;
@@ -1378,7 +1425,7 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
     // The strip is part of the document, so touching it takes the keyboard
     // back from whatever field had it. Without this, adding a section after
     // renaming the note leaves the new section unable to receive anything.
-    let touched = drop_at.is_some() || select.is_some() || close.is_some() || added || view_images;
+    let touched = drop_at.is_some() || select.is_some() || delete.is_some() || added || view_images;
     if touched {
         gui.document_focused = true;
     }
@@ -1391,10 +1438,34 @@ fn sections(ui: &mut egui::Ui, gui: &mut Gui) {
         } else if view_images {
             e.view_images();
         }
-        if let Some(index) = close {
-            e.close_section(index);
+        if let Some(index) = delete {
+            e.delete_section(index);
         }
     }
+}
+
+/// Show `popup` as a menu whose options are each as wide as the menu and the
+/// whole of their row.
+///
+/// The space a menu keeps round its contents is given to the options as
+/// padding instead, so each label sits where it would have and the highlight
+/// and the click reach the menu's edges, however many options there are.
+fn menu(ui: &egui::Ui, popup: egui::Popup<'_>, options: impl FnOnce(&mut egui::Ui)) {
+    let frame = egui::Frame::menu(ui.style());
+    let margin = frame.inner_margin;
+    let corners = frame.corner_radius;
+    popup
+        .frame(frame.inner_margin(egui::Margin::ZERO))
+        .show(|ui| {
+            let spacing = ui.spacing_mut();
+            spacing.item_spacing.y = 0.0;
+            spacing.button_padding += egui::vec2(f32::from(margin.left), f32::from(margin.top));
+            let widgets = &mut ui.visuals_mut().widgets;
+            for state in [&mut widgets.inactive, &mut widgets.hovered, &mut widgets.active] {
+                state.corner_radius = corners;
+            }
+            options(ui);
+        });
 }
 
 /// What the images tab is called.
@@ -1498,7 +1569,11 @@ fn colour_settings(ui: &mut egui::Ui, gui: &mut Gui) {
                         let colour = field(editor.colours.for_mode_mut(dark));
                         let mut value =
                             Color32::from_rgba_unmultiplied(colour.r, colour.g, colour.b, colour.a);
-                        if ui.color_edit_button_srgba(&mut value).changed() {
+                        if ui
+                            .color_edit_button_srgba(&mut value)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .changed()
+                        {
                             let [r, g, b, a] = value.to_srgba_unmultiplied();
                             *colour = markdown_notes_core::Rgba::rgba(r, g, b, a);
                             changed = true;
@@ -1510,7 +1585,11 @@ fn colour_settings(ui: &mut egui::Ui, gui: &mut Gui) {
         });
 
     ui.add_space(6.0);
-    if ui.button("Reset this scheme").clicked() {
+    if ui
+        .button("Reset this scheme")
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
         editor.colours.reset(dark);
         changed = true;
     }
@@ -1524,31 +1603,146 @@ fn settings_dialog(ui: &mut egui::Ui, gui: &mut Gui) {
     if !gui.settings_open {
         return;
     }
-    let mut open = gui.settings_open;
+    // The dialog's own title bar runs edge to edge, so the frame's margin goes
+    // round the contents below it and not round the whole window.
+    let frame = egui::Frame::window(ui.style());
+    let margin = frame.inner_margin;
+    let icon = gui
+        .close_icon
+        .get_or_insert_with(|| os_close_icon(ui.ctx()))
+        .clone();
+    let mut closed = false;
     egui::Window::new("Settings")
-        .open(&mut open)
-        .collapsible(false)
+        .title_bar(false)
         .resizable(false)
+        .frame(frame.inner_margin(egui::Margin::ZERO))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 40.0))
         .show(ui.ctx(), |ui| {
-            let current = gui.editor.lock().map(|e| e.theme).unwrap_or(Theme::Auto);
-            ui.label("Theme");
-            let mut chosen = current;
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut chosen, Theme::Auto, "Auto");
-                ui.selectable_value(&mut chosen, Theme::Light, "Light");
-                ui.selectable_value(&mut chosen, Theme::Dark, "Dark");
-            });
-            if chosen != current {
-                if let Ok(mut e) = gui.editor.lock() {
-                    e.theme = chosen;
+            closed = dialog_title_bar(ui, "Settings", icon.as_ref(), frame);
+            egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
+                let current = gui.editor.lock().map(|e| e.theme).unwrap_or(Theme::Auto);
+                ui.label("Theme");
+                let mut chosen = current;
+                ui.horizontal(|ui| {
+                    for (theme, label) in [
+                        (Theme::Auto, "Auto"),
+                        (Theme::Light, "Light"),
+                        (Theme::Dark, "Dark"),
+                    ] {
+                        ui.selectable_value(&mut chosen, theme, label)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    }
+                });
+                if chosen != current {
+                    if let Ok(mut e) = gui.editor.lock() {
+                        e.theme = chosen;
+                    }
                 }
-            }
 
-            ui.separator();
-            colour_settings(ui, gui);
+                ui.separator();
+                colour_settings(ui, gui);
+            });
         });
-    gui.settings_open = open;
+    if closed {
+        gui.settings_open = false;
+    }
+}
+
+/// What a dialog's close button is called, to a screen reader.
+pub const CLOSE_DIALOG: &str = "Close";
+
+/// A dialog's title bar, with a close button. True when the button was
+/// clicked.
+///
+/// The bar is the one egui gives a window: `frame`, the window's own, filled
+/// as an open widget is, as tall as a heading and the frame's margin, with the
+/// title in the heading face, centred in what the close button's slot leaves.
+/// The button is where egui puts its own and shows `icon`, the operating
+/// system's close-window icon, or egui's cross where the system gave none.
+fn dialog_title_bar(
+    ui: &mut egui::Ui,
+    title: &str,
+    icon: Option<&egui::TextureHandle>,
+    frame: egui::Frame,
+) -> bool {
+    let margin = frame.inner_margin;
+    let heading = ui.text_style_height(&egui::TextStyle::Heading);
+    let height = heading + f32::from(margin.top) + f32::from(margin.bottom);
+    let (bar, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
+
+    let mut header = frame
+        .inner_margin(egui::Margin::ZERO)
+        .shadow(egui::Shadow::NONE)
+        .fill(ui.visuals().widgets.open.weak_bg_fill);
+    header.corner_radius.sw = 0;
+    header.corner_radius.se = 0;
+    ui.painter().add(header.paint(bar));
+
+    let inner_left = bar.left() + f32::from(margin.left);
+    let inner_right = bar.right() - f32::from(margin.right);
+    // Where egui puts a window's close button: a square as tall as a heading,
+    // at the right, inside the margin, with the button itself an icon's width
+    // across in the middle of it. The title is centred in what is left.
+    let slot = egui::Rect::from_min_size(
+        egui::pos2(inner_right - heading, bar.top() + f32::from(margin.top)),
+        egui::Vec2::splat(heading),
+    );
+    let button = slot.shrink((heading - ui.spacing().icon_width) / 2.0);
+    let response = ui
+        .interact(button, ui.id().with("close"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, CLOSE_DIALOG)
+    });
+
+    let visuals = ui.style().interact(&response);
+    let stroke = visuals.fg_stroke;
+    let glyph = button.shrink(2.0).expand(visuals.expansion);
+    match icon {
+        Some(icon) => egui::Image::new(icon).tint(stroke.color).paint_at(ui, glyph),
+        None => {
+            ui.painter().line_segment([glyph.left_top(), glyph.right_bottom()], stroke);
+            ui.painter().line_segment([glyph.right_top(), glyph.left_bottom()], stroke);
+        }
+    }
+
+    let gap = ui.spacing().item_spacing.x;
+    ui.painter().text(
+        egui::pos2((inner_left + slot.left() - gap) / 2.0, bar.center().y),
+        egui::Align2::CENTER_CENTER,
+        title,
+        egui::TextStyle::Heading.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+
+    response.clicked()
+}
+
+/// The operating system's own close-window icon as a texture. `None` on a
+/// system that has none to give.
+///
+/// The texture is white with the icon's shape in its alpha, so it takes
+/// whatever colour it is drawn in.
+fn os_close_icon(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    use native_theme::theme::{system_icon_set, IconData, IconRole};
+
+    /// How many pixels across an icon that arrives as SVG is rasterised at.
+    const SVG_SIDE: u32 = 32;
+
+    let icon = native_theme::icons::load_icon(IconRole::WindowClose, system_icon_set())?;
+    let icon = match icon {
+        IconData::Svg(svg) => native_theme::rasterize::rasterize_svg(&svg, SVG_SIDE).ok()?,
+        pixels => pixels,
+    };
+    let IconData::Rgba { width, height, mut data } = icon else {
+        return None;
+    };
+    for pixel in data.chunks_exact_mut(4) {
+        pixel[..3].fill(255);
+    }
+    let image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &data);
+    Some(ctx.load_texture("os-close-icon", image, egui::TextureOptions::LINEAR))
 }
 
 fn document(ui: &mut egui::Ui, gui: &mut Gui) {
@@ -1585,8 +1779,10 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
 
     let mut drawn: Vec<DrawnLine> = Vec::new();
     let mut toggled: Option<usize> = None;
+    // A checkbox is clicked, not typed into, so the I-beam stays off it.
+    let mut over_a_checkbox = false;
 
-    let em = egui::TextStyle::Body.resolve(ui.style()).size;
+    let em =egui::TextStyle::Body.resolve(ui.style()).size;
     let mut previous: Option<&Block> = None;
 
     // A mermaid block the caret is not in is a picture of what it describes,
@@ -1730,7 +1926,11 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                     BlockKind::Bullet { checked: Some(done), .. }
                     | BlockKind::Numbered { checked: Some(done), .. } => {
                         let mut checked = *done;
-                        if ui.checkbox(&mut checked, "").changed() {
+                        let tick = ui
+                            .checkbox(&mut checked, "")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        over_a_checkbox |= tick.hovered();
+                        if tick.changed() {
                             toggled = Some(block.line);
                         }
                         ui.add_space(4.0);
@@ -1796,7 +1996,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         // An I-beam says "there is text here to put a caret in", so it is shown
         // where a click would do that and nowhere else: the empty space below
         // the last line takes the caret away rather than placing it.
-        if surface.hovered() {
+        if surface.hovered() && !over_a_checkbox {
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
                 if line_at(pos).is_some() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Text);

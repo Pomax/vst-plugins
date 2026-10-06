@@ -1,12 +1,16 @@
 //! Where a piece of text is in a picture.
 //!
 //! ```text
-//! find-text <image.png> <text>
+//! find-text <image.png> <text> [smallest|largest]
 //! ```
 //!
 //! Prints the picture's `width height`, then one `x y width height` line for
 //! every place the text was read, case-insensitive, in image pixels with the
 //! origin at the top left. Exits 1 when the text is nowhere in the picture.
+//!
+//! The same words can be in a picture at two sizes, a tab's label and the
+//! heading under it. A caller that knows which it wants says `smallest` or
+//! `largest`, and gets that one place and no other.
 //!
 //! With no text to look for, prints the picture's size and then every line it
 //! could read, as `x y width height text`.
@@ -58,13 +62,18 @@ fn main() -> ExitCode {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let (path, needle) = match arguments.as_slice() {
-        [path] => (path, None),
-        [path, needle] => (path, Some(needle)),
-        _ => {
-            eprintln!("usage: find-text <image.png> [text]");
-            return ExitCode::from(2);
-        }
+    let usage = || {
+        eprintln!("usage: find-text <image.png> [text [smallest|largest]]");
+        ExitCode::from(2)
+    };
+    let (path, needle, sized) = match arguments.as_slice() {
+        [path] => (path, None, None),
+        [path, needle] => (path, Some(needle), None),
+        [path, needle, sized] => match Sized::named(sized) {
+            Some(sized) => (path, Some(needle), Some(sized)),
+            None => return usage(),
+        },
+        _ => return usage(),
     };
 
     let lines = match read(path) {
@@ -109,15 +118,64 @@ fn main() -> ExitCode {
         }
     }
 
-    exact.append(&mut containing);
-    if exact.is_empty() {
+    // Asked for by size, it is one place: of the exact matches where there
+    // are any, and of the containing ones where there are not.
+    let found = match sized {
+        Some(sized) => {
+            let among = if exact.is_empty() { &containing } else { &exact };
+            sized.of(among).into_iter().collect()
+        }
+        None => {
+            exact.append(&mut containing);
+            exact
+        }
+    };
+    if found.is_empty() {
         return ExitCode::from(1);
     }
     println!("{width} {height}");
-    for (x, y, w, h) in exact {
+    for (x, y, w, h) in found {
         println!("{x} {y} {w} {h}");
     }
     ExitCode::SUCCESS
+}
+
+/// A box: left, top, width, height.
+type Area = (i32, i32, i32, i32);
+
+/// Which of several places the same text was read at is wanted, by how large
+/// its lettering is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sized {
+    Smallest,
+    Largest,
+}
+
+impl Sized {
+    fn named(word: &str) -> Option<Sized> {
+        match word {
+            "smallest" => Some(Sized::Smallest),
+            "largest" => Some(Sized::Largest),
+            _ => None,
+        }
+    }
+
+    /// The one of `places` with the lettering this asks for, going by how
+    /// tall its box is. Of two the same height, the first.
+    fn of(self, places: &[Area]) -> Option<Area> {
+        let mut best: Option<Area> = None;
+        for place in places {
+            let better = match (self, best) {
+                (_, None) => true,
+                (Sized::Smallest, Some(kept)) => place.3 < kept.3,
+                (Sized::Largest, Some(kept)) => place.3 > kept.3,
+            };
+            if better {
+                best = Some(*place);
+            }
+        }
+        best
+    }
 }
 
 /// A recognised line: its text, its box, and the box of each word in it.
@@ -201,8 +259,13 @@ fn read(path: &str) -> Result<Reading, String> {
     // not in a way that can be predicted: a button read at one size is missed
     // at the next. Whatever one pass misses another catches.
     let mut lines = Vec::new();
+    //
+    // The same goes for how its greys are pulled apart, so each size is read
+    // both ways.
     for scale in enlargements(size) {
-        lines.extend(at_scale(path, &decoder, &engine, size, scale)?);
+        for greys in [Greys::Stretched, Greys::Flattened] {
+            lines.extend(at_scale(path, &decoder, &engine, size, scale, greys)?);
+        }
     }
     Ok(Reading { lines, size })
 }
@@ -215,6 +278,7 @@ fn at_scale(
     engine: &OcrEngine,
     size: (u32, u32),
     scale: u32,
+    greys: Greys,
 ) -> Result<Vec<Line>, String> {
     // Cubic rather than the smoothing default: interface text is drawn a
     // stroke wide, and smoothing an enlargement spreads those strokes into the
@@ -238,7 +302,7 @@ fn at_scale(
         )
         .and_then(wait)
         .map_err(|e| format!("could not decode {path}: {e}"))?;
-    deepen(&bitmap)?;
+    deepen(&bitmap, greys)?;
 
     let result = engine
         .RecognizeAsync(&bitmap)
@@ -252,6 +316,20 @@ fn at_scale(
     Ok(lines)
 }
 
+/// How a picture's greys are pulled apart before it is read.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum Greys {
+    /// Twice as far from the middle grey as they were.
+    Stretched,
+    /// Black where darker than `FLAT`, white everywhere else.
+    Flattened,
+}
+
+/// The grey a flattened picture is cut at.
+#[cfg(windows)]
+const FLAT: u32 = 160;
+
 /// Pull the picture's greys apart, in place.
 ///
 /// Interface text is a mid grey on a light grey, which recognition reads as
@@ -259,8 +337,13 @@ fn at_scale(
 /// pixels towards black and light ones towards white is what puts it there.
 /// Not all the way to black and white: a selected control is dark text on a
 /// strong fill, and flattening that would take the label with it.
+///
+/// Flattening is the other way of doing it, and reads what stretching does
+/// not: a label in a mid tone on a pale fill, which a selected tab's is, is
+/// still pale after stretching and is black once everything darker than
+/// `FLAT` is.
 #[cfg(windows)]
-fn deepen(bitmap: &SoftwareBitmap) -> Result<(), String> {
+fn deepen(bitmap: &SoftwareBitmap, greys: Greys) -> Result<(), String> {
     let buffer = bitmap
         .LockBuffer(BitmapBufferAccessMode::ReadWrite)
         .map_err(|e| format!("could not read the picture's pixels: {e}"))?;
@@ -278,7 +361,11 @@ fn deepen(bitmap: &SoftwareBitmap) -> Result<(), String> {
     for pixel in pixels.chunks_exact_mut(4) {
         let grey =
             (pixel[0] as u32 * 29 + pixel[1] as u32 * 150 + pixel[2] as u32 * 77) / 256;
-        let pulled = ((grey as i32 - 128) * 2 + 128).clamp(0, 255) as u8;
+        let pulled = match greys {
+            Greys::Stretched => ((grey as i32 - 128) * 2 + 128).clamp(0, 255) as u8,
+            Greys::Flattened if grey < FLAT => 0,
+            Greys::Flattened => 255,
+        };
         pixel[0] = pulled;
         pixel[1] = pulled;
         pixel[2] = pulled;

@@ -264,6 +264,8 @@ binary came from, and nothing else writes it.
 | `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | Open / Save / Save As |
 | `Tab` / `Shift+Tab` | indent / outdent a list item |
 
+Open, Save and Save As are also in the menu behind the toolbar's three-dot button.
+
 Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
 `- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
 list item ends the list, numbered lists renumber themselves, and an opening
@@ -360,8 +362,8 @@ capped at the width of the string `this many words`; anything longer is cut
 with `...` and shown in full on hover. Every section is that same width, so
 typing a heading never shifts the strip sideways.
 
-Click a section to switch, drag it to reorder, `+` to add one, middle-click to
-close it, or right-click it and pick **Close section**. Closing the last one empties it instead of removing it.
+Click a section to switch, drag it to reorder, `+` to add one, or right-click
+it and pick **Delete section**. Deleting the last one empties it instead of removing it.
 
 ## Mermaid
 
