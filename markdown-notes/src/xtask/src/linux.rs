@@ -720,12 +720,23 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // is photographed, the label nearest that spot is found in the
             // picture, and the click goes where the label really is. A label
             // the window does not show is a failure, not a blind click.
+            //
+            // `press:LABEL|X,Y|smallest` and `|largest` are for a label the
+            // window shows at two sizes, a tab and the heading under it: the
+            // one with that lettering is pressed, wherever it is.
             let (label, at) = value
                 .split_once('|')
                 .ok_or_else(|| format!("cannot read press: {value}"))?;
             let label = label.trim();
             if label.is_empty() {
                 return Err("press: needs a label".to_string());
+            }
+            let (at, sized) = match at.split_once('|') {
+                Some((at, sized)) => (at, Some(sized.trim())),
+                None => (at, None),
+            };
+            if !matches!(sized, None | Some("smallest" | "largest")) {
+                return Err(format!("cannot read press: {value}"));
             }
             let near = pair(at, "press")?;
             let area = run.area()?;
@@ -740,7 +751,12 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let deadline = Instant::now() + Duration::from_secs(5);
             let found = loop {
                 let found = look::find_in(run.portal, area, label, &probe)?;
-                if let Some(found) = look::nearest(&found, near) {
+                let picked = match sized {
+                    Some("smallest") => found.iter().copied().min_by_key(|place| place.height),
+                    Some("largest") => found.iter().copied().max_by_key(|place| place.height),
+                    _ => look::nearest(&found, near),
+                };
+                if let Some(found) = picked {
                     break Some(found);
                 }
                 if Instant::now() >= deadline {

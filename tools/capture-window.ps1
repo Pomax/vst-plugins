@@ -35,6 +35,9 @@ param(
     #   press:LABEL|X,Y  photograph the window, find the labelled control
     #                 nearest X,Y in the picture to confirm or correct the spot,
     #                 delete the picture, and click where the label really is
+    #   press:LABEL|X,Y|smallest  the same, for a label the window shows at
+    #                 two sizes: press the one with the smallest lettering.
+    #                 `|largest` presses the other
     #   showing:TEXT|Y   fail unless the window below Y shows TEXT
     #   hidden:TEXT|Y    fail if the window below Y shows TEXT
     #   dialog:WORD   fail unless a file dialog with WORD on it is open
@@ -507,12 +510,15 @@ function Read-Text([string]$path) {
 # The box is of the words that match, not of the whole line they were read on:
 # neighbouring buttons come back as one line, and the centre of that line is
 # the gap between them rather than either button.
-function Find-All([string]$path, [string]$label) {
+#
+# With `$sized` given, `smallest` or `largest`, the finder is asked for the one
+# place with that lettering and that is all that comes back.
+function Find-All([string]$path, [string]$label, [string]$sized = '') {
     $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
     if (-not (Test-Path $finder)) {
         throw "the text finder is not built: run tools\find-text\build.bat"
     }
-    $answer = @(& $finder $path $label)
+    $answer = if ($sized) { @(& $finder $path $label $sized) } else { @(& $finder $path $label) }
     if ($LASTEXITCODE -eq 1) { return @() }
     if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
 
@@ -537,10 +543,13 @@ function Find-All([string]$path, [string]$label) {
 # both a tab and a heading is told apart by where it is. Returns the centre as
 # a hashtable with X and Y in picture pixels, or $null when the label is
 # nowhere in the picture.
-function Find-Label([string]$path, [string]$label, $near) {
-    $found = @(Find-All $path $label)
+#
+# With `$sized` given, the match is the one with that lettering, and where it
+# is does not come into it.
+function Find-Label([string]$path, [string]$label, $near, [string]$sized = '') {
+    $found = @(Find-All $path $label $sized)
     if (-not $found.Count) { return $null }
-    if (-not $near) { return $found[0] }
+    if ($sized -or -not $near) { return $found[0] }
     return $found | Sort-Object {
         [Math]::Pow($_.X - $near.X, 2) + [Math]::Pow($_.Y - $near.Y, 2)
     } | Select-Object -First 1
@@ -741,11 +750,20 @@ try {
                     # is found in the picture, and the click goes where the
                     # label really is. A label the window does not show is a
                     # failure, not a blind click.
-                    $label, $at = $value -split '\|', 2
+                    #
+                    # `press:LABEL|X,Y|smallest` and `|largest` are for a label
+                    # the window shows at two sizes, a tab and the heading
+                    # under it: the one with that lettering is pressed,
+                    # wherever it is.
+                    $label, $at, $sized = $value -split '\|', 3
                     $label = $label.Trim()
                     if (-not $label -or -not $at) { throw "cannot read press: $value" }
                     $parts = $at -split ','
                     if ($parts.Count -ne 2) { throw "cannot read press: $value" }
+                    $sized = "$sized".Trim()
+                    if ($sized -and $sized -notin 'smallest', 'largest') {
+                        throw "cannot read press: $value"
+                    }
                     $x = [int]$parts[0]
                     $y = [int]$parts[1]
                     $probe = if ($outDir) {
@@ -767,7 +785,7 @@ try {
                     # step before has only just caused to be drawn.
                     $found = Wait-Until {
                         Save-Shot $rect $probe
-                        Find-Label $probe $label @{ X = $x; Y = $y }
+                        Find-Label $probe $label @{ X = $x; Y = $y } $sized
                     }
                     if (-not $found) {
                         # The picture stays when the label is not in it, and

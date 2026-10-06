@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use egui_kittest::kittest::{By, Queryable};
 use egui_kittest::Harness;
 use markdown_notes_core::{Editor, Theme};
-use markdown_notes_plugin::gui::CLOSE_DIALOG;
+use markdown_notes_plugin::gui::{CLOSE_DIALOG, FILE_MENU};
 
 /// Tall enough for the whole settings dialog.
 const SIZE: (f32, f32) = (900.0, 800.0);
@@ -44,8 +44,22 @@ fn cursor_at(harness: &mut Harness<'static>, at: egui::Pos2) -> egui::CursorIcon
     harness.output().platform_output.cursor_icon
 }
 
+/// The cursor asked for with the pointer resting on what is labelled `label`.
+///
+/// A dialog that has just opened can still be settling, and what is in it
+/// moves while it does. So the thing is looked for again after the pointer
+/// has been put on it, and the pointer follows it until it stays where it was
+/// found.
 fn cursor_over(harness: &mut Harness<'static>, label: &str) -> egui::CursorIcon {
-    let at = harness.get_by_label(label).rect().center();
+    let mut at = harness.get_by_label(label).rect().center();
+    for _ in 0..10 {
+        let cursor = cursor_at(harness, at);
+        let now = harness.get_by_label(label).rect().center();
+        if now == at {
+            return cursor;
+        }
+        at = now;
+    }
     cursor_at(harness, at)
 }
 
@@ -78,13 +92,90 @@ fn open_settings(harness: &mut Harness<'static>) {
 #[test]
 fn the_pointer_points_at_the_toolbar_buttons() {
     let mut harness = open();
-    for label in ["Open…", "Save", "Save As…", "Markdown source", THEME] {
+    for label in [FILE_MENU, "Markdown source", THEME] {
         assert_eq!(
             cursor_over(&mut harness, label),
             egui::CursorIcon::PointingHand,
             "over {label}"
         );
     }
+}
+
+/// The button shows three dots in a row: something is drawn at its middle and
+/// to either side of it, with the button's face between them.
+#[test]
+fn the_file_menu_button_shows_three_dots() {
+    let mut harness = open();
+    let button = harness.get_by_label(FILE_MENU).rect();
+    cursor_at(&mut harness, out_of_the_way());
+    let image = harness.render().expect("rendering failed");
+    saved(&image, "file-menu-button");
+
+    let face = pixel(&image, button.center() + egui::vec2(0.0, 5.0));
+    for dot in [-4.0, 0.0, 4.0] {
+        assert_ne!(
+            pixel(&image, button.center() + egui::vec2(dot, 0.0)),
+            face,
+            "no dot {dot} from the middle"
+        );
+    }
+    for gap in [-2.0, 2.0] {
+        assert_eq!(
+            pixel(&image, button.center() + egui::vec2(gap, 0.0)),
+            face,
+            "the dots run together {gap} from the middle"
+        );
+    }
+}
+
+/// What the file menu holds, in the order it shows them.
+const FILE_OPTIONS: [&str; 3] = ["Open…", "Save", "Save As…"];
+
+fn open_the_file_menu(harness: &mut Harness<'static>) {
+    let button = harness.get_by_label(FILE_MENU).rect().center();
+    press(harness, button, egui::PointerButton::Primary);
+}
+
+/// Open, Save and Save As are in the menu behind one button, and not on the
+/// toolbar.
+#[test]
+fn open_save_and_save_as_are_in_the_file_menu() {
+    let mut harness = open();
+    for option in FILE_OPTIONS {
+        assert!(
+            harness.query_by_label(option).is_none(),
+            "{option} is showing before the menu is opened"
+        );
+    }
+
+    open_the_file_menu(&mut harness);
+    saved(&harness.render().expect("rendering failed"), "file-menu");
+    for option in FILE_OPTIONS {
+        assert_eq!(
+            cursor_over(&mut harness, option),
+            egui::CursorIcon::PointingHand,
+            "over {option}"
+        );
+    }
+}
+
+/// Every option is as wide as the menu, and they are stacked with nothing
+/// between them, so there is no part of the menu that is not an option.
+#[test]
+fn the_file_menus_options_fill_it() {
+    let mut harness = open();
+    open_the_file_menu(&mut harness);
+
+    let options = FILE_OPTIONS.map(|option| harness.get_by_label(option).rect());
+    for (name, option) in FILE_OPTIONS.iter().zip(options) {
+        assert_eq!(
+            (option.left(), option.right()),
+            (options[0].left(), options[0].right()),
+            "{name} is not as wide as the first option"
+        );
+    }
+    assert_eq!(options[0].bottom(), options[1].top(), "a gap under Open");
+    assert_eq!(options[1].bottom(), options[2].top(), "a gap under Save");
 }
 
 #[test]
@@ -170,9 +261,14 @@ fn the_pointer_points_at_a_colour_swatch_in_settings() {
 fn the_pointer_points_at_reset_this_scheme_in_settings() {
     let mut harness = open();
     open_settings(&mut harness);
+    let cursor = cursor_over(&mut harness, "Reset this scheme");
+    let button = harness.get_by_label("Reset this scheme").rect();
     assert_eq!(
-        cursor_over(&mut harness, "Reset this scheme"),
-        egui::CursorIcon::PointingHand
+        cursor,
+        egui::CursorIcon::PointingHand,
+        "over the button at {button:?} in a window {} by {}",
+        SIZE.0,
+        SIZE.1
     );
 }
 
@@ -223,15 +319,21 @@ fn the_settings_close_button_closes_the_dialog() {
     );
 }
 
-/// The button shows the operating system's own close-window icon: the system
-/// has one to give, and something is drawn in the button.
+/// The button shows the operating system's own close-window icon, or a cross
+/// where the system has none to give: either way something is drawn in it.
+///
+/// Windows and macOS always have the icon. A Linux machine has it when an
+/// icon theme is installed, which a machine with no desktop need not have.
 #[test]
-fn the_settings_close_button_is_the_systems_own_icon() {
-    use native_theme::theme::{system_icon_set, IconRole};
-    assert!(
-        native_theme::icons::load_icon(IconRole::WindowClose, system_icon_set()).is_some(),
-        "the system gave no close-window icon"
-    );
+fn the_settings_close_button_shows_the_systems_icon_or_a_cross() {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        use native_theme::theme::{system_icon_set, IconRole};
+        assert!(
+            native_theme::icons::load_icon(IconRole::WindowClose, system_icon_set()).is_some(),
+            "the system gave no close-window icon"
+        );
+    }
 
     let (mut harness, close) = settings();
     cursor_at(&mut harness, out_of_the_way());

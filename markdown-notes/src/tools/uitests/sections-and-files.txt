@@ -46,7 +46,12 @@ type:{ENTER}levels are close
 # The file it wrote is checked in code, and then deleted in code: the name is
 # free for the Save As below to write to a file that does not exist, as this
 # one did.
-press:Save|501,76
+#
+# Open, Save and Save As are in the menu behind the toolbar's three-dot button.
+# The button carries no word, so it is clicked where the code puts it, and the
+# option is then found by what it says.
+plugin:585,50
+press:Save|600,126
 dialog:Save
 type:%CACHE%\round-trip.md
 type:{ENTER}
@@ -57,7 +62,7 @@ remove:%CACHE%\round-trip.md
 # A name that fits the window at this size and not at the smaller one it is
 # dragged to at the end.
 press:project title|204,76
-type:{END}{BS 40}funky cake with sprinkles
+type:{END}{BS 40}funky cake with a cherry on top and sprinkles
 # The + button carries no word, and a lone glyph is not something text
 # recognition reads reliably: it is clicked where the code puts it, and that
 # the click landed is said by the tabs read at the end.
@@ -70,7 +75,8 @@ hidden:Section Title|140
 # Save As. The document has a path by now, which is what makes this a
 # different action from the save above rather than the same one twice. Both
 # sections, in order.
-press:Save As|567,76
+plugin:585,50
+press:Save As|615,153
 dialog:Save
 type:%CACHE%\round-trip.md
 type:{ENTER}
@@ -123,17 +129,21 @@ shot:%CACHE%\section-drag-to-end-landed.png
 # wrote and cut it into sections here, so they say nothing about how many tabs
 # there are or what each one holds: three sections in one tab would satisfy
 # them. Each tab has to show its own text and not its neighbours'.
-press:Vocal chain|60,113
+#
+# A section's heading says what its tab says, in bigger letters, so a tab is
+# asked for as the smallest of the places its words are.
+press:Vocal chain|60,113|smallest
 showing:Vocal chain|140
 hidden:levels are close|140
-press:Drum bus|170,113
+press:Drum bus|170,113|smallest
 showing:Drum bus|140
 hidden:levels are close|140
-press:Mix notes|280,113
+press:Mix notes|280,113|smallest
 showing:levels are close|140
 
 # The order the drags left, written to a file and checked in code.
-press:Save As|567,76
+plugin:585,50
+press:Save As|615,153
 dialog:Save
 type:%CACHE%\dragged.md
 type:{ENTER}
@@ -143,7 +153,8 @@ written:%CACHE%\dragged.md|# Vocal chain\n\n# Drum bus\n\n# Mix notes\n\nlevels 
 # Open the two-section file back. It replaces what is open: three sections in
 # another order become exactly what that file holds. An open that silently did
 # nothing leaves the three, and the expectations below refuse it.
-press:Open|443,76
+plugin:585,50
+press:Open|607,99
 dialog:Open
 type:%CACHE%\round-trip.md
 type:{ENTER}
@@ -158,9 +169,9 @@ cleanup:%CACHE%\dragged.md
 # Both tabs, read rather than typed into. A load that put the whole file in
 # one tab satisfies the expectations below. Reading each tab does not: the
 # second tab has to show its own line and not the first tab's.
-press:Mix notes|60,113
+press:Mix notes|60,113|smallest
 showing:levels are close|140
-press:Drum bus|170,113
+press:Drum bus|170,113|smallest
 showing:Drum bus|140
 hidden:levels are close|140
 
@@ -179,7 +190,7 @@ moveto:300,300
 hidden:sprinkles|60
 
 # The name is not part of the file, so opening one leaves it alone.
-expect:title is funky cake with sprinkles
+expect:title is funky cake with a cherry on top and sprinkles
 expect:sections is 2
 expect:section 0 is # Mix notes\n\nlevels are close
 expect:section 1 is # Drum bus

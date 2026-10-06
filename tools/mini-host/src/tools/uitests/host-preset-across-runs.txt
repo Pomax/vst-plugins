@@ -24,7 +24,11 @@ type:second
 type:{ENTER}the second paragraph
 
 remove:%CACHE%\across-runs.md
-press:Save As|567,76
+# Save As is in the menu behind the plugin's three-dot button. The button
+# carries no word, so it is clicked where the code puts it, and the option is
+# then found by what it says.
+plugin:585,50
+press:Save As|615,153
 dialog:Save
 type:%CACHE%\across-runs.md
 type:{ENTER}
@@ -73,10 +77,10 @@ shot:%CACHE%\across-runs-restored.png
 # Both tabs came back, each holding its own section. The expectations below
 # cut the document into sections here, so they cannot tell two tabs from one
 # tab holding everything; reading each tab can.
-press:first|60,113
+press:first|60,113|smallest
 showing:the first paragraph|140
 hidden:the second paragraph|140
-press:second|170,113
+press:second|170,113|smallest
 showing:the second paragraph|140
 hidden:the first paragraph|140
 
