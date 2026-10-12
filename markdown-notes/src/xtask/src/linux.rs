@@ -655,11 +655,12 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .ok_or_else(|| format!("cannot read shortcut: {value}"))?;
             let held = keys::modifier(modifier).ok_or_else(|| format!("unknown modifier: {modifier}"))?;
             let mut letters = key.chars();
-            let (Some(letter), None) = (letters.next(), letters.next()) else {
-                return Err(format!("unknown key: {key}"));
+            let keysym = match (letters.next(), letters.next()) {
+                (Some(letter), None) => keys::keysym_of(letter),
+                _ => keys::named(key).ok_or_else(|| format!("unknown key: {key}"))?,
             };
             run.keys_are_ours()?;
-            run.input.shortcut(held, keys::keysym_of(letter))?;
+            run.input.shortcut(held, keysym)?;
             sleep(Duration::from_millis(300));
             Ok(())
         }

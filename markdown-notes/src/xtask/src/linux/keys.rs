@@ -10,7 +10,11 @@ const RETURN: u32 = 0xff0d;
 const ESCAPE: u32 = 0xff1b;
 const BACKSPACE: u32 = 0xff08;
 const END: u32 = 0xff57;
+const HOME: u32 = 0xff50;
+const LEFT: u32 = 0xff51;
+const UP: u32 = 0xff52;
 const DOWN: u32 = 0xff54;
+const PGUP: u32 = 0xff55;
 const TAB: u32 = 0xff09;
 
 /// One thing a `type:` step asks for.
@@ -41,7 +45,11 @@ pub fn named(name: &str) -> Option<u32> {
         "ESC" => ESCAPE,
         "BS" | "BACKSPACE" => BACKSPACE,
         "END" => END,
+        "HOME" => HOME,
+        "LEFT" => LEFT,
+        "UP" => UP,
         "DOWN" => DOWN,
+        "PGUP" => PGUP,
         "TAB" => TAB,
         _ => return None,
     })
@@ -59,10 +67,10 @@ pub fn modifier(name: &str) -> Option<u32> {
 
 /// A `type:` step as the keys it asks for, in order.
 ///
-/// `{ENTER}`, `{ESC}`, `{END}`, `{DOWN}`, `{TAB}` are those keys. `{BS 40}` is
-/// backspace forty times. `{(}` and `{)}` are the brackets themselves. Anything
-/// else is a character. This is the notation the tests are written in, which
-/// is Windows `SendKeys`.
+/// `{ENTER}`, `{ESC}`, `{HOME}`, `{END}`, `{LEFT}`, `{UP}`, `{DOWN}`, `{PGUP}`
+/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. `{(}` and
+/// `{)}` are the brackets themselves. Anything else is a character. This is
+/// the notation the tests are written in, which is Windows `SendKeys`.
 pub fn parse_keys(step: &str) -> Result<Vec<Stroke>, String> {
     let mut strokes = Vec::new();
     let mut rest = step;

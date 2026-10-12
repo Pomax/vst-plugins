@@ -996,10 +996,17 @@ try {
                         'alt'   { 0x12 }
                         default { throw "unknown modifier: $($parts[0])" }
                     }
+                    # A letter is its own virtual key; a named key is looked up.
                     $letter = $parts[1]
-                    if ($letter.Length -ne 1) { throw "unknown key: $letter" }
-                    $key = [uint16][char]($letter.ToUpper())
-                    [Win32Capture]::Shortcut([uint16]$modifier, $key)
+                    $key = switch ($letter) {
+                        'home' { 0x24 }
+                        'left' { 0x25 }
+                        default {
+                            if ($letter.Length -ne 1) { throw "unknown key: $letter" }
+                            [uint16][char]($letter.ToUpper())
+                        }
+                    }
+                    [Win32Capture]::Shortcut([uint16]$modifier, [uint16]$key)
                 }
                 'kill' {
                     # Force quit, for a test that ends with a native modal
