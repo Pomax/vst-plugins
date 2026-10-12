@@ -171,12 +171,7 @@ the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux` elements, and `ffmpeg`.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
-There are five, and each is one long run that covers a whole area rather than a
-launch of the host per behaviour: `typing-goes-into-the-document` (the
-baseline), `editing-the-document`, `sections-and-files`, `opening-a-note` and
-`pictures-in-a-note`.
-A new behaviour goes into the run whose note it can reuse, not into a new file
-that types the same title, heading and body again.
+There are six, and each is one long run that covers a whole area rather than a launch of the host per behaviour: `typing-goes-into-the-document` (the baseline), `editing-the-document`, `sections-and-files`, `opening-a-note`, `pictures-in-a-note` and `placeholder-section-title` (every way the caret can arrive back on a section's placeholder heading, one section each). A new behaviour goes into the run whose note it can reuse, not into a new file that types the same title, heading and body again.
 
 That is the `markdown-notes` suite. The host has one of its own, `mini-host`,
 in `tools/mini-host/src/tools/uitests/`: `host-preset-across-runs`,
