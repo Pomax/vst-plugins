@@ -4,11 +4,12 @@
 //! on it, whose drops egui-baseview does not pass on. The plugin puts its own
 //! target on the same window in its place: on Windows an `IDropTarget`
 //! registered with OLE, on macOS a view registered for dragged files laid
-//! over the editor's. Either one reads the dropped paths, keeps the PNG and
-//! JPEG files among them, and queues them for the next frame, which puts them
-//! into the note at the caret.
+//! over the editor's. Either one reads the dropped paths, keeps the markdown
+//! files and the PNG and JPEG files among them, and queues them for the next
+//! frame, which opens a markdown file and puts a picture into the document at
+//! the caret.
 
-use crate::gui::{Incoming, ParentWindow};
+use crate::gui::{Dropped, Incoming, ParentWindow};
 
 /// The target on the editor's window, for as long as the window is open.
 /// Dropping it takes the target off the window.
@@ -38,18 +39,18 @@ pub fn accept(parent: &ParentWindow, incoming: Incoming) -> Option<DropTarget> {
     }
 }
 
-/// Queue the PNG and JPEG files among `paths`.
+/// Queue the markdown, PNG and JPEG files among `paths`.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn take(incoming: &Incoming, paths: impl IntoIterator<Item = std::path::PathBuf>) {
-    let pictures: Vec<crate::pictures::Incoming> = paths
+    let files: Vec<Dropped> = paths
         .into_iter()
-        .filter_map(|path| crate::pictures::Incoming::from_file(&path))
+        .filter_map(|path| Dropped::from_file(&path))
         .collect();
-    if pictures.is_empty() {
+    if files.is_empty() {
         return;
     }
     if let Ok(mut queue) = incoming.lock() {
-        queue.extend(pictures);
+        queue.extend(files);
     }
 }
 

@@ -31,6 +31,7 @@ pub mod block;
 pub mod colours;
 pub mod edit;
 pub mod file;
+pub mod frontmatter;
 pub mod images;
 pub mod inline;
 pub mod state;

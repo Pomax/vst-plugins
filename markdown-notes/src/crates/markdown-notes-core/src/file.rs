@@ -7,7 +7,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::edit::Editor;
+use crate::edit::{Editor, DEFAULT_TITLE};
+use crate::frontmatter;
 
 /// Extensions offered in the open/save dialogs.
 pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "txt"];
@@ -16,12 +17,23 @@ impl Editor {
     /// Load `path` into the editor, replacing every section.
     ///
     /// The file is one document; its top-level headings become the sections.
+    /// Frontmatter at the top of it is not document: its `title` field is the
+    /// document's name, and the block is kept to be written back on save.
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
         let path = path.as_ref();
         let contents = fs::read_to_string(path)?;
-        // Normalise CRLF so caret arithmetic stays byte-exact.
+        // Normalise CRLF so caret arithmetic stays byte-exact, and drop the
+        // byte order mark Windows editors put in front of the first line.
         let contents = contents.replace("\r\n", "\n");
-        self.set_document_text(&contents);
+        let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents.as_str());
+        let (block, body) = frontmatter::split_off(contents);
+        self.set_document_text(body);
+        if let Some(block) = block {
+            if let Some(title) = block.title() {
+                self.title = title;
+            }
+            self.frontmatter = block;
+        }
         self.file = Some(path.to_path_buf());
         self.dirty = false;
         self.clear_history();
@@ -55,9 +67,25 @@ impl Editor {
                 fs::create_dir_all(parent)?;
             }
         }
-        fs::write(path, self.document_text().as_bytes())?;
+        fs::write(path, self.file_text().as_bytes())?;
         self.dirty = false;
         Ok(())
+    }
+
+    /// The bytes the file holds: the frontmatter, when there is anything to
+    /// put in it, and the document. The title goes in it once the document
+    /// has one; the placeholder is not a name and is not written.
+    fn file_text(&self) -> String {
+        let body = self.document_text();
+        let mut block = self.frontmatter.clone();
+        if self.title != DEFAULT_TITLE {
+            block.set_title(&self.title);
+        }
+        if block.is_empty() {
+            body
+        } else {
+            frontmatter::join(&block, &body)
+        }
     }
 
     /// True when there are unsaved changes relative to disk or project state.
@@ -78,7 +106,7 @@ fn with_default_extension(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::edit::{Key, Mods};
+    use crate::edit::{Key, Mods, DEFAULT_TITLE};
 
     fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -253,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn the_note_name_is_not_written_to_the_file() {
+    fn the_title_is_written_as_frontmatter() {
         let dir = temp_dir();
         let target = dir.join("named.md");
 
@@ -261,8 +289,182 @@ mod tests {
         e.title = "funky cake".to_string();
         e.save_as(&target).unwrap();
 
-        let written = fs::read_to_string(&target).unwrap();
-        assert!(!written.contains("funky cake"), "{written:?}");
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "---\ntitle: funky cake\n---\n\n# One"
+        );
+    }
+
+    /// A document that was never given a title is written as it is, with no
+    /// frontmatter carrying the placeholder.
+    #[test]
+    fn a_document_without_a_title_is_written_without_frontmatter() {
+        let dir = temp_dir();
+        let target = dir.join("unnamed.md");
+
+        let mut e = Editor::with_text("# One");
+        assert_eq!(e.title, DEFAULT_TITLE);
+        e.save_as(&target).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "# One");
+    }
+
+    /// The block is not document: nothing of it is in any section, and the
+    /// first section is the first heading.
+    #[test]
+    fn opening_a_file_with_a_title_in_its_frontmatter_takes_the_title() {
+        let dir = temp_dir();
+        let path = dir.join("titled.md");
+        fs::write(&path, "---\ntitle: funky cake\n---\n\n# One\n\nbody\n").unwrap();
+
+        let mut e = Editor::new();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, "funky cake");
+        assert_eq!(e.document_text(), "# One\n\nbody\n", "the frontmatter is in the document");
+        assert_eq!(e.section_count(), 1, "the frontmatter became a section");
+        assert_eq!(e.section_text(0), "# One\n\nbody\n");
+        assert_eq!(e.section_title(0), "One");
+        assert!(!e.is_dirty());
+    }
+
+    /// Files written on Windows often start with a byte order mark. The block
+    /// is still at the start of the file.
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_frontmatter() {
+        let dir = temp_dir();
+        let path = dir.join("bom.md");
+        fs::write(&path, "\u{feff}---\ntitle: funky cake\n---\n\n# One").unwrap();
+
+        let mut e = Editor::new();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, "funky cake");
+        assert_eq!(e.section_count(), 1, "the frontmatter became a section");
+        assert_eq!(e.document_text(), "# One");
+    }
+
+    /// Trailing spaces after the dashes, and Windows line ends, are still the
+    /// fences.
+    #[test]
+    fn fences_with_trailing_whitespace_or_crlf_are_still_fences() {
+        let dir = temp_dir();
+        let path = dir.join("spaced.md");
+        fs::write(&path, "--- \r\ntitle: funky cake\r\n---  \r\n\r\n# One\r\n").unwrap();
+
+        let mut e = Editor::new();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, "funky cake");
+        assert_eq!(e.section_count(), 1, "the frontmatter became a section");
+        assert_eq!(e.document_text(), "# One\n");
+    }
+
+    /// Frontmatter with no title field leaves the title as it was. Its other
+    /// fields are not the editor's, but they are the file's, so they are
+    /// written back ahead of the title when the document is saved.
+    #[test]
+    fn frontmatter_without_a_title_leaves_the_title_alone_and_is_kept() {
+        let dir = temp_dir();
+        let path = dir.join("author.md");
+        fs::write(&path, "---\nauthor: me\n---\n\n# One").unwrap();
+
+        let mut e = Editor::new();
+        e.title = "kept".to_string();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, "kept");
+        assert_eq!(e.section_count(), 1, "the frontmatter became a section");
+        assert_eq!(e.document_text(), "# One");
+
+        e.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "---\nauthor: me\ntitle: kept\n---\n\n# One"
+        );
+    }
+
+    /// Three dashes further down are a horizontal rule, not frontmatter.
+    #[test]
+    fn a_rule_that_is_not_at_the_start_is_not_frontmatter() {
+        let dir = temp_dir();
+        let path = dir.join("rule.md");
+        let document = "# One\n\n---\n\ntitle: not a field\n\n---\n";
+        fs::write(&path, document).unwrap();
+
+        let mut e = Editor::new();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, DEFAULT_TITLE);
+        assert_eq!(e.document_text(), document);
+    }
+
+    /// An opening line with no closing line is not a block, so it is all
+    /// document.
+    #[test]
+    fn an_unclosed_frontmatter_block_is_document() {
+        let dir = temp_dir();
+        let path = dir.join("unclosed.md");
+        let document = "---\ntitle: not taken\n\n# One";
+        fs::write(&path, document).unwrap();
+
+        let mut e = Editor::new();
+        e.open_path(&path).unwrap();
+        assert_eq!(e.title, DEFAULT_TITLE);
+        assert_eq!(e.document_text(), document);
+    }
+
+    #[test]
+    fn a_titled_document_round_trips_through_a_save_and_an_open() {
+        let dir = temp_dir();
+        let path = dir.join("round-trip.md");
+
+        let mut e = Editor::with_text("# One\n\nbody");
+        e.title = "funky cake".to_string();
+        e.save_as(&path).unwrap();
+        let first = fs::read_to_string(&path).unwrap();
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.title, "funky cake");
+        assert_eq!(reopened.section_count(), 1, "the frontmatter became a section");
+        assert_eq!(reopened.document_text(), "# One\n\nbody");
+
+        reopened.save().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), first, "saving again rewrote the file");
+    }
+
+    /// A title YAML would read as something else, a mapping here, is quoted on
+    /// the way out and unquoted on the way back in.
+    #[test]
+    fn a_title_with_a_colon_round_trips() {
+        let dir = temp_dir();
+        let path = dir.join("colon.md");
+
+        let mut e = Editor::with_text("# One");
+        e.title = "Mix: v2".to_string();
+        e.save_as(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "---\ntitle: \"Mix: v2\"\n---\n\n# One"
+        );
+
+        let mut reopened = Editor::new();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.title, "Mix: v2");
+    }
+
+    /// A title somebody else quoted, in either kind of quote, comes in without
+    /// the quotes.
+    #[test]
+    fn a_quoted_title_comes_in_unquoted() {
+        let dir = temp_dir();
+        for (name, line, title) in [
+            ("double.md", "title: \"funky cake\"", "funky cake"),
+            ("single.md", "title: 'funky cake'", "funky cake"),
+            ("escaped.md", "title: \"say \\\"hi\\\"\"", "say \"hi\""),
+        ] {
+            let path = dir.join(name);
+            fs::write(&path, format!("---\n{line}\n---\n\n# One")).unwrap();
+            let mut e = Editor::new();
+            e.open_path(&path).unwrap();
+            assert_eq!(e.title, title, "{line}");
+        }
     }
 
     #[test]

@@ -210,9 +210,13 @@ pub struct Editor {
     pub width: i32,
     pub height: i32,
     pub file: Option<PathBuf>,
-    /// The note's own name, edited in the toolbar. It is not part of the
-    /// markdown and is not written to disk with it.
+    /// The document's name, edited in the toolbar. It is not part of the
+    /// markdown: a file carries it in its frontmatter, see [`crate::file`].
     pub title: String,
+    /// The frontmatter of the file that was opened, kept so its other fields
+    /// are written back with the title. Empty for a document that came from
+    /// anywhere else.
+    pub frontmatter: crate::frontmatter::Frontmatter,
     pub dirty: bool,
     /// Counts the documents opened, see [`Editor::opened`].
     opened: u64,
@@ -258,6 +262,7 @@ impl Editor {
             height: DEFAULT_HEIGHT,
             file: None,
             title: DEFAULT_TITLE.to_string(),
+            frontmatter: crate::frontmatter::Frontmatter::default(),
             dirty: false,
             opened: 0,
             images: Vec::new(),
@@ -547,6 +552,7 @@ impl Editor {
     pub fn set_document_text(&mut self, text: &str) {
         let (body, images) = crate::images::split_off(text);
         self.images = images;
+        self.frontmatter = crate::frontmatter::Frontmatter::default();
         self.viewing_images = false;
         self.tidied.clear();
         self.undone_at = None;
