@@ -2032,6 +2032,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                             None => {
                                 gui.selecting_from = Some(at);
                                 editor.set_caret(at);
+                                if caret_on_first_line(&editor) {
+                                    select_placeholder_heading(&mut editor);
+                                }
                             }
                         }
                     }
@@ -2589,6 +2592,35 @@ fn span_format(
     fmt
 }
 
+/// Select the words of the placeholder heading, the caret having just arrived
+/// on the first line of the section.
+///
+/// The heading a new section is given is there to be replaced, so when the
+/// caret lands on it, by a click or by a key that brings it there from another
+/// line, its words are selected again and the next thing typed takes all of
+/// them, the way the note's own placeholder name is selected whenever it is
+/// clicked into. A key that moves the caret along the heading leaves the
+/// selection as the key left it, so End followed by Enter starts a line below
+/// the heading rather than replacing it. A selection that is already there,
+/// dragged or extended with Shift, is left as it is.
+///
+/// The caret goes to the end of the words first. Selecting does not move it,
+/// and typing deletes the selection and inserts at the caret, so a caret left
+/// in front of the words would put the name in front of the `# `.
+fn select_placeholder_heading(editor: &mut markdown_notes_core::Editor) {
+    if editor.section_title_is_unset() && !editor.has_selection() {
+        let words = markdown_notes_core::sections::new_section_title();
+        editor.set_caret(words.end);
+        editor.select(words);
+    }
+}
+
+/// Whether the caret is on the first line of the section in front, which is
+/// the only line a section's heading can be on.
+fn caret_on_first_line(editor: &markdown_notes_core::Editor) -> bool {
+    editor.has_caret() && editor.caret_line() == 0
+}
+
 /// Feed egui's key and text events into the editor.
 ///
 /// Returns a host command if one was requested (Ctrl+O / Ctrl+S / Ctrl+Shift+S),
@@ -2659,9 +2691,27 @@ fn apply_input(
                 };
                 held = mods.ctrl;
                 if let Some(k) = translate_key(*key, mods.ctrl) {
+                    let line_before = ed.has_caret().then(|| ed.caret_line());
                     let result = ed.handle_key(k, mods);
                     if let Some(c) = result.command {
                         command = Some(c);
+                    }
+                    if caret_on_first_line(&ed)
+                        && line_before != Some(0)
+                        && !mods.shift
+                        && matches!(
+                            k,
+                            Key::Left
+                                | Key::Right
+                                | Key::Up
+                                | Key::Down
+                                | Key::Home
+                                | Key::End
+                                | Key::PageUp
+                                | Key::PageDown
+                        )
+                    {
+                        select_placeholder_heading(&mut ed);
                     }
                 }
             }

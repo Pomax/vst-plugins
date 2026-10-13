@@ -12,3 +12,4 @@ editing-the-document
 sections-and-files
 opening-a-note
 pictures-in-a-note
+placeholder-section-title

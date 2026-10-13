@@ -340,8 +340,30 @@ const RETURN: u16 = 36;
 const ESCAPE: u16 = 53;
 const BACKSPACE: u16 = 51;
 const END: u16 = 119;
+const HOME: u16 = 115;
+const LEFT: u16 = 123;
+const UP: u16 = 126;
 const DOWN: u16 = 125;
+const PGUP: u16 = 116;
 const TAB: u16 = 48;
+
+/// The virtual key code of a key a `type:` step names in braces, or a
+/// `shortcut:` step names after its modifier.
+fn named(name: &str) -> Option<u16> {
+    Some(match name.to_ascii_uppercase().as_str() {
+        "ENTER" => RETURN,
+        "ESC" => ESCAPE,
+        "BS" | "BACKSPACE" => BACKSPACE,
+        "END" => END,
+        "HOME" => HOME,
+        "LEFT" => LEFT,
+        "UP" => UP,
+        "DOWN" => DOWN,
+        "PGUP" => PGUP,
+        "TAB" => TAB,
+        _ => return None,
+    })
+}
 
 /// The virtual key code for a letter or digit on the ANSI layout.
 ///
@@ -361,10 +383,11 @@ fn code_for(key: char) -> Option<u16> {
 
 /// Send one `type:` step, which is text with named keys written in braces.
 ///
-/// `{ENTER}`, `{ESC}`, `{END}`, `{DOWN}`, `{TAB}` are those keys. `{BS 40}` is
-/// backspace forty times. `{(}` and `{)}` are the brackets themselves, which
-/// would otherwise be read as the start of a name. This is the notation the
-/// tests are already written in, and it is Windows `SendKeys`.
+/// `{ENTER}`, `{ESC}`, `{HOME}`, `{END}`, `{LEFT}`, `{UP}`, `{DOWN}`, `{PGUP}`
+/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. `{(}` and
+/// `{)}` are the brackets themselves, which would otherwise be read as the
+/// start of a name. This is the notation the tests are already written in,
+/// and it is Windows `SendKeys`.
 fn send_keys(step: &str) -> Result<(), String> {
     let mut literal = String::new();
     let mut rest = step;
@@ -395,15 +418,7 @@ fn send_keys(step: &str) -> Result<(), String> {
             ),
             None => (name, 1),
         };
-        let code = match name.to_ascii_uppercase().as_str() {
-            "ENTER" => RETURN,
-            "ESC" => ESCAPE,
-            "BS" | "BACKSPACE" => BACKSPACE,
-            "END" => END,
-            "DOWN" => DOWN,
-            "TAB" => TAB,
-            other => return Err(format!("unknown key: {other}")),
-        };
+        let code = named(name).ok_or_else(|| format!("unknown key: {name}"))?;
         for _ in 0..times {
             tap(code, CGEventFlags::empty())?;
         }
@@ -1220,11 +1235,13 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .split_once('+')
                 .map(|(m, k)| (m.to_string(), k.to_string()))
                 .ok_or_else(|| format!("cannot read shortcut: {value}"))?;
-            let letter = key
-                .chars()
-                .next()
-                .ok_or_else(|| format!("cannot read shortcut: {value}"))?;
-            let code = code_for(letter).ok_or_else(|| format!("unknown key: {letter}"))?;
+            // A letter is its own key; a named key is looked up.
+            let mut letters = key.chars();
+            let code = match (letters.next(), letters.next()) {
+                (Some(letter), None) => code_for(letter),
+                _ => named(&key),
+            }
+            .ok_or_else(|| format!("unknown key: {key}"))?;
 
             // Cut, copy and paste belong to the platform, not to the plugin:
             // it claims the letter so it is not typed and waits for the
@@ -1232,7 +1249,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // that event is Cmd, so Ctrl over one of those letters would
             // reach the document as nothing at all. The plugin's own
             // shortcuts, select-all among them, stay on Ctrl.
-            let clipboard = matches!(letter, 'c' | 'x' | 'v');
+            let clipboard = matches!(key.as_str(), "c" | "x" | "v");
             let (held, flags) = match modifier.as_str() {
                 "ctrl" if clipboard => (COMMAND, CGEventFlags::CGEventFlagCommand),
                 "ctrl" => (CONTROL, CGEventFlags::CGEventFlagControl),

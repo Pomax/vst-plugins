@@ -1,0 +1,105 @@
+# A section's heading starts as `Section Title`, a placeholder waiting for its
+# name. It is selected when the section is made, and it is selected again
+# whenever the caret arrives back on it, by the keys or by a click, so the
+# next thing typed replaces it. One section per way of arriving: the first is
+# the one the note opens with, each of the others is made with the + button,
+# which follows the last section and so sits one tab further right each time.
+#
+# Every key route starts the same way. The heading is selected, End collapses
+# that to the end of the heading, Enter and a line of text put the caret on a
+# line of its own below the blank one, and the heading is checked to still be
+# there. Then the keys bring the caret back onto it, and the name is typed.
+#
+# Enter leaves the note's name as it is and goes to the document.
+type:{ENTER}
+
+# By Up: two presses, over the blank line.
+showing:Section Title|140
+type:{END}{ENTER}body line
+shot:%CACHE%\placeholder-up-body.png
+showing:Section Title|140
+type:{UP 2}
+shot:%CACHE%\placeholder-up-arrived.png
+type:Drums
+shot:%CACHE%\placeholder-up-named.png
+showing:Drums|140
+hidden:Section Title|140
+
+# By a click: the caret clicked away into the empty space below the heading,
+# and the heading then clicked by its words.
+plugin:129,87
+showing:Section Title|140
+click:450,400
+shot:%CACHE%\placeholder-click-away.png
+press:Section Title|120,158
+shot:%CACHE%\placeholder-click-arrived.png
+type:Bass
+shot:%CACHE%\placeholder-click-named.png
+showing:Bass|140
+hidden:Section Title|140
+
+# By Left: the body line is nine characters, and two more presses cross the
+# two line ends above it onto the end of the heading.
+plugin:239,87
+showing:Section Title|140
+type:{END}{ENTER}body line
+shot:%CACHE%\placeholder-left-body.png
+showing:Section Title|140
+type:{LEFT 11}
+shot:%CACHE%\placeholder-left-arrived.png
+type:Guitar
+shot:%CACHE%\placeholder-left-named.png
+showing:Guitar|140
+hidden:Section Title|140
+
+# By Page Up: a page is more lines than the section has, so one press is the
+# heading.
+plugin:349,87
+showing:Section Title|140
+type:{END}{ENTER}body line
+shot:%CACHE%\placeholder-pageup-body.png
+showing:Section Title|140
+type:{PGUP}
+shot:%CACHE%\placeholder-pageup-arrived.png
+type:Piano
+shot:%CACHE%\placeholder-pageup-named.png
+showing:Piano|140
+hidden:Section Title|140
+
+# By Ctrl+Home: the start of the section, which is the heading.
+plugin:459,87
+showing:Section Title|140
+type:{END}{ENTER}body line
+shot:%CACHE%\placeholder-ctrl-home-body.png
+showing:Section Title|140
+shortcut:ctrl+home
+shot:%CACHE%\placeholder-ctrl-home-arrived.png
+type:Vocals
+shot:%CACHE%\placeholder-ctrl-home-named.png
+showing:Vocals|140
+hidden:Section Title|140
+
+# By Ctrl+Left: a word at a time back up the section, to the start of `line`,
+# to the start of `body`, and over the blank line to the start of `Title`,
+# which is the heading.
+plugin:569,87
+showing:Section Title|140
+type:{END}{ENTER}body line
+shot:%CACHE%\placeholder-ctrl-left-body.png
+showing:Section Title|140
+shortcut:ctrl+left
+shortcut:ctrl+left
+shortcut:ctrl+left
+shot:%CACHE%\placeholder-ctrl-left-arrived.png
+type:Synths
+shot:%CACHE%\placeholder-ctrl-left-named.png
+showing:Synths|140
+hidden:Section Title|140
+
+expect:sections is 6
+expect:section 0 is # Drums\n\nbody line
+expect:section 1 is # Bass
+expect:section 2 is # Guitar\n\nbody line
+expect:section 3 is # Piano\n\nbody line
+expect:section 4 is # Vocals\n\nbody line
+expect:section 5 is # Synths\n\nbody line

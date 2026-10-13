@@ -45,7 +45,11 @@ fn saved(image: &image::RgbaImage, name: &str) -> String {
 }
 
 fn with_editor() -> (Harness<'static>, Arc<Mutex<Editor>>) {
-    let editor = Arc::new(Mutex::new(Editor::with_text(SAMPLE)));
+    with_text(SAMPLE)
+}
+
+fn with_text(text: &str) -> (Harness<'static>, Arc<Mutex<Editor>>) {
+    let editor = Arc::new(Mutex::new(Editor::with_text(text)));
     let kept = Arc::clone(&editor);
     if let Ok(mut e) = editor.lock() {
         e.theme = Theme::Light;
@@ -198,6 +202,38 @@ fn clicking_to_the_right_of_a_line_puts_the_caret_at_its_end() {
     let e = editor.lock().unwrap();
     assert!(e.has_caret());
     assert_eq!(e.caret(), "first line".len());
+}
+
+/// A section whose heading is still the one it was made with, and a line
+/// below it for the caret to start on.
+const UNNAMED_SECTION: &str = "# Section Title\n\nbody line";
+
+/// The heading a section is made with is there to be replaced, so a click
+/// that lands on it selects its words, without the `# `, and the next thing
+/// typed takes all of them.
+#[test]
+fn clicking_the_placeholder_heading_selects_its_words() {
+    let (mut harness, editor) = with_text(UNNAMED_SECTION);
+    assert_eq!(
+        editor.lock().unwrap().caret(),
+        UNNAMED_SECTION.len(),
+        "the caret did not start on the body line"
+    );
+
+    let level = first_line(&mut harness);
+    let left = left_of_the_text(&mut harness);
+    click(&mut harness, egui::pos2(left + 30.0, level));
+
+    let e = editor.lock().unwrap();
+    let words = markdown_notes_core::sections::new_section_title();
+    assert_eq!(
+        e.selection(),
+        words.clone(),
+        "clicking the heading selected {:?} rather than its words",
+        &UNNAMED_SECTION[e.selection()]
+    );
+    assert_eq!(e.caret(), words.end, "the caret is not at the end of the words");
+    assert_eq!(e.document_text(), UNNAMED_SECTION, "the click changed the document");
 }
 
 #[test]
