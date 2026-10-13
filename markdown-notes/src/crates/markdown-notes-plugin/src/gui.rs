@@ -1995,11 +1995,20 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
 
         // An I-beam says "there is text here to put a caret in", so it is shown
         // where a click would do that and nowhere else: the empty space below
-        // the last line takes the caret away rather than placing it.
+        // the last line takes the caret away rather than placing it. A link
+        // with the command key held is something a click would open, and gets
+        // the pointing hand.
         if surface.hovered() && !over_a_checkbox {
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if line_at(pos).is_some() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                if let Some(line) = line_at(pos) {
+                    let would_open = ui.input(|i| i.modifiers.command)
+                        && offset_on(line, pos)
+                            .is_some_and(|at| link_at(&doc.blocks, at).is_some());
+                    ui.ctx().set_cursor_icon(if would_open {
+                        egui::CursorIcon::PointingHand
+                    } else {
+                        egui::CursorIcon::Text
+                    });
                 }
             }
         }
@@ -2011,13 +2020,22 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             let pos = ui
                 .input(|i| i.pointer.press_origin())
                 .or_else(|| surface.interact_pointer_pos());
+            // With the command key held (Ctrl, or Cmd on macOS), a click on a
+            // link opens it rather than putting the caret in it. The platform
+            // layer hands the URL to the operating system.
+            let following = surface.clicked() && ui.input(|i| i.modifiers.command);
             match pos.and_then(|pos| Some((pos, line_at(pos)?))) {
                 Some((pos, line)) => {
                     if let Some(at) = offset_on(line, pos) {
-                        gui.selecting_from = Some(at);
-                        editor.set_caret(at);
-                        if caret_on_first_line(&editor) {
-                            select_placeholder_heading(&mut editor);
+                        match link_at(&doc.blocks, at).filter(|_| following) {
+                            Some(url) => ui.ctx().open_url(egui::OpenUrl::new_tab(url)),
+                            None => {
+                                gui.selecting_from = Some(at);
+                                editor.set_caret(at);
+                                if caret_on_first_line(&editor) {
+                                    select_placeholder_heading(&mut editor);
+                                }
+                            }
                         }
                     }
                 }
@@ -2154,6 +2172,20 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
 
         _ => em,
     }
+}
+
+/// The destination of the link whose text holds source offset `at`.
+///
+/// Only the visible text of a link counts: its brackets and its URL are
+/// markers, and a click on those is a click on markdown.
+fn link_at(blocks: &[Block], at: usize) -> Option<&str> {
+    blocks
+        .iter()
+        .flat_map(|block| &block.spans)
+        .find_map(|span| match &span.role {
+            SpanRole::Link { url } if span.range.contains(&at) => Some(url.as_str()),
+            _ => None,
+        })
 }
 
 /// A line as it was drawn, kept so the pointer can be mapped onto it.
