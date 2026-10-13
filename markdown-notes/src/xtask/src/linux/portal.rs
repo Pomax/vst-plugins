@@ -27,6 +27,8 @@ const PATIENCE: Duration = Duration::from_secs(200);
 
 /// The left mouse button, as the kernel's input events number it.
 const BTN_LEFT: i32 = 0x110;
+/// The right mouse button, likewise.
+const BTN_RIGHT: i32 = 0x111;
 
 pub struct Portal {
     remote: RemoteDesktop<'static>,
@@ -110,10 +112,19 @@ impl Portal {
 
     /// Press or release the left mouse button.
     pub fn button(&self, pressed: bool) -> Result<(), String> {
+        self.button_of(BTN_LEFT, pressed)
+    }
+
+    /// Press or release the right mouse button.
+    pub fn right_button(&self, pressed: bool) -> Result<(), String> {
+        self.button_of(BTN_RIGHT, pressed)
+    }
+
+    fn button_of(&self, button: i32, pressed: bool) -> Result<(), String> {
         self.wait(
             "pressing the mouse button",
             self.remote
-                .notify_pointer_button(&self.session, BTN_LEFT, state(pressed)),
+                .notify_pointer_button(&self.session, button, state(pressed)),
         )
     }
 

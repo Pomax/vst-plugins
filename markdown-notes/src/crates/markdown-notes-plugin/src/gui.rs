@@ -148,6 +148,12 @@ struct Gui {
     /// Where a drag through the document started, as a source offset. The
     /// selection runs from here to wherever the pointer is now.
     selecting_from: Option<usize>,
+    /// The word a double click landed on, while a drag from it is selecting
+    /// by words: the selection always holds this word whole.
+    selecting_words: Option<std::ops::Range<usize>>,
+    /// When and where the document was last clicked, so a press that follows
+    /// it within a double click's time and distance is known to be one.
+    last_click: Option<(f64, egui::Pos2)>,
     settings_open: bool,
     /// Whether the document is what keystrokes go to. Set by clicking into it,
     /// cleared when a field takes the keyboard.
@@ -265,6 +271,8 @@ impl Gui {
             dragging: None,
             section_rects: Vec::new(),
             selecting_from: None,
+            selecting_words: None,
+            last_click: None,
             settings_open: false,
             document_focused: true,
             caret_was: None,
@@ -2063,12 +2071,30 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
             // link opens it rather than putting the caret in it. The platform
             // layer hands the URL to the operating system.
             let following = surface.clicked() && ui.input(|i| i.modifiers.command);
+            // A drag that begins with the second press of a double click
+            // selects by words. egui only reports a double click once the
+            // button is up again, so the press is matched against the click
+            // before it by egui's own time and distance.
+            let now = ui.input(|i| i.time);
+            let (delay, distance) = ui.ctx().options(|o| {
+                (o.input_options.max_double_click_delay, o.input_options.max_click_dist)
+            });
+            let doubled = surface.drag_started()
+                && gui.last_click.is_some_and(|(then, there)| {
+                    now - then <= delay && pos.is_some_and(|here| here.distance(there) <= distance)
+                });
             match pos.and_then(|pos| Some((pos, line_at(pos)?))) {
                 Some((pos, line)) => {
                     if let Some(at) = offset_on(line, pos) {
                         match link_at(&doc.blocks, at).filter(|_| following) {
                             Some(url) => ui.ctx().open_url(egui::OpenUrl::new_tab(url)),
+                            None if doubled => {
+                                let word = editor.word_at(at);
+                                editor.select(word.clone());
+                                gui.selecting_words = Some(word);
+                            }
                             None => {
+                                gui.selecting_words = None;
                                 gui.selecting_from = Some(at);
                                 editor.set_caret(at);
                                 if caret_on_first_line(&editor) {
@@ -2079,19 +2105,74 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                     }
                 }
                 None => {
+                    gui.selecting_words = None;
                     gui.selecting_from = None;
                     editor.clear_caret();
                 }
+            }
+            if surface.clicked() {
+                gui.last_click = pos.map(|pos| (now, pos));
             }
         } else if surface.dragged() {
             let at = surface
                 .interact_pointer_pos()
                 .and_then(|pos| Some((pos, nearest(pos)?)))
                 .and_then(|(pos, line)| offset_on(line, pos));
-            if let (Some(from), Some(at)) = (gui.selecting_from, at) {
-                editor.select(from.min(at)..from.max(at));
+            match (&gui.selecting_words, gui.selecting_from, at) {
+                (Some(word), _, Some(at)) => {
+                    let reached = editor.word_at(at);
+                    editor.select(word.start.min(reached.start)..word.end.max(reached.end));
+                }
+                (None, Some(from), Some(at)) => editor.select(from.min(at)..from.max(at)),
+                _ => {}
             }
         }
+
+        // A double click selects the word under it. The click before it has
+        // just put the caret there.
+        if surface.double_clicked() && editor.has_caret() {
+            let word = editor.word_at(editor.caret());
+            editor.select(word.clone());
+            gui.selecting_words = Some(word);
+        }
+
+        // A right click offers the clipboard. Outside the selection it puts
+        // the caret where it was clicked first, so a paste lands there.
+        if surface.secondary_clicked() {
+            let at = surface
+                .interact_pointer_pos()
+                .and_then(|pos| Some((pos, line_at(pos)?)))
+                .and_then(|(pos, line)| offset_on(line, pos));
+            if let Some(at) = at {
+                if !editor.selection().contains(&at) {
+                    editor.set_caret(at);
+                }
+            }
+        }
+        let has_selection = editor.has_selection();
+        let has_caret = editor.has_caret();
+        menu(ui, egui::Popup::context_menu(&surface), |ui| {
+            let option = |ui: &mut egui::Ui, label: &str, enabled: bool| {
+                ui.add_enabled(enabled, egui::Button::new(label))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+            };
+            if option(ui, "Cut", has_selection) {
+                ui.ctx().copy_text(editor.selected_text());
+                editor.delete_selection();
+                ui.close();
+            }
+            if option(ui, "Copy", has_selection) {
+                ui.ctx().copy_text(editor.selected_text());
+                ui.close();
+            }
+            if option(ui, "Paste", has_caret) {
+                if let Some(text) = clipboard_text() {
+                    editor.insert_str(&text);
+                }
+                ui.close();
+            }
+        });
     }
 
     // Clicking anywhere in the document, on a line or in the empty space
@@ -2213,6 +2294,11 @@ fn block_gap(previous: &Block, current: &Block, em: f32) -> f32 {
     }
 }
 
+/// The text on the clipboard, if it holds any.
+fn clipboard_text() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
 /// The destination of the link whose text holds source offset `at`.
 ///
 /// Only the visible text of a link counts: its brackets and its URL are
@@ -2276,8 +2362,13 @@ fn picture_row(
         Color32::WHITE,
     );
 
-    // A selection running through the block covers the picture of it.
-    if selection.start < placed.range.end && selection.end > placed.range.start {
+    // A selection running through the block covers the picture of it. One
+    // with nothing in it runs through nothing: the collapsed cursor of a
+    // caret that was taken away may still sit inside the block.
+    if !selection.is_empty()
+        && selection.start < placed.range.end
+        && selection.end > placed.range.start
+    {
         ui.painter().rect_filled(picture, 0.0, palette.selection);
     }
 

@@ -87,6 +87,37 @@ impl Input {
         Ok(())
     }
 
+    /// Two clicks where a finger makes them, close enough together for the
+    /// window to take them as one double click.
+    pub fn double_click(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.click(x, y)?;
+        self.press()?;
+        sleep(Duration::from_millis(120));
+        self.release()?;
+        sleep(Duration::from_millis(120));
+        Ok(())
+    }
+
+    /// A click and then a press that stays held, until `let_go`: the start
+    /// of a drag that selects by words.
+    pub fn double_hold(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.click(x, y)?;
+        self.press()?;
+        sleep(Duration::from_millis(150));
+        Ok(())
+    }
+
+    /// A click with the right button.
+    pub fn right_click(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.go_to(x, y)?;
+        sleep(Duration::from_millis(120));
+        self.portal.right_button(true)?;
+        sleep(Duration::from_millis(120));
+        self.portal.right_button(false)?;
+        sleep(Duration::from_millis(120));
+        Ok(())
+    }
+
     /// Glide somewhere, press there, and keep holding.
     pub fn take_hold(&mut self, x: i32, y: i32) -> Result<(), String> {
         self.glide((x, y), Duration::from_millis(200))?;

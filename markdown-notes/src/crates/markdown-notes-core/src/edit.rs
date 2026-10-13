@@ -677,6 +677,11 @@ impl Editor {
         self.place_caret();
     }
 
+    /// The word at byte offset `at`, see [`text::word_at`].
+    pub fn word_at(&self, at: usize) -> Range<usize> {
+        text::word_at(&self.text(), at)
+    }
+
     pub fn select_all(&mut self) {
         self.live_mut().select_all();
         self.place_caret();

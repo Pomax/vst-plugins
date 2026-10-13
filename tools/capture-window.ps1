@@ -209,6 +209,33 @@ public class Win32Capture {
         System.Threading.Thread.Sleep(HELD_MS);
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
     }
+    /// Two clicks where a finger makes them, close enough together for the
+    /// window to take them as one double click.
+    public static void DoubleClick(int x, int y) {
+        Click(x, y);
+        System.Threading.Thread.Sleep(HELD_MS);
+        mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
+        System.Threading.Thread.Sleep(HELD_MS);
+        mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
+    }
+
+    /// A click and then a press that stays held, until `LetGo`: the start of
+    /// a drag that selects by words.
+    public static void DoubleHold(int x, int y) {
+        Click(x, y);
+        System.Threading.Thread.Sleep(HELD_MS);
+        mouse_event(0x0002, 0, 0, 0, System.IntPtr.Zero); // left down
+    }
+
+    /// A click with the right button.
+    public static void RightClick(int x, int y) {
+        SetCursorPos(x, y);
+        System.Threading.Thread.Sleep(HELD_MS);
+        mouse_event(0x0008, 0, 0, 0, System.IntPtr.Zero); // right down
+        System.Threading.Thread.Sleep(HELD_MS);
+        mouse_event(0x0010, 0, 0, 0, System.IntPtr.Zero); // right up
+    }
+
     /// Press at one point, move across, release at another: a drag.
     ///
     /// The pointer moves in steps rather than jumping, because a UI works out
@@ -558,6 +585,25 @@ function Find-Label([string]$path, [string]$label, $near, [string]$sized = '') {
 # Where ffmpeg is. Recording a window is its job, and screenshots cannot do it:
 # a flicker lasting a frame or two is gone between two grabs half a second
 # apart. gdigrab takes every frame the window draws.
+# The box of the first TEXT drawn below Y in the window, looked for until it is
+# there: the text may be what the step before typed, and not drawn yet. A
+# failure says what the window reads instead, so a word drawn elsewhere can be
+# told from a word the reader could not make out.
+function Find-TextBelow([Win32Capture+RECT]$area, [string]$text, [int]$below, [string]$step) {
+    $probe = Join-Path $env:TEMP 'capture-window-press.png'
+    $found = Wait-Until {
+        Save-Shot $area $probe
+        @(Find-All $probe $text | Where-Object { $_.Top -ge $below })[0]
+    }
+    if (-not $found) {
+        $read = @(Read-Text $probe | Where-Object { $_.Top -ge $below })
+        $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
+        throw "`"$text`" is not on screen for ${step}; below $below the window reads: $saw; see $probe"
+    }
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    $found
+}
+
 function Get-Ffmpeg {
     $found = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($found) { return $found.Source }
@@ -921,23 +967,7 @@ try {
                     }
                     $parts = $to -split ','
                     if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
-                    $probe = Join-Path $env:TEMP 'capture-window-press.png'
-                    # Looked for until it is there: the text may be what the
-                    # step before typed, and not drawn yet.
-                    $found = Wait-Until {
-                        Save-Shot $rect $probe
-                        @(Find-All $probe $text.Trim() |
-                            Where-Object { $_.Top -ge [int]$below })[0]
-                    }
-                    if (-not $found) {
-                        $read = @(Read-Text $probe | Where-Object { $_.Top -ge [int]$below })
-                        # What was readable instead: a step that says only "not
-                        # found" cannot tell a word drawn elsewhere from a word
-                        # the reader could not make out.
-                        $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
-                        throw "`"$text`" is not on screen to select from; below $below the window reads: $saw; see $probe"
-                    }
-                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dragtext'
                     # On the first glyph, not beside it: a press lands on the
                     # nearest character boundary, and the boundary before the
                     # first letter is the one its ink starts at.
@@ -947,6 +977,47 @@ try {
                         $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
                     Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dragtext: {0}" -f $text.Trim())
+                }
+                'dbltext' {
+                    # `dbltext:TEXT|Y` double-clicks the middle of TEXT, found
+                    # below Y the way dragtext finds it. The middle, so the
+                    # press is inside the word and not on its edge.
+                    $text, $below = $value -split '\|', 2
+                    if (-not $text -or -not $below) { throw "cannot read dbltext: $value" }
+                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dbltext'
+                    [Win32Capture]::DoubleClick(
+                        $rect.Left + [int](($found.Left + $found.Right) / 2),
+                        $rect.Top + [int](($found.Top + $found.Bottom) / 2))
+                    Start-Sleep -Milliseconds $HAND_MS
+                    Write-Host ("dbltext: {0}" -f $text.Trim())
+                }
+                'righttext' {
+                    # `righttext:TEXT|Y` clicks the middle of TEXT with the
+                    # right button.
+                    $text, $below = $value -split '\|', 2
+                    if (-not $text -or -not $below) { throw "cannot read righttext: $value" }
+                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'righttext'
+                    [Win32Capture]::RightClick(
+                        $rect.Left + [int](($found.Left + $found.Right) / 2),
+                        $rect.Top + [int](($found.Top + $found.Bottom) / 2))
+                    Start-Sleep -Milliseconds $HAND_MS
+                    Write-Host ("righttext: {0}" -f $text.Trim())
+                }
+                'dragwords' {
+                    # `dragwords:TEXT|Y|X` double-clicks the middle of TEXT
+                    # and drags the second press along TEXT's row to X: a drag
+                    # that selects by words.
+                    $text, $below, $to = $value -split '\|', 3
+                    if (-not $text -or -not $below -or -not $to) {
+                        throw "cannot read dragwords: $value"
+                    }
+                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dragwords'
+                    $row = $rect.Top + [int](($found.Top + $found.Bottom) / 2)
+                    [Win32Capture]::DoubleHold(
+                        $rect.Left + [int](($found.Left + $found.Right) / 2), $row)
+                    [Win32Capture]::LetGo($rect.Left + [int]$to, $row)
+                    Start-Sleep -Milliseconds $HAND_MS
+                    Write-Host ("dragwords: {0}" -f $text.Trim())
                 }
                 'hold' {
                     # `hold:X,Y` presses and keeps holding, so the steps after

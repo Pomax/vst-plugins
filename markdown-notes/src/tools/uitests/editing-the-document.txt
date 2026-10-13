@@ -104,6 +104,76 @@ type:{ENTER}    wow_spaces
 type:{DOWN}{END}{ENTER}{ENTER}Okay
 shot:%CACHE%\caret-below-a-code-block.png
 
+# Selecting with the pointer, the way any text area does it: a double click
+# takes the word under it, and a drag that starts with the second press of a
+# double click grows the selection by whole words, from the start of the word
+# it began on to the end of the word the pointer is over. Typing replaces what
+# is selected, so what the line reads afterwards says what was selected.
+#
+# The double click lands in the middle of `beta`, not on its edge, and the
+# drag starts in the middle of `gamma`: a drag by characters from there would
+# leave `ga` behind, and a drag by words takes all of it. What the line holds
+# afterwards is checked at the end of the run.
+type:{ENTER}alpha beta gamma delta
+dbltext:beta|140
+type:bravo
+dragwords:gamma|140|650
+type:zulu
+shot:%CACHE%\selecting-by-words.png
+
+# A right click on the document offers Cut, Copy and Paste. On the selection,
+# it leaves the selection as it is; the menu's option then acts on it. Cut
+# takes `alpha` out, Paste puts it back over the `zulu` selected next, and
+# Copy followed by the keyboard shortcut shows what Copy put on the clipboard.
+dbltext:alpha|140
+righttext:alpha|140
+showing:Copy|140
+showing:Paste|140
+press:Cut|300,300
+hidden:alpha|140
+dbltext:zulu|140
+righttext:zulu|140
+press:Paste|300,300
+hidden:zulu|140
+dbltext:bravo|140
+righttext:bravo|140
+press:Copy|300,300
+type:{END}
+shortcut:ctrl+v
+shot:%CACHE%\clipboard-menu.png
+
+# A mermaid block is a picture while the caret is elsewhere and code while
+# the caret is in it. Leaving it by the keys draws the picture; so does
+# leaving it by a click on another line, which is what this checks: the
+# picture is clicked to bring the code back, then the line below it is
+# clicked, and the code has to go. Which of the two is up is read off a
+# comment line in the block: a comment is drawn in the code and never in
+# the picture, and it sits two lines below where the caret lands, clear of
+# it.
+type:{ENTER}```mermaid
+type:{ENTER}flowchart LR
+type:{ENTER}Start --> End
+type:{ENTER}{%}{%} sentinel words
+type:{DOWN}{END}{ENTER}{ENTER}after the picture
+hidden:sentinel|140
+press:Start|300,400
+shot:%CACHE%\mermaid-picture-clicked.png
+showing:sentinel|140
+press:after the picture|300,400
+hidden:sentinel|140
+showing:Start|140
+shot:%CACHE%\mermaid-clicked-away.png
+# Leaving it by a click in the empty space below the last line, which takes
+# the caret away rather than placing it, draws the picture too, and draws it
+# as the picture: nothing over it, its labels readable.
+press:Start|300,400
+showing:sentinel|140
+click:450,655
+hidden:sentinel|140
+showing:Start|140
+shot:%CACHE%\mermaid-clicked-below.png
+
 expect:sections is 1
 expect:notes contain kept:text X!?\n\nY\n\ntesting as well
 expect:notes contain ```py\nwith extra code stuff\nimport * as lol\n\ndef cake(self):\n    wow_spaces\n```\n\nOkay
+expect:notes contain Okay\n\n bravo alphabravo\n\n```mermaid\nflowchart LR\nStart --> End\n%% sentinel words\n```\n\nafter the picture
