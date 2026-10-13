@@ -253,6 +253,7 @@ binary came from, and nothing else writes it.
 | `Ctrl+B` / `Ctrl+I` / `Ctrl+D` | bold / italic / strikethrough (wraps the selection) |
 | `Ctrl+E` | inline code |
 | `Ctrl+K` | turn the selection into a link, caret left in the `()` |
+| `Ctrl+click` on a link (`Cmd+click` on macOS) | open it with whatever the system opens links with; the caret stays put. With the key held, the pointer is a hand over a link |
 | `Ctrl+/` | toggle WYSIWYG ↔ raw markdown |
 | `Ctrl+T` | cycle the theme: auto → light → dark |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |

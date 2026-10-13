@@ -155,3 +155,6 @@ required-features = ["snapshots"]
 name = "dropping_a_document"
 required-features = ["snapshots"]
 
+[[test]]
+name = "link_clicking"
+required-features = ["snapshots"]
