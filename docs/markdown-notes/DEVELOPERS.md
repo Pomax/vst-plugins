@@ -261,6 +261,22 @@ binary came from, and nothing else writes it.
 
 Open, Save and Save As are also in the menu behind the toolbar's three-dot button.
 
+## Files
+
+A saved file is the document, with its name in a YAML frontmatter block at the top:
+
+```markdown
+---
+title: funky cake
+---
+
+# One
+```
+
+A document whose name is still the placeholder is written without a block. Opening a file that starts with a block takes its `title` field as the document's name and keeps the rest of the block, written back ahead of the title on the next save. A byte order mark in front of the block is dropped. A block is only a block on the first line: `---` further down is a horizontal rule. See `markdown-notes-core/src/frontmatter.rs`.
+
+A markdown file dropped on the window, with any extension the open dialog offers, in any case, is opened the way File > Open opens it. The drop reaches the plugin through the same two routes a picture does, the drop target in `drop.rs` and egui's own dropped files, and `gui::Dropped::from_file` tells a document from a picture by the extension. The headless `dropping_a_document` tests drop through egui's input.
+
 Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
 `- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
 list item ends the list, numbered lists renumber themselves, and an opening

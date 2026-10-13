@@ -212,13 +212,15 @@ fn the_reference_is_text_while_the_caret_is_on_it() {
     assert_eq!(window.picture_pixels(), 0);
 }
 
+/// A dropped file that is not a picture puts no picture in. Not a markdown
+/// file either: that is opened as the document, see dropping_a_document.rs.
 #[test]
 fn a_file_that_is_not_a_picture_is_refused() {
     let mut window = open("# Notes\n\nbefore");
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.cache/pictures-in-notes");
     std::fs::create_dir_all(&dir).unwrap();
-    let text = dir.join("notes.txt");
-    std::fs::write(&text, b"words").unwrap();
+    let text = dir.join("notes.rtf");
+    std::fs::write(&text, b"{\\rtf1 words}").unwrap();
 
     window.drop_file(text);
 

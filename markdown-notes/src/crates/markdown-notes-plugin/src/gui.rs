@@ -190,8 +190,37 @@ struct Gui {
     close_icon: Option<Option<egui::TextureHandle>>,
 }
 
-/// Pictures on their way into the note, shared with whatever receives drops.
-pub type Incoming = Arc<std::sync::Mutex<Vec<crate::pictures::Incoming>>>;
+/// Files dropped on the window and not yet taken in, shared with whatever
+/// receives drops.
+pub type Incoming = Arc<std::sync::Mutex<Vec<Dropped>>>;
+
+/// A file dropped on the window, by what it is.
+pub enum Dropped {
+    /// A PNG or a JPEG, which goes into the document at the caret.
+    Picture(crate::pictures::Incoming),
+    /// A markdown file, which is opened in place of the document.
+    Document(std::path::PathBuf),
+}
+
+impl Dropped {
+    /// What a dropped file is: a markdown file by its extension, any the open
+    /// dialog offers, in any case; otherwise a picture by its bytes. Nothing
+    /// for a file that is neither.
+    pub fn from_file(path: &std::path::Path) -> Option<Dropped> {
+        let markdown = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| {
+                markdown_notes_core::file::MARKDOWN_EXTENSIONS
+                    .iter()
+                    .any(|m| m.eq_ignore_ascii_case(e))
+            });
+        if markdown {
+            return Some(Dropped::Document(path.to_path_buf()));
+        }
+        crate::pictures::Incoming::from_file(path).map(Dropped::Picture)
+    }
+}
 
 /// A mermaid block as it was drawn: where, and whether what was drawn there is
 /// the diagram or the error standing in for it.
@@ -461,7 +490,7 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
         }
     }
 
-    take_in_pictures(ui, gui);
+    take_in_dropped(ui, gui);
 
     // The bars and their rules stack with nothing between them. Scoped, so the
     // spacing everything else uses is untouched.
@@ -595,23 +624,24 @@ pub fn draw_frame_for_test(ui: &mut egui::Ui, state: &mut TestGui) {
 /// The window is the truth. The host owns the frame, and the editor is drawn
 /// into whatever it is given: a plugin that asks for a size of its own is a
 /// plugin arguing with its host.
-/// Put the pictures that arrived since last frame into the note, and keep the
-/// note's definitions in step with its references.
+/// Take in the files that arrived since last frame: a markdown file is opened
+/// in place of the document, a picture goes into the document, and the
+/// document's picture definitions are kept in step with its references.
 ///
-/// A picture comes from a file dropped on the window, whichever way the
-/// platform delivered it (egui's own dropped files, or the window's drop
-/// target), or from the clipboard on Ctrl+V when what was pasted was not
-/// text: egui-baseview turns a paste into a text event only when the
-/// clipboard holds text, so a picture paste arrives as the key alone.
-fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
-    let mut arrived: Vec<crate::pictures::Incoming> = Vec::new();
+/// A file comes dropped on the window, whichever way the platform delivered
+/// it (egui's own dropped files, or the window's drop target). A picture also
+/// comes from the clipboard on Ctrl+V when what was pasted was not text:
+/// egui-baseview turns a paste into a text event only when the clipboard
+/// holds text, so a picture paste arrives as the key alone.
+fn take_in_dropped(ui: &mut egui::Ui, gui: &mut Gui) {
+    let mut arrived: Vec<Dropped> = Vec::new();
     if let Ok(mut queue) = gui.incoming.lock() {
         arrived.append(&mut queue);
     }
     let dropped = ui.input(|i| i.raw.dropped_files.clone());
     for file in dropped {
-        if let Some(picture) = crate::pictures::Incoming::from_file(file.path()) {
-            arrived.push(picture);
+        if let Some(file) = Dropped::from_file(file.path()) {
+            arrived.push(file);
         }
     }
     if gui.document_focused {
@@ -629,14 +659,23 @@ fn take_in_pictures(ui: &mut egui::Ui, gui: &mut Gui) {
         });
         if pasted_a_key {
             if let Some(picture) = crate::pictures::Incoming::from_clipboard() {
-                arrived.push(picture);
+                arrived.push(Dropped::Picture(picture));
             }
         }
     }
 
     if let Ok(mut editor) = gui.editor.lock() {
-        for picture in arrived {
-            editor.insert_image(&picture.alt, &picture.bytes);
+        for file in arrived {
+            match file {
+                Dropped::Picture(picture) => {
+                    editor.insert_image(&picture.alt, &picture.bytes);
+                }
+                Dropped::Document(path) => {
+                    if let Err(e) = editor.open_path(&path) {
+                        gui.error = Some(format!("could not open {}: {e}", path.display()));
+                    }
+                }
+            }
         }
         editor.tidy_images();
     }
