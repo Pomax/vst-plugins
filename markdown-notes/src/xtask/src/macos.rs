@@ -49,7 +49,18 @@ fn post(event: CGEvent) {
 }
 
 fn mouse(kind: CGEventType, at: CGPoint) -> Result<(), String> {
-    let event = CGEvent::new_mouse_event(source()?, kind, at, CGMouseButton::Left)
+    mouse_with(kind, at, CGMouseButton::Left, 1)
+}
+
+/// A mouse event for `button`, `clicks` deep: the second press of a double
+/// click is a click of two.
+fn mouse_with(
+    kind: CGEventType,
+    at: CGPoint,
+    button: CGMouseButton,
+    clicks: i64,
+) -> Result<(), String> {
+    let event = CGEvent::new_mouse_event(source()?, kind, at, button)
         .map_err(|_| "could not make a mouse event".to_string())?;
     // A press with no click state is not a click. Windows work out what was
     // clicked, and how many times, from this field, and a zero means the event
@@ -57,13 +68,54 @@ fn mouse(kind: CGEventType, at: CGPoint) -> Result<(), String> {
     // happens.
     let pressing = matches!(
         kind,
-        CGEventType::LeftMouseDown | CGEventType::LeftMouseUp | CGEventType::LeftMouseDragged
+        CGEventType::LeftMouseDown
+            | CGEventType::LeftMouseUp
+            | CGEventType::LeftMouseDragged
+            | CGEventType::RightMouseDown
+            | CGEventType::RightMouseUp
     );
     if pressing {
-        event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, 1);
-        event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, 0);
+        let number = match button {
+            CGMouseButton::Right => 1,
+            _ => 0,
+        };
+        event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, clicks);
+        event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, number);
     }
     post(event);
+    Ok(())
+}
+
+/// Two clicks where a finger makes them, the second marked as the second,
+/// which is how a window here knows a double click.
+fn double_click(x: i32, y: i32) -> Result<(), String> {
+    click(x, y)?;
+    let at = point(x, y);
+    mouse_with(CGEventType::LeftMouseDown, at, CGMouseButton::Left, 2)?;
+    sleep(Duration::from_millis(120));
+    mouse_with(CGEventType::LeftMouseUp, at, CGMouseButton::Left, 2)?;
+    sleep(Duration::from_millis(120));
+    Ok(())
+}
+
+/// A click and then a press that stays held, until `let_go`: the start of a
+/// drag that selects by words.
+fn double_hold(x: i32, y: i32) -> Result<(), String> {
+    click(x, y)?;
+    mouse_with(CGEventType::LeftMouseDown, point(x, y), CGMouseButton::Left, 2)?;
+    sleep(Duration::from_millis(150));
+    Ok(())
+}
+
+/// A click with the right button.
+fn right_click(x: i32, y: i32) -> Result<(), String> {
+    let at = point(x, y);
+    mouse(CGEventType::MouseMoved, at)?;
+    sleep(Duration::from_millis(120));
+    mouse_with(CGEventType::RightMouseDown, at, CGMouseButton::Right, 1)?;
+    sleep(Duration::from_millis(120));
+    mouse_with(CGEventType::RightMouseUp, at, CGMouseButton::Right, 1)?;
+    sleep(Duration::from_millis(120));
     Ok(())
 }
 
@@ -718,6 +770,49 @@ fn find_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<(i32, i
     Ok(find_box_on_screen(area, text, probe)?.map(|found| {
         (found.x + found.width / 2, found.y + found.height / 2)
     }))
+}
+
+/// `TEXT|Y` taken apart: the text, and the row of the window below which
+/// it is looked for.
+fn text_and_row<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32), String> {
+    let (text, below) = value
+        .split_once('|')
+        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
+    let below = below
+        .trim()
+        .parse()
+        .map_err(|_| format!("not a row: {value}"))?;
+    Ok((text.trim(), below))
+}
+
+/// `TEXT|Y|X,Y2` taken apart: the text, the row, and the point left as
+/// written for [`pair`].
+fn text_row_and_point<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32, &'a str), String> {
+    let (text_and_row, to) = value
+        .rsplit_once('|')
+        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
+    let (text, below) = self::text_and_row(text_and_row, step)?;
+    Ok((text, below, to))
+}
+
+/// The box of the first `text` drawn below row `below` of the window, or why
+/// it is not there.
+fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, String> {
+    let window = window_rect(run.pid, &run.title)?;
+    let band = Rect {
+        x: window.x,
+        y: window.y + below,
+        width: window.width,
+        height: (window.height - below).max(1),
+    };
+    let probe = run
+        .state
+        .parent()
+        .map(|work| work.join("press.png"))
+        .ok_or("nowhere to put the look")?;
+    let found = find_box_on_screen(band, text, &probe);
+    let _ = std::fs::remove_file(&probe);
+    found?.ok_or_else(|| format!("{text:?} is not on screen for {step}"))
 }
 
 /// The box the text occupies on screen inside `area`, found by looking.
@@ -1482,33 +1577,10 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // TEXT's first character. What width a font gives the characters
             // before it stops mattering, and the same words in the toolbar
             // above Y are not mistaken for it.
-            let mut parts = value.splitn(3, '|');
-            let (text, below, to) = match (parts.next(), parts.next(), parts.next()) {
-                (Some(text), Some(below), Some(to)) => (text, below, to),
-                _ => return Err(format!("cannot read dragtext: {value}")),
-            };
-            let below: i32 = below
-                .trim()
-                .parse()
-                .map_err(|_| format!("not a row: {value}"))?;
+            let (text, below, to) = text_row_and_point(value, "dragtext")?;
             let (to_x, to_y) = pair(to, "dragtext")?;
             let window = window_rect(run.pid, &run.title)?;
-            let band = Rect {
-                x: window.x,
-                y: window.y + below,
-                width: window.width,
-                height: (window.height - below).max(1),
-            };
-            let probe = run
-                .state
-                .parent()
-                .map(|work| work.join("press.png"))
-                .ok_or("nowhere to put the look")?;
-            let found = find_box_on_screen(band, text.trim(), &probe);
-            let _ = std::fs::remove_file(&probe);
-            let Some(from) = found? else {
-                return Err(format!("{text:?} is not on screen to select from"));
-            };
+            let from = text_below(run, text, below, "dragtext")?;
             // On the first glyph, not beside it. A press lands on the nearest
             // character boundary, and the boundary before the first letter is
             // the one its ink starts at.
@@ -1521,6 +1593,45 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 start - window.x,
                 from.y + from.height / 2 - window.y
             );
+            Ok(())
+        }
+        "dbltext" => {
+            // `dbltext:TEXT|Y` double-clicks the middle of TEXT, found below Y
+            // the way dragtext finds it. The middle, so the press is inside
+            // the word and not on its edge.
+            let (text, below) = text_and_row(value, "dbltext")?;
+            let found = text_below(run, text, below, "dbltext")?;
+            double_click(found.x + found.width / 2, found.y + found.height / 2)?;
+            sleep(Duration::from_millis(500));
+            println!("dbltext: {text}");
+            Ok(())
+        }
+        "righttext" => {
+            // `righttext:TEXT|Y` clicks the middle of TEXT with the right
+            // button.
+            let (text, below) = text_and_row(value, "righttext")?;
+            let found = text_below(run, text, below, "righttext")?;
+            right_click(found.x + found.width / 2, found.y + found.height / 2)?;
+            sleep(Duration::from_millis(500));
+            println!("righttext: {text}");
+            Ok(())
+        }
+        "dragwords" => {
+            // `dragwords:TEXT|Y|X` double-clicks the middle of TEXT and drags
+            // the second press along TEXT's row to X: a drag that selects by
+            // words.
+            let (text, below, to) = text_row_and_point(value, "dragwords")?;
+            let to_x: i32 = to
+                .trim()
+                .parse()
+                .map_err(|_| format!("cannot read dragwords: {value}"))?;
+            let window = window_rect(run.pid, &run.title)?;
+            let found = text_below(run, text, below, "dragwords")?;
+            let row = found.y + found.height / 2;
+            double_hold(found.x + found.width / 2, row)?;
+            let_go(window.x + to_x, row)?;
+            sleep(Duration::from_millis(500));
+            println!("dragwords: {text}");
             Ok(())
         }
         "dragedge" => {

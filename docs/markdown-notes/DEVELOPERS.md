@@ -180,8 +180,7 @@ in `tools/mini-host/src/tools/uitests/`: `host-preset-across-runs`,
 
 No step pauses for a length of time, and there is no `wait:` step. A step that
 needs the window to have caught up says what it is waiting to see, and the
-driver looks until it is there: `showing:`, `hidden:`, `press:`, `dragtext:`,
-`written:`, `cursor:`, `window:`, `nowindow:` and `dialog:` all poll, and a
+driver looks until it is there: `showing:`, `hidden:`, `press:`, `dragtext:`, `dbltext:`, `righttext:`, `dragwords:`, `written:`, `cursor:`, `window:`, `nowindow:` and `dialog:` all poll, and a
 window that has just opened is waited on until it has drawn something that can
 be read. The only timing in the driver is a hand's: keys go one at a time, a
 click holds the button for a moment, the pointer travels rather than jumps, and
@@ -254,6 +253,8 @@ binary came from, and nothing else writes it.
 | `Ctrl+E` | inline code |
 | `Ctrl+K` | turn the selection into a link, caret left in the `()` |
 | `Ctrl+click` on a link (`Cmd+click` on macOS) | open it with whatever the system opens links with; the caret stays put. With the key held, the pointer is a hand over a link |
+| double click | select the word under the pointer; a drag from the second press selects by whole words |
+| right click | a menu with Cut, Copy and Paste; outside the selection it puts the caret where it was clicked first |
 | `Ctrl+/` | toggle WYSIWYG ↔ raw markdown |
 | `Ctrl+T` | cycle the theme: auto → light → dark |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |

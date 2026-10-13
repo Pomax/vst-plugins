@@ -606,6 +606,61 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `TEXT|Y` taken apart: the text, and the row of the window below which
+/// it is looked for.
+fn text_and_row<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32), String> {
+    let (text, below) = value
+        .split_once('|')
+        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
+    let below = below
+        .trim()
+        .parse()
+        .map_err(|_| format!("not a row: {value}"))?;
+    Ok((text.trim(), below))
+}
+
+/// `TEXT|Y|X,Y2` taken apart: the text, the row, and the point left as
+/// written for [`pair`].
+fn text_row_and_point<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32, &'a str), String> {
+    let (head, to) = value
+        .rsplit_once('|')
+        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
+    let (text, below) = text_and_row(head, step)?;
+    Ok((text, below, to))
+}
+
+/// The box of the first `text` drawn below row `below` of the window, looked
+/// for until it is there: the text may be what the step before typed, and
+/// not drawn yet. A failure says what the window reads instead, so a word
+/// drawn elsewhere can be told from a word the reader could not make out.
+fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, String> {
+    let area = run.area()?;
+    let probe = run.work.join("press.png");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let found = loop {
+        let found = look::find_in(run.portal, area, text, &probe)?
+            .into_iter()
+            .find(|found| found.y >= below);
+        if found.is_some() || Instant::now() >= deadline {
+            break found;
+        }
+    };
+    let Some(found) = found else {
+        let saw: Vec<String> = look::read_in(run.portal, area, &probe)?
+            .into_iter()
+            .filter(|(found, _)| found.y >= below)
+            .map(|(_, text)| text)
+            .collect();
+        return Err(format!(
+            "{text:?} is not on screen for {step}; below {below} the window reads: {}; see {}",
+            saw.join(" | "),
+            probe.display()
+        ));
+    };
+    let _ = std::fs::remove_file(&probe);
+    Ok(found)
+}
+
 fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
     match kind {
         // A typed absolute path is dialog input: no test types a path as
@@ -892,40 +947,10 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // starts to X,Y2 in window coordinates. Where TEXT is comes from
             // looking: the window is photographed, the first TEXT below Y is
             // found, and the press lands on TEXT's first character.
-            let mut parts = value.splitn(3, '|');
-            let (text, below, to) = match (parts.next(), parts.next(), parts.next()) {
-                (Some(text), Some(below), Some(to)) => (text.trim(), below, to),
-                _ => return Err(format!("cannot read dragtext: {value}")),
-            };
-            let below: i32 = below
-                .trim()
-                .parse()
-                .map_err(|_| format!("not a row: {value}"))?;
+            let (text, below, to) = text_row_and_point(value, "dragtext")?;
             let (to_x, to_y) = pair(to, "dragtext")?;
             let area = run.area()?;
-            let probe = run.work.join("press.png");
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let found = loop {
-                let found = look::find_in(run.portal, area, text, &probe)?
-                    .into_iter()
-                    .find(|found| found.y >= below);
-                if found.is_some() || Instant::now() >= deadline {
-                    break found;
-                }
-            };
-            let Some(from) = found else {
-                let saw: Vec<String> = look::read_in(run.portal, area, &probe)?
-                    .into_iter()
-                    .filter(|(found, _)| found.y >= below)
-                    .map(|(_, text)| text)
-                    .collect();
-                return Err(format!(
-                    "{text:?} is not on screen to select from; below {below} the window reads: {}; see {}",
-                    saw.join(" | "),
-                    probe.display()
-                ));
-            };
-            let _ = std::fs::remove_file(&probe);
+            let from = text_below(run, text, below, "dragtext")?;
             // On the first glyph, not beside it: a press lands on the
             // nearest character boundary, and the boundary before the first
             // letter is the one its ink starts at.
@@ -936,6 +961,62 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             run.input.let_go(area.x + to_x, area.y + to_y)?;
             sleep(HAND);
             println!("dragtext: {text}");
+            Ok(())
+        }
+        "dbltext" => {
+            // `dbltext:TEXT|Y` double-clicks the middle of TEXT, found below Y
+            // the way dragtext finds it. The middle, so the press is inside
+            // the word and not on its edge.
+            let (text, below) = text_and_row(value, "dbltext")?;
+            let area = run.area()?;
+            let found = text_below(run, text, below, "dbltext")?;
+            let (x, y) = (
+                area.x + found.x + found.width / 2,
+                area.y + found.y + found.height / 2,
+            );
+            run.at_the_front()?;
+            run.input.double_click(x, y)?;
+            run.arrived(x, y)?;
+            sleep(HAND);
+            println!("dbltext: {text}");
+            Ok(())
+        }
+        "righttext" => {
+            // `righttext:TEXT|Y` clicks the middle of TEXT with the right
+            // button.
+            let (text, below) = text_and_row(value, "righttext")?;
+            let area = run.area()?;
+            let found = text_below(run, text, below, "righttext")?;
+            let (x, y) = (
+                area.x + found.x + found.width / 2,
+                area.y + found.y + found.height / 2,
+            );
+            run.at_the_front()?;
+            run.input.right_click(x, y)?;
+            run.arrived(x, y)?;
+            sleep(HAND);
+            println!("righttext: {text}");
+            Ok(())
+        }
+        "dragwords" => {
+            // `dragwords:TEXT|Y|X` double-clicks the middle of TEXT and drags
+            // the second press along TEXT's row to X: a drag that selects by
+            // words.
+            let (text, below, to) = text_row_and_point(value, "dragwords")?;
+            let to_x: i32 = to
+                .trim()
+                .parse()
+                .map_err(|_| format!("cannot read dragwords: {value}"))?;
+            let area = run.area()?;
+            let found = text_below(run, text, below, "dragwords")?;
+            let row = area.y + found.y + found.height / 2;
+            let x = area.x + found.x + found.width / 2;
+            run.at_the_front()?;
+            run.input.double_hold(x, row)?;
+            run.arrived(x, row)?;
+            run.input.let_go(area.x + to_x, row)?;
+            sleep(HAND);
+            println!("dragwords: {text}");
             Ok(())
         }
         "cursor" => {
