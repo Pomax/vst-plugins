@@ -128,6 +128,10 @@ struct Gui {
     report: crate::files::Report,
     /// Last known system setting, refreshed on a timer.
     system_dark: bool,
+    /// Whether `system_dark` was given rather than read from the operating
+    /// system, and so is never read again. A test window says what the
+    /// system's setting is.
+    system_theme_pinned: bool,
     checked_at: Instant,
     /// What is currently applied, so visuals are only rebuilt on a change.
     applied_dark: Option<bool>,
@@ -262,6 +266,7 @@ impl Gui {
             error: None,
             report: crate::files::Report::default(),
             system_dark: system_is_dark(),
+            system_theme_pinned: false,
             checked_at: Instant::now(),
             applied_dark: None,
             applied_colours: None,
@@ -317,9 +322,10 @@ impl Gui {
         }
     }
 
-    /// Re-read the OS theme if the poll interval has elapsed.
+    /// Re-read the OS theme if the poll interval has elapsed, unless the
+    /// setting was given.
     fn refresh_system_theme(&mut self) {
-        if self.checked_at.elapsed() >= SYSTEM_THEME_POLL {
+        if !self.system_theme_pinned && self.checked_at.elapsed() >= SYSTEM_THEME_POLL {
             self.system_dark = system_is_dark();
             self.checked_at = Instant::now();
         }
@@ -586,6 +592,7 @@ impl TestGui {
         let opened = editor.lock().map(|e| e.opened()).ok();
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.system_theme_pinned = true;
         gui.arrived = opened;
         TestGui(gui)
     }
@@ -595,6 +602,7 @@ impl TestGui {
     pub fn opening(editor: Shared, system_dark: bool) -> TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.system_theme_pinned = true;
         TestGui(gui)
     }
 
@@ -955,7 +963,7 @@ fn toolbar_buttons(
         } else {
             egui::RichText::new("Save")
         };
-        let mut option = |ui: &mut egui::Ui, label: egui::RichText, command: Command| {
+        let option = |ui: &mut egui::Ui, label: egui::RichText, command: Command| {
             if ui
                 .button(label)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1943,8 +1951,8 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         previous = Some(block);
 
         if let Some(placed) = picture_at(block.line) {
-            let line = picture_row(ui, placed, &selection, &palette);
-            picture_rects.push(DrawnPicture { rect: line.rect, failed: placed.failed });
+            let (line, shown_at) = picture_row(ui, placed, &selection, &palette);
+            picture_rects.push(DrawnPicture { rect: shown_at, failed: placed.failed });
             drawn.push(line);
             continue;
         }
@@ -2351,13 +2359,17 @@ fn picture_row(
     placed: &Placed,
     selection: &std::ops::Range<usize>,
     palette: &Palette,
-) -> DrawnLine {
+) -> (DrawnLine, egui::Rect) {
     let across = ui.available_width();
     let fit = (across / placed.size.x).min(1.0);
-    let size = placed.size * fit;
+    // On the pixel grid, at a whole number of pixels: the layout lands rows
+    // on fractions of a pixel, and a texel drawn across two pixels is a blur.
+    let ppp = ui.ctx().pixels_per_point();
+    let whole = |v: f32| (v * ppp).round() / ppp;
+    let size = egui::vec2(whole(placed.size.x * fit), whole(placed.size.y * fit));
     let (rect, _) = ui.allocate_exact_size(egui::vec2(across.max(size.x), size.y), Sense::hover());
 
-    let picture = egui::Rect::from_min_size(rect.min, size);
+    let picture = egui::Rect::from_min_size(egui::pos2(whole(rect.min.x), whole(rect.min.y)), size);
     ui.painter().image(
         placed.texture,
         picture,
@@ -2385,7 +2397,7 @@ fn picture_row(
     map.push(placed.caret_to);
     let galley = ui.painter().layout_job(job);
 
-    DrawnLine { rect, origin: rect.min, galley, map, caret: None }
+    (DrawnLine { rect, origin: rect.min, galley, map, caret: None }, picture)
 }
 
 /// A picture standing in for lines of the document: a mermaid block, or a

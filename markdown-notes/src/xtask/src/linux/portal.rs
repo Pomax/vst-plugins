@@ -47,9 +47,11 @@ impl Portal {
     /// Open the session, asking the desktop for the keyboard, the pointer and
     /// the screen.
     ///
-    /// `cache` is where the token from the last answer is kept.
+    /// `cache` is where the token from the last answer is kept, one for each
+    /// program the run is made from.
     pub fn open(cache: &Path) -> Result<Portal, String> {
-        let kept = cache.join("portal-token");
+        let unit = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        let kept = cache.join(token_file(&unit));
         let token = std::fs::read_to_string(&kept)
             .ok()
             .map(|token| token.trim().to_string())
@@ -298,9 +300,48 @@ async fn connect(token: Option<String>) -> Result<(Portal, Option<String>), Stri
     Ok((portal, token))
 }
 
+/// The file the token is kept in, for the program this run is made from:
+/// the desktop allows a token to that program only, and knows the program by
+/// the unit it started it in, the last part of `/proc/self/cgroup`, which is
+/// `app-<AppID>-<pid>.scope`.
+fn token_file(cgroup: &str) -> String {
+    let unit = cgroup
+        .lines()
+        .find_map(|line| line.rsplit('/').next())
+        .unwrap_or_default()
+        .trim();
+    let program = unit
+        .strip_prefix("app-")
+        .and_then(|unit| unit.strip_suffix(".scope"))
+        .map(|unit| match unit.rsplit_once('-') {
+            Some((program, pid)) if pid.chars().all(|c| c.is_ascii_digit()) => program,
+            _ => unit,
+        })
+        .filter(|program| !program.is_empty());
+    match program {
+        Some(program) => format!("portal-token-{program}"),
+        None => "portal-token".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::senders;
+    use super::{senders, token_file};
+
+    #[test]
+    fn the_token_is_kept_for_the_program_the_run_is_made_from() {
+        let claude = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-com.anthropic.Claude-3385.scope\n";
+        let code = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-com.microsoft.VSCode-2231.scope\n";
+        let terminal = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-org.gnome.Terminal-9.scope\n";
+        assert_eq!(token_file(claude), "portal-token-com.anthropic.Claude");
+        assert_eq!(token_file(code), "portal-token-com.microsoft.VSCode");
+        assert_eq!(token_file(terminal), "portal-token-gnome-org.gnome.Terminal");
+        assert_ne!(token_file(claude), token_file(code));
+
+        // A run the desktop did not start, or a system with no cgroup to read.
+        assert_eq!(token_file("0::/user.slice/user-1000.slice/session-3.scope\n"), "portal-token");
+        assert_eq!(token_file(""), "portal-token");
+    }
 
     #[test]
     fn the_senders_with_open_requests_are_read_out_of_the_portals_tree() {

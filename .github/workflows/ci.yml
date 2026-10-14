@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:
+  # A run on main is what writes the cache every branch starts from: a
+  # pull request's run restores the cache of its base branch.
+  push:
+    branches: [main]
 
 permissions: {}
 
@@ -30,17 +34,37 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
+      # The compiled dependencies of every project, kept between runs under a
+      # key of the lock files and the compiler, with the newest cache under
+      # the same prefix restored when the key has changed. Each project
+      # builds into its own `.cache`. Saved on failure too, so a run that
+      # fails in a test still spares the next one the compile.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            markdown-notes -> .cache
+            tools/mini-host -> .cache
+            tools/vst3-loader -> .cache
+            tools/find-text -> .cache
+            tools/window-shot -> .cache
+          cache-on-failure: true
+
       # The build asks pkg-config for fontconfig, freetype and wayland-client.
       # The rendering tests draw through Vulkan, which a runner only has in
-      # software, in the system's sans-serif and monospace faces. One of the
-      # build tool's own tests runs ffmpeg.
+      # software. The diagrams are lettered in Arial, which Windows and macOS
+      # have and Ubuntu gets from Microsoft's core fonts, whose licence has to
+      # be accepted before the package will install. One of the build tool's
+      # own tests runs ffmpeg.
       - name: Install what the Linux build and tests need
         if: runner.os == 'Linux'
         run: |
+          echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             pkg-config libfontconfig-dev libfreetype-dev libwayland-dev \
-            mesa-vulkan-drivers fonts-noto-core fonts-dejavu-mono ffmpeg
+            mesa-vulkan-drivers fonts-noto-core fonts-dejavu-mono ffmpeg \
+            ttf-mscorefonts-installer
+          fc-list | grep -i arial
 
       - name: Every project's tests
         if: runner.os != 'Windows'
