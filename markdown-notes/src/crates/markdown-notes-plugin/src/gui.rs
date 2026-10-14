@@ -1957,11 +1957,11 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         previous = Some(block);
 
         if let Some(placed) = picture_at(block.line) {
-            let (line, painted) = picture_row(ui, placed, &selection, &palette);
+            let (line, shown_at) = picture_row(ui, placed, &selection, &palette);
             if placed.diagram {
-                diagram_rects.push(painted);
+                diagram_rects.push(shown_at);
             }
-            picture_rects.push(DrawnPicture { rect: line.rect, failed: placed.failed });
+            picture_rects.push(DrawnPicture { rect: shown_at, failed: placed.failed });
             drawn.push(line);
             continue;
         }
@@ -2373,10 +2373,14 @@ fn picture_row(
 ) -> (DrawnLine, egui::Rect) {
     let across = ui.available_width();
     let fit = (across / placed.size.x).min(1.0);
-    let size = placed.size * fit;
+    // On the pixel grid, at a whole number of pixels: the layout lands rows
+    // on fractions of a pixel, and a texel drawn across two pixels is a blur.
+    let ppp = ui.ctx().pixels_per_point();
+    let whole = |v: f32| (v * ppp).round() / ppp;
+    let size = egui::vec2(whole(placed.size.x * fit), whole(placed.size.y * fit));
     let (rect, _) = ui.allocate_exact_size(egui::vec2(across.max(size.x), size.y), Sense::hover());
 
-    let picture = egui::Rect::from_min_size(rect.min, size);
+    let picture = egui::Rect::from_min_size(egui::pos2(whole(rect.min.x), whole(rect.min.y)), size);
     ui.painter().image(
         placed.texture,
         picture,

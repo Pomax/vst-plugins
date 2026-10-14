@@ -52,43 +52,9 @@ impl SystemFontMeasurer {
         }
     }
 
-    /// Pick a face for the families asked for, falling back through the list
-    /// and then to anything sans-serif the machine has.
-    fn face_for(&self, families: &str, bold: bool) -> Option<fontdb::ID> {
-        let wanted: Vec<fontdb::Family> = families
-            .split(',')
-            .map(|name| name.trim().trim_matches(['"', '\'']))
-            .filter(|name| !name.is_empty())
-            .map(|name| match name.to_ascii_lowercase().as_str() {
-                "sans-serif" => fontdb::Family::SansSerif,
-                "serif" => fontdb::Family::Serif,
-                "monospace" => fontdb::Family::Monospace,
-                "cursive" => fontdb::Family::Cursive,
-                "fantasy" => fontdb::Family::Fantasy,
-                _ => fontdb::Family::Name(name),
-            })
-            .collect();
-        let wanted = if wanted.is_empty() {
-            vec![fontdb::Family::SansSerif]
-        } else {
-            wanted
-        };
-
-        self.fonts.query(&fontdb::Query {
-            families: &wanted,
-            weight: if bold {
-                fontdb::Weight::BOLD
-            } else {
-                fontdb::Weight::NORMAL
-            },
-            stretch: fontdb::Stretch::Normal,
-            style: fontdb::Style::Normal,
-        })
-    }
-
     /// The advance width of one line, shaped, in pixels.
     fn shaped_width_px(&self, line: &str, families: &str, size: f64, bold: bool) -> Option<f64> {
-        let id = self.face_for(families, bold)?;
+        let id = face_for(&self.fonts, families, bold)?;
         self.fonts.with_face_data(id, |data, index| {
             let font = harfrust::FontRef::from_index(data, index).ok()?;
             let shaping = harfrust::ShaperData::new(&font);
@@ -129,6 +95,40 @@ impl SystemFontMeasurer {
         }
         width
     }
+}
+
+/// Pick a face for the families asked for, a CSS list, falling back through
+/// it and then to anything sans-serif the machine has.
+pub fn face_for(fonts: &fontdb::Database, families: &str, bold: bool) -> Option<fontdb::ID> {
+    let wanted: Vec<fontdb::Family> = families
+        .split(',')
+        .map(|name| name.trim().trim_matches(['"', '\'']))
+        .filter(|name| !name.is_empty())
+        .map(|name| match name.to_ascii_lowercase().as_str() {
+            "sans-serif" => fontdb::Family::SansSerif,
+            "serif" => fontdb::Family::Serif,
+            "monospace" => fontdb::Family::Monospace,
+            "cursive" => fontdb::Family::Cursive,
+            "fantasy" => fontdb::Family::Fantasy,
+            _ => fontdb::Family::Name(name),
+        })
+        .collect();
+    let wanted = if wanted.is_empty() {
+        vec![fontdb::Family::SansSerif]
+    } else {
+        wanted
+    };
+
+    fonts.query(&fontdb::Query {
+        families: &wanted,
+        weight: if bold {
+            fontdb::Weight::BOLD
+        } else {
+            fontdb::Weight::NORMAL
+        },
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    })
 }
 
 /// What merman's `TextStyle` says, in the terms this module needs.
