@@ -1,10 +1,10 @@
 ---
-title: Example Project Documentation
-description: This is an example document for use with the "Markdown Notes" VST effect plugin, showing off the various features.
+title: How to use this plugin
+description: an demo document that shows off how to use this plugin
 authors: Pomax, https://mastodon.social/@TheRealPomax
 ---
 
-# Outline
+# Intro
 
 Some kind of text outlining the project brief, maybe some stake holders like this:
 
@@ -84,11 +84,25 @@ Images end up in the "images" tab as base64 encoded strings, so there's no loose
 
 # Melody
 
-Everyone likes a motown string section, right? Which VST are good for that?
+Everyone likes a motown string section, right? Which VST are good for that? What do we even need?
+
+- [ ] stabs
+- [ ] staccato
+- [ ] poly legato
+
+Probably not pizz, but let's layer it with a brass section
+
+- [ ] Can we justify Fablesound Big Band?
+- [ ] Hollywood pop brass might work
+- [ ] we could see if Rotary is sufficient...
+
+Anyway, checklist, super handy.
 
 # Vocals
 
-Let's talk about singers. Or artificial voice, either as placeholder or even "phase 1" with real vocals in follow-up.
+Let's talk about singers. Or artificial voice, either as placeholder or even "phase 1" with real vocals in follow-up. And I don't mean like Realitone Blue or 8Dio Terry or something and more like Dreamtonics' Synthetizer V Studio 2 Pro, with the Felicia or Sheena voices.
+
+(I mean you could use Suno, I guess, but have you *actually* read their EULA? Because I doubt it)
 
 # Timeline
 

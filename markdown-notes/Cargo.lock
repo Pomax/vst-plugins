@@ -3486,6 +3486,7 @@ dependencies = [
  "egui 0.36.2",
  "egui-baseview",
  "egui_kittest",
+ "flate2",
  "font-kit",
  "harfrust",
  "image",

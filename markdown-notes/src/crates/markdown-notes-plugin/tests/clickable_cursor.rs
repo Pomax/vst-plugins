@@ -129,7 +129,7 @@ fn the_file_menu_button_shows_three_dots() {
 }
 
 /// What the file menu holds, in the order it shows them.
-const FILE_OPTIONS: [&str; 3] = ["Open…", "Save", "Save As…"];
+const FILE_OPTIONS: [&str; 4] = ["Open…", "Save", "Save As…", "Load explainer"];
 
 fn open_the_file_menu(harness: &mut Harness<'static>) {
     let button = harness.get_by_label(FILE_MENU).rect().center();
@@ -174,8 +174,11 @@ fn the_file_menus_options_fill_it() {
             "{name} is not as wide as the first option"
         );
     }
-    assert_eq!(options[0].bottom(), options[1].top(), "a gap under Open");
-    assert_eq!(options[1].bottom(), options[2].top(), "a gap under Save");
+    // The three file options touch; the explainer sits below a separator.
+    for (name, pair) in FILE_OPTIONS.iter().zip(options[..3].windows(2)) {
+        assert_eq!(pair[0].bottom(), pair[1].top(), "a gap under {name}");
+    }
+    assert!(options[3].top() > options[2].bottom(), "no separator above Load explainer");
 }
 
 #[test]

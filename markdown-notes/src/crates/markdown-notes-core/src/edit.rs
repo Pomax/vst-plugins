@@ -147,6 +147,8 @@ pub enum Command {
     Open,
     Save,
     SaveAs,
+    /// Load the explainer document that ships inside the plugin.
+    LoadExplainer,
 }
 
 /// Outcome of a key press.
