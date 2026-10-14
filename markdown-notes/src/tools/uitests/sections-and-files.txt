@@ -189,8 +189,28 @@ showing:sprinkles|60
 moveto:300,300
 hidden:sprinkles|60
 
-# The name is not part of the file, so opening one leaves it alone.
-expect:title is funky cake with a cherry on top and sprinkles
-expect:sections is 2
-expect:section 0 is # Mix notes\n\nlevels are close
-expect:section 1 is # Drum bus
+# The name is not part of the document, so opening a file leaves it alone:
+# the file written here carries it in its frontmatter, and what it holds is
+# the two sections the open brought in, in order. The window is at the small
+# size the drag above left it, where the menu button sits further left.
+plugin:320,50
+press:Save As|350,153
+dialog:Save
+type:%CACHE%\opened.md
+type:{ENTER}
+nodialog:Save
+written:%CACHE%\opened.md|title: funky cake with a cherry on top and sprinkles\n---\n\n# Mix notes\n\nlevels are close\n\n# Drum bus
+cleanup:%CACHE%\opened.md
+
+# The menu's last option loads the explainer that ships inside the plugin:
+# it replaces the document, and its frontmatter names it. The document needs no file, so nothing is asked for.
+plugin:320,50
+press:Load explainer|350,190
+showing:How to use this plugin|60
+showing:stake holders|140
+hidden:levels are close|140
+shot:%CACHE%\explainer-loaded.png
+
+expect:title is How to use this plugin
+expect:sections is 7
+expect:section 0 is # Intro\n\nSome kind of text outlining the project brief, maybe some stake holders like this:\n\n- Alice\n- Bob\n- Carol\n\nWith [links](https://example.com) because obviously those should work.\n\nAlso, tabs, because you want to be able to organize your work well enough that you can use this VSTi as part of a template, where it's simply part of your master out and has everything already set up for you to "fill in the blanks".

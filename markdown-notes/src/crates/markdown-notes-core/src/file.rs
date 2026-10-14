@@ -22,6 +22,15 @@ impl Editor {
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
         let path = path.as_ref();
         let contents = fs::read_to_string(path)?;
+        self.open_text(&contents);
+        self.file = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// Load `contents`, the bytes of a markdown file, into the editor, the
+    /// way [`Editor::open_path`] loads a file, with no file to save back to:
+    /// Save asks where, as it does for a document that was never saved.
+    pub fn open_text(&mut self, contents: &str) {
         // Normalise CRLF so caret arithmetic stays byte-exact, and drop the
         // byte order mark Windows editors put in front of the first line.
         let contents = contents.replace("\r\n", "\n");
@@ -34,10 +43,9 @@ impl Editor {
             }
             self.frontmatter = block;
         }
-        self.file = Some(path.to_path_buf());
+        self.file = None;
         self.dirty = false;
         self.clear_history();
-        Ok(())
     }
 
     /// Write to the current file. Fails if the document has no path yet —

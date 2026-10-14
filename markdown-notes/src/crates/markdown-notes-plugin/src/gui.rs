@@ -955,11 +955,7 @@ fn toolbar_buttons(
         } else {
             egui::RichText::new("Save")
         };
-        for (label, command) in [
-            (egui::RichText::new("Open…"), Command::Open),
-            (save, Command::Save),
-            (egui::RichText::new("Save As…"), Command::SaveAs),
-        ] {
+        let mut option = |ui: &mut egui::Ui, label: egui::RichText, command: Command| {
             if ui
                 .button(label)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -968,7 +964,14 @@ fn toolbar_buttons(
                 crate::files::perform_off_thread(&gui.editor, &gui.report, command);
                 ui.close();
             }
-        }
+        };
+        option(ui, egui::RichText::new("Open…"), Command::Open);
+        option(ui, save, Command::Save);
+        option(ui, egui::RichText::new("Save As…"), Command::SaveAs);
+        // The explainer is not a file of the user's, so it sits apart from
+        // the three that are.
+        ui.separator();
+        option(ui, egui::RichText::new("Load explainer"), Command::LoadExplainer);
     });
 
     ui.separator();

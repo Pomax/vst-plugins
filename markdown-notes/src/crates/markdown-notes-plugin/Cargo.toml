@@ -41,6 +41,9 @@ serde_json = "1"
 base64 = "0.22"
 # SVG to pixels.
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts"] }
+# The explainer document, deflated at build time and inflated when loaded.
+# flate2 is already in the binary under the PNG decoder, so this adds none.
+flate2 = "1"
 # Measuring text for merman's layout, with the fonts the page is drawn in.
 # HarfRust is HarfBuzz's own Rust implementation and is already in the binary
 # under egui, so measuring with it adds nothing and shapes the same way the
@@ -73,6 +76,10 @@ objc2-app-kit = { version = "0.3", features = ["NSView", "NSResponder", "NSDragg
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows-core = "0.62.2"
+
+[build-dependencies]
+# Deflates src/default-content.md into the build directory, see build.rs.
+flate2 = "1"
 
 [dev-dependencies]
 # The roles the headless tests query by. Already in the tree under

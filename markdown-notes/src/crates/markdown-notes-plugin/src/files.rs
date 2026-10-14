@@ -13,6 +13,21 @@ use crate::Shared;
 /// Where a dialog running off the drawing thread leaves its error message.
 pub type Report = Arc<Mutex<Option<String>>>;
 
+/// The explainer document, the project's `src/default-content.md` deflated
+/// when the plugin is built, see build.rs.
+const EXPLAINER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default-content.deflate"));
+
+/// The explainer document as text. The deflated bytes were made from a UTF-8
+/// file by the build, so inflating cannot fail on what it was given.
+fn explainer() -> String {
+    use std::io::Read;
+    let mut text = String::new();
+    flate2::read::DeflateDecoder::new(EXPLAINER)
+        .read_to_string(&mut text)
+        .expect("inflating the explainer document");
+    text
+}
+
 /// Run a host-level command on a thread of its own.
 ///
 /// A native dialog is modal: it spins its own event loop until dismissed.
@@ -62,6 +77,13 @@ pub fn perform(editor: &Shared, command: Command) -> Option<String> {
                 Err(_) => Some("editor is unavailable".into()),
             }
         }
+        Command::LoadExplainer => match editor.lock() {
+            Ok(mut ed) => {
+                ed.open_text(&explainer());
+                None
+            }
+            Err(_) => Some("editor is unavailable".into()),
+        },
         Command::SaveAs => {
             let suggested = editor
                 .lock()
