@@ -31,6 +31,10 @@ struct Window {
 }
 
 fn open(text: &str) -> Window {
+    open_at(text, WIDTH, HEIGHT)
+}
+
+fn open_at(text: &str, width: f32, height: f32) -> Window {
     let editor = Arc::new(Mutex::new(Editor::with_text(text)));
     if let Ok(mut e) = editor.lock() {
         e.theme = Theme::Light;
@@ -40,7 +44,7 @@ fn open(text: &str) -> Window {
     let pictures = state.pictures();
 
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(WIDTH, HEIGHT))
+        .with_size(egui::vec2(width, height))
         .wgpu()
         .build_ui(move |ui| markdown_notes_plugin::gui::draw_frame_for_test(ui, &mut state));
 
@@ -153,6 +157,64 @@ fn a_mermaid_block_away_from_the_caret_is_a_picture() {
         ink(&image, pictures[0]) > 200,
         "nothing is drawn where the picture is meant to be"
     );
+}
+
+/// The chart from issue 18, a filter chain across the page with labelled
+/// edges, which is wider than the window the other tests use.
+const CHAIN: &str = "flowchart LR\n  A[EQ: profile 7]\n  B[Sat: Saturn2]\n  C[Dist: Decapitator]\n  D[MTurboComp]\n  E[Bassline]\n  E2[Out]\n  A --> B\n  A --> |sidechain| E\n  E --> E2\n  B --> C\n  B --> D\n  C --> |50%| D\n";
+
+/// The picture is drawn texel for pixel: what the window shows inside the
+/// picture's rectangle is the rasterised picture itself, not a resampling of
+/// it. A picture drawn off the pixel grid, or stretched by a fraction, blurs
+/// every edge in it. The window is wide enough for the chart, so nothing is
+/// scaled to fit.
+#[test]
+fn the_picture_is_drawn_pixel_for_pixel() {
+    let text = format!("intro\n\n```mermaid\n{CHAIN}```\n\noutro");
+    let mut window = open_at(&text, 1100.0, 400.0);
+    let pictures = window.pictures();
+    assert_eq!(pictures.len(), 1);
+    let rect = pictures[0];
+    let image = window.image();
+    let kept = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../.cache/uitests/mermaid-pixel-for-pixel.png");
+    let _ = image.save(&kept);
+
+    // The same code, drawn the way the window draws it: light theme, on the
+    // light theme's page, at the harness's one pixel per point.
+    let page = markdown_notes_core::Colours::light().window_background;
+    let look = markdown_notes_plugin::diagram::Look::new(false, [page.r, page.g, page.b], 1.0);
+    let code = CHAIN;
+    let fonts = markdown_notes_plugin::diagram::system_fonts();
+    let raster = markdown_notes_plugin::diagram::draw(code, look, &fonts).expect("nothing drawn");
+
+    // The row is as wide as the document and as tall as the picture, which
+    // starts at its top left corner.
+    assert_eq!(
+        rect.height(),
+        raster.height as f32,
+        "the picture's row is {} tall, not the picture's {} pixels",
+        rect.height(),
+        raster.height
+    );
+    let (left, top) = (rect.left(), rect.top());
+    assert!(
+        left.fract() == 0.0 && top.fract() == 0.0,
+        "the picture starts at {left},{top}, between pixels"
+    );
+
+    let mut off = 0;
+    for y in 0..raster.height {
+        for x in 0..raster.width {
+            let at = (y * raster.width + x) * 4;
+            let want = &raster.rgba[at..at + 3];
+            let got = image.get_pixel(left as u32 + x as u32, top as u32 + y as u32).0;
+            if (0..3).any(|c| (i32::from(want[c]) - i32::from(got[c])).abs() > 2) {
+                off += 1;
+            }
+        }
+    }
+    assert_eq!(off, 0, "{off} of the picture's pixels are not drawn as rasterised");
 }
 
 #[test]

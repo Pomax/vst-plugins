@@ -82,7 +82,10 @@ pub fn draw(code: &str, look: Look, fonts: &Arc<fontdb::Database>) -> Option<Pic
     }
 
     let svg = std::panic::catch_unwind(|| svg(code, look)).ok()??;
-    rasterise(&svg, look, fonts)
+    // The words last, hinted for the scale the picture is drawn at: resvg
+    // would draw them unhinted.
+    let lettered = crate::words::as_hinted_paths(&svg, fonts, look.scale());
+    rasterise(&lettered, look, fonts)
 }
 
 /// `code` as SVG, in the light or the dark theme `look` asks for, with the
@@ -114,11 +117,227 @@ pub fn svg(code: &str, look: Look) -> Option<String> {
     // out again as plain text wherever the label is by then, so a label moved
     // afterwards would leave its words behind.
     let widened = crate::node_widths::widen_the_states(&svg);
-    let squared = crate::elbows::square_the_edges(&widened);
+    let squared = if runs_down_the_page(code) {
+        crate::elbows::square_the_edges(&widened)
+    } else {
+        widened
+    };
     let safe = merman::render::SvgPipeline::resvg_safe()
         .process_to_string(&squared)
         .ok()?;
-    Some(with_solid_labels(&without_its_own_page(&safe), look.background))
+    let solid = with_solid_labels(&without_its_own_page(&safe), look.background);
+    Some(on_the_pixel_grid(&with_padded_labels(&solid)))
+}
+
+/// Put the picture on the pixel grid before it is rasterised.
+///
+/// merman lays nodes, edges and words out at fractions of a pixel, and resvg
+/// draws them anti-aliased there: a two pixel border or edge becomes three
+/// rows, two of them grey. Every placement is rounded to a whole pixel, and a
+/// node's box is made an even number of pixels wide and tall, so its two pixel
+/// border, centred on the box's edge, covers two pixels exactly. Diagonal runs
+/// stay anti-aliased, which is how a diagonal is drawn.
+/// The grid is the SVG's, so the picture is crisp at a whole number of pixels
+/// per point.
+fn on_the_pixel_grid(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(at) = rest.find('<') {
+        let Some(len) = rest[at..].find('>') else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        out.push_str(&snapped(&rest[at..at + len + 1]));
+        rest = &rest[at + len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One tag of the SVG with its placement rounded to whole pixels.
+fn snapped(tag: &str) -> String {
+    let name = tag[1..]
+        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .next()
+        .unwrap_or("");
+    let round = |n: f64| n.round();
+    let placed = with_translate(tag, round);
+    match name {
+        "rect" if tag.contains("label-container") => centred_box(&placed),
+        "rect" | "text" | "circle" | "line" => {
+            ["x", "y", "width", "height", "cx", "cy", "x1", "y1", "x2", "y2"]
+                .iter()
+                .fold(placed, |tag, name| with_number(&tag, name, round))
+        }
+        "path" if tag.contains("data-edge=\"true\"") => with_path_rounded(&placed),
+        _ => placed,
+    }
+}
+
+/// A node's box, which sits centred on the node's origin with a two pixel
+/// border: an even number of pixels wide and tall, and still centred, so its
+/// edges fall on whole pixels and the border fills two.
+fn centred_box(tag: &str) -> String {
+    let spaced = format!(" {tag}");
+    let number = |name: &str| attribute(&spaced, name)?.parse::<f64>().ok();
+    let (Some(x), Some(y), Some(w), Some(h)) = (number("x"), number("y"), number("width"), number("height")) else {
+        return tag.to_string();
+    };
+    if (x + w / 2.0).abs() > 0.01 || (y + h / 2.0).abs() > 0.01 {
+        return ["x", "y", "width", "height"]
+            .iter()
+            .fold(tag.to_string(), |tag, name| with_number(&tag, name, f64::round));
+    }
+    let even = |n: f64| 2.0 * (n / 2.0).round();
+    let (w, h) = (even(w), even(h));
+    let tag = with_number(tag, "width", |_| w);
+    let tag = with_number(&tag, "height", |_| h);
+    let tag = with_number(&tag, "x", |_| -w / 2.0);
+    with_number(&tag, "y", |_| -h / 2.0)
+}
+
+/// The value of `name="..."` in `tag`, which starts with a space.
+fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let at = tag.find(&key)? + key.len();
+    let len = tag[at..].find('"')?;
+    Some(&tag[at..at + len])
+}
+
+/// `tag` with the two numbers of its `translate(x, y)` put through `f`.
+fn with_translate(tag: &str, f: impl Fn(f64) -> f64) -> String {
+    const OPENING: &str = "translate(";
+    let Some(at) = tag.find(OPENING).map(|at| at + OPENING.len()) else {
+        return tag.to_string();
+    };
+    let Some(len) = tag[at..].find(')') else {
+        return tag.to_string();
+    };
+    let numbers: Option<Vec<f64>> = tag[at..at + len]
+        .split(',')
+        .map(|n| n.trim().parse::<f64>().ok())
+        .collect();
+    match numbers.as_deref() {
+        Some([x, y]) => format!("{}{},{}{}", &tag[..at], f(*x), f(*y), &tag[at + len..]),
+        _ => tag.to_string(),
+    }
+}
+
+/// `tag` with every number in its `d` rounded to a whole pixel. The arcs'
+/// radii and flags are whole already and stay so.
+fn with_path_rounded(tag: &str) -> String {
+    let spaced = format!(" {tag}");
+    let Some(d) = attribute(&spaced, "d") else {
+        return tag.to_string();
+    };
+    let mut rounded = String::with_capacity(d.len());
+    let mut number = String::new();
+    let flush = |number: &mut String, rounded: &mut String| {
+        if let Ok(n) = number.parse::<f64>() {
+            rounded.push_str(&n.round().to_string());
+        } else {
+            rounded.push_str(number);
+        }
+        number.clear();
+    };
+    for c in d.chars() {
+        if c.is_ascii_digit() || c == '.' || (c == '-' && number.is_empty()) {
+            number.push(c);
+        } else {
+            flush(&mut number, &mut rounded);
+            rounded.push(c);
+        }
+    }
+    flush(&mut number, &mut rounded);
+    tag.replacen(&format!("d=\"{d}\""), &format!("d=\"{rounded}\""), 1)
+}
+
+/// `tag` with the number in its `name` attribute put through `f`.
+fn with_number(tag: &str, name: &str, f: impl Fn(f64) -> f64) -> String {
+    let spaced = format!(" {tag}");
+    let key = format!(" {name}=\"");
+    let Some(at) = spaced.find(&key).map(|at| at + key.len()) else {
+        return tag.to_string();
+    };
+    let Some(len) = spaced[at..].find('"') else {
+        return tag.to_string();
+    };
+    match spaced[at..at + len].parse::<f64>() {
+        Ok(n) => format!("{}{}{}", &spaced[1..at], f(n), &spaced[at + len..]),
+        Err(_) => tag.to_string(),
+    }
+}
+
+/// Room between a label's words and the edge of the box behind them, left
+/// and right, and above and below.
+const LABEL_PADDING: (f64, f64) = (5.0, 2.0);
+
+/// How far the corners of the box behind a label are rounded.
+const LABEL_CORNER: f64 = 4.0;
+
+/// Widen the box behind every edge label by [`LABEL_PADDING`] on each side,
+/// and round its corners by [`LABEL_CORNER`].
+///
+/// merman draws the box exactly round the words, with square corners.
+fn with_padded_labels(svg: &str) -> String {
+    const BOX: &str = "labelBkg\"><rect ";
+    let (across, down) = LABEL_PADDING;
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(at) = rest.find(BOX) {
+        let start = at + BOX.len();
+        let Some(len) = rest[start..].find("/>") else {
+            break;
+        };
+        let padded = [("x", -across), ("y", -down), ("width", 2.0 * across), ("height", 2.0 * down)]
+            .into_iter()
+            .fold(rest[start..start + len].to_string(), |tag, (name, by)| moved(&tag, name, by));
+        out.push_str(&rest[..start]);
+        out.push_str(&padded);
+        out.push_str(&format!(" rx=\"{LABEL_CORNER}\" ry=\"{LABEL_CORNER}\""));
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `tag` with the number in its `name` attribute moved by `by`.
+fn moved(tag: &str, name: &str, by: f64) -> String {
+    with_number(tag, name, |n| n + by)
+}
+
+/// Whether the diagram's rows run down the page, which is the only way
+/// [`crate::elbows`] can route an edge: out of the bottom of one node and into
+/// the top of the next. A flowchart declared `LR` or `RL` runs across the page,
+/// and so does a state diagram with a `direction LR` or `direction RL` line;
+/// their edges keep the paths merman drew.
+fn runs_down_the_page(code: &str) -> bool {
+    let mut lines = code
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("%%"))
+        .peekable();
+    // A frontmatter block is settings, not the diagram.
+    if lines.peek() == Some(&"---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line == "---" {
+                break;
+            }
+        }
+    }
+    let across = |direction: Option<&str>| matches!(direction, Some("LR" | "RL"));
+    let Some(header) = lines.next() else {
+        return true;
+    };
+    let mut words = header.split_whitespace();
+    if matches!(words.next(), Some("flowchart" | "graph")) {
+        return !across(words.next());
+    }
+    !lines.any(|line| {
+        let mut words = line.split_whitespace();
+        words.next() == Some("direction") && across(words.next())
+    })
 }
 
 /// Make the box behind every edge label opaque.
@@ -276,9 +495,12 @@ impl Gallery {
                 [picture.width, picture.height],
                 &picture.rgba,
             );
+            // Sized by its texels, not by the SVG: drawn at this size, every
+            // texel lands on one pixel. The SVG's own size is a fraction of a
+            // pixel smaller, and drawing it at that resamples the whole picture.
             Shown {
                 texture: ctx.load_texture("mermaid", image, egui::TextureOptions::LINEAR),
-                size: egui::vec2(picture.points[0], picture.points[1]),
+                size: egui::vec2(picture.width as f32, picture.height as f32) / look.scale(),
                 failed,
             }
         });

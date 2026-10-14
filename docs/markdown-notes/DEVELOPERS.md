@@ -443,6 +443,8 @@ other get heights of their own: out of a node the longest highest, into a node
 the shortest highest, which keeps edges of one node from crossing each other.
 Where an edge does cross another it goes over it in a bump.
 
+That routing only knows rows that run down the page. A flowchart declared `LR` or `RL`, or a state diagram with a `direction LR` or `RL` line, keeps the paths merman drew, which with `curve: linear` are straight runs into the side of the node reached, with the label on the edge; `diagram::runs_down_the_page` reads the direction off the code.
+
 `mermaid-rs-renderer` was tried against the same diagram with spacing of up to
 160. Its flowchart routing loops edges around nodes and leaves labels off their
 lines. The pictures are made by
