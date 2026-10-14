@@ -382,20 +382,29 @@ mod tests {
         assert_eq!(as_hinted_paths(lines, &crate::diagram::system_fonts(), 1.0), lines);
     }
 
+    /// A machine with any font at all answers, whether or not it has one of
+    /// the families asked for.
     #[test]
     fn a_face_is_found_for_the_labels_families() {
         let fonts = crate::diagram::system_fonts();
+        if fonts.is_empty() {
+            return;
+        }
         let words = words_of(LABEL, &[]).unwrap();
         assert!(
             crate::measure::face_for(&fonts, &words.families, false).is_some(),
-            "no face on this machine answers for {}",
-            words.families
+            "no face on this machine answers for {}, though it has {} faces",
+            words.families,
+            fonts.len()
         );
     }
 
     #[test]
     fn a_label_becomes_a_path() {
         let fonts = crate::diagram::system_fonts();
+        if fonts.is_empty() {
+            return;
+        }
         let words = words_of(LABEL, &[]).unwrap();
         let id = crate::measure::face_for(&fonts, &words.families, false).expect("no face");
         let drawn = fonts

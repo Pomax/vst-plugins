@@ -128,6 +128,10 @@ struct Gui {
     report: crate::files::Report,
     /// Last known system setting, refreshed on a timer.
     system_dark: bool,
+    /// Whether `system_dark` was given rather than read from the operating
+    /// system, and so is never read again. A test window says what the
+    /// system's setting is.
+    system_theme_pinned: bool,
     checked_at: Instant,
     /// What is currently applied, so visuals are only rebuilt on a change.
     applied_dark: Option<bool>,
@@ -262,6 +266,7 @@ impl Gui {
             error: None,
             report: crate::files::Report::default(),
             system_dark: system_is_dark(),
+            system_theme_pinned: false,
             checked_at: Instant::now(),
             applied_dark: None,
             applied_colours: None,
@@ -317,9 +322,10 @@ impl Gui {
         }
     }
 
-    /// Re-read the OS theme if the poll interval has elapsed.
+    /// Re-read the OS theme if the poll interval has elapsed, unless the
+    /// setting was given.
     fn refresh_system_theme(&mut self) {
-        if self.checked_at.elapsed() >= SYSTEM_THEME_POLL {
+        if !self.system_theme_pinned && self.checked_at.elapsed() >= SYSTEM_THEME_POLL {
             self.system_dark = system_is_dark();
             self.checked_at = Instant::now();
         }
@@ -586,6 +592,7 @@ impl TestGui {
         let opened = editor.lock().map(|e| e.opened()).ok();
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.system_theme_pinned = true;
         gui.arrived = opened;
         TestGui(gui)
     }
@@ -595,6 +602,7 @@ impl TestGui {
     pub fn opening(editor: Shared, system_dark: bool) -> TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.system_theme_pinned = true;
         TestGui(gui)
     }
 

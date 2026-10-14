@@ -98,7 +98,9 @@ impl SystemFontMeasurer {
 }
 
 /// Pick a face for the families asked for, a CSS list, falling back through
-/// it and then to anything sans-serif the machine has.
+/// it, then to anything sans-serif the machine has, then to any face at all:
+/// fontdb's idea of sans-serif is Arial unless told otherwise, and a machine
+/// without Arial still has fonts.
 pub fn face_for(fonts: &fontdb::Database, families: &str, bold: bool) -> Option<fontdb::ID> {
     let wanted: Vec<fontdb::Family> = families
         .split(',')
@@ -119,16 +121,28 @@ pub fn face_for(fonts: &fontdb::Database, families: &str, bold: bool) -> Option<
         wanted
     };
 
-    fonts.query(&fontdb::Query {
-        families: &wanted,
-        weight: if bold {
-            fontdb::Weight::BOLD
-        } else {
-            fontdb::Weight::NORMAL
-        },
-        stretch: fontdb::Stretch::Normal,
-        style: fontdb::Style::Normal,
-    })
+    let weight = if bold {
+        fontdb::Weight::BOLD
+    } else {
+        fontdb::Weight::NORMAL
+    };
+    let query = |families: &[fontdb::Family]| {
+        fonts.query(&fontdb::Query {
+            families,
+            weight,
+            stretch: fontdb::Stretch::Normal,
+            style: fontdb::Style::Normal,
+        })
+    };
+    query(&wanted)
+        .or_else(|| query(&[fontdb::Family::SansSerif]))
+        .or_else(|| {
+            fonts
+                .faces()
+                .find(|face| face.families.iter().any(|(name, _)| name.to_ascii_lowercase().contains("sans")))
+                .or_else(|| fonts.faces().next())
+                .map(|face| face.id)
+        })
 }
 
 /// What merman's `TextStyle` says, in the terms this module needs.

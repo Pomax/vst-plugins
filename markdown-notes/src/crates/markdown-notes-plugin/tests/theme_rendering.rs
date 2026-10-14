@@ -14,6 +14,12 @@ const SAMPLE: &str = "# Heading\n\nSome **bold** text and `code`.\n\n> A quote\n
 
 /// Render the editor at a given theme and hand back the image.
 fn render(theme: Theme, system_dark: bool) -> image::RgbaImage {
+    render_after(theme, system_dark, std::time::Duration::ZERO)
+}
+
+/// The same, with `wait` passed between the window being made and its
+/// frames being drawn.
+fn render_after(theme: Theme, system_dark: bool, wait: std::time::Duration) -> image::RgbaImage {
     let editor = Arc::new(Mutex::new(Editor::with_text(SAMPLE)));
     if let Ok(mut e) = editor.lock() {
         e.theme = theme;
@@ -31,8 +37,28 @@ fn render(theme: Theme, system_dark: bool) -> image::RgbaImage {
     // are not bound to anything.
     markdown_notes_plugin::gui::TestGui::install_fonts(&harness.ctx);
 
+    std::thread::sleep(wait);
     harness.run_steps(3);
     harness.render().expect("rendering failed")
+}
+
+/// The system setting a test window is given is the setting it keeps. A
+/// window asks the operating system again every two seconds, and a machine
+/// slow to draw its first frames crosses that; the answer the machine gives
+/// is whatever its own theme is, and the test's is not that.
+#[test]
+fn auto_keeps_the_system_setting_it_was_given_past_the_poll() {
+    let past_the_poll = std::time::Duration::from_millis(2200);
+    let when_system_is_dark = background_brightness(&render_after(Theme::Auto, true, past_the_poll));
+    let when_system_is_light = background_brightness(&render_after(Theme::Auto, false, past_the_poll));
+    assert!(
+        when_system_is_dark < 80.0,
+        "auto on a dark system should still render dark after the poll, was {when_system_is_dark}"
+    );
+    assert!(
+        when_system_is_light > 200.0,
+        "auto on a light system should still render light after the poll, was {when_system_is_light}"
+    );
 }
 
 /// Brightness of the most common colour — the background, since it covers most
