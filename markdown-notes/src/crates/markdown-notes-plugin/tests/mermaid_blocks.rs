@@ -166,12 +166,12 @@ const CHAIN: &str = "flowchart LR\n  A[EQ: profile 7]\n  B[Sat: Saturn2]\n  C[Di
 /// The picture is drawn texel for pixel: what the window shows inside the
 /// picture's rectangle is the rasterised picture itself, not a resampling of
 /// it. A picture drawn off the pixel grid, or stretched by a fraction, blurs
-/// every edge in it. The window is wide enough for the chart, so nothing is
-/// scaled to fit.
+/// every edge in it. The window is wider than the chart comes out in any
+/// font a machine letters it in, so nothing is scaled to fit.
 #[test]
 fn the_picture_is_drawn_pixel_for_pixel() {
     let text = format!("intro\n\n```mermaid\n{CHAIN}```\n\noutro");
-    let mut window = open_at(&text, 1100.0, 400.0);
+    let mut window = open_at(&text, 1600.0, 400.0);
     let pictures = window.pictures();
     assert_eq!(pictures.len(), 1);
     let rect = pictures[0];
