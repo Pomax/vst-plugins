@@ -5,8 +5,9 @@
 //! ```
 //!
 //! Prints the picture's `width height`, then one `x y width height` line for
-//! every place the text was read, case-insensitive, in image pixels with the
-//! origin at the top left. Exits 1 when the text is nowhere in the picture.
+//! every place the text was read, case-insensitive and without regard to
+//! spaces, in image pixels with the origin at the top left. Exits 1 when the
+//! text is nowhere in the picture.
 //!
 //! The same words can be in a picture at two sizes, a tab's label and the
 //! heading under it. A caller that knows which it wants says `smallest` or
@@ -102,16 +103,16 @@ fn main() -> ExitCode {
     // only the caller can answer. An exact match beats a containing one, so
     // the exact ones are printed first: asked for "Save" in a window that also
     // shows "Save preset" and "Save As...", the Save button leads the answer.
-    let wanted = needle.to_lowercase();
+    let wanted = squeezed(needle);
     let mut exact = Vec::new();
     let mut containing = Vec::new();
     for line in &lines.lines {
-        let lowered = line.text.to_lowercase();
+        let lowered = squeezed(&line.text);
         // The box of the matched words, not of the whole recognised line:
         // neighbouring buttons can be read as one line, and the centre of that
         // line is the gap between them, not the button.
         let box_of = words_matching(line, &wanted).unwrap_or(line.box_of);
-        if lowered.trim() == wanted {
+        if lowered == wanted {
             exact.push(box_of);
         } else if lowered.contains(&wanted) {
             containing.push(box_of);
@@ -190,7 +191,15 @@ struct Reading {
     size: (u32, u32),
 }
 
-/// The narrowest run of words in `line` whose text contains `wanted`.
+/// `text` lowered, with its spaces taken out. Recognition reads monospaced
+/// lettering as words broken at odd places, with spaces between the pieces,
+/// so text is compared without them.
+fn squeezed(text: &str) -> String {
+    text.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// The narrowest run of words in `line` whose text contains `wanted`, which
+/// is [`squeezed`] already.
 ///
 /// Recognition puts a box round every word, so the run that spells the wanted
 /// text can be boxed on its own even when the line holds more than it.
@@ -199,11 +208,10 @@ fn words_matching(line: &Line, wanted: &str) -> Option<(i32, i32, i32, i32)> {
     let mut best: Option<(usize, usize)> = None;
     for start in 0..count {
         for end in start..count {
-            let run = line.words[start..=end]
+            let run: String = line.words[start..=end]
                 .iter()
-                .map(|(text, _)| text.to_lowercase())
-                .collect::<Vec<_>>()
-                .join(" ");
+                .map(|(text, _)| squeezed(text))
+                .collect();
             if !run.contains(wanted) {
                 continue;
             }
@@ -263,7 +271,7 @@ fn read(path: &str) -> Result<Reading, String> {
     // The same goes for how its greys are pulled apart, so each size is read
     // both ways.
     for scale in enlargements(size) {
-        for greys in [Greys::Stretched, Greys::Flattened] {
+        for greys in [Greys::Stretched, Greys::Flattened, Greys::Faint] {
             lines.extend(at_scale(path, &decoder, &engine, size, scale, greys)?);
         }
     }
@@ -324,11 +332,19 @@ enum Greys {
     Stretched,
     /// Black where darker than `FLAT`, white everywhere else.
     Flattened,
+    /// Black where darker than `FAINT`, white everywhere else: for lettering
+    /// drawn in a light grey, which stretching leaves light and flattening
+    /// takes away.
+    Faint,
 }
 
 /// The grey a flattened picture is cut at.
 #[cfg(windows)]
 const FLAT: u32 = 160;
+
+/// The grey a picture read for faint lettering is cut at.
+#[cfg(windows)]
+const FAINT: u32 = 235;
 
 /// Pull the picture's greys apart, in place.
 ///
@@ -365,6 +381,8 @@ fn deepen(bitmap: &SoftwareBitmap, greys: Greys) -> Result<(), String> {
             Greys::Stretched => ((grey as i32 - 128) * 2 + 128).clamp(0, 255) as u8,
             Greys::Flattened if grey < FLAT => 0,
             Greys::Flattened => 255,
+            Greys::Faint if grey < FAINT => 0,
+            Greys::Faint => 255,
         };
         pixel[0] = pulled;
         pixel[1] = pulled;
@@ -423,7 +441,7 @@ fn one_line(line: &OcrLine, scale: u32) -> Result<Line, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{words_matching, Line};
+    use super::{squeezed, words_matching, Line};
 
     #[test]
     fn a_run_of_words_is_boxed_on_its_own() {
@@ -437,8 +455,31 @@ mod tests {
                 ("preset".to_string(), (186, 22, 54, 12)),
             ],
         };
-        assert_eq!(words_matching(&line, "load preset"), Some((140, 20, 100, 14)));
+        assert_eq!(words_matching(&line, "loadpreset"), Some((140, 20, 100, 14)));
         assert_eq!(words_matching(&line, "save"), Some((10, 20, 40, 14)));
         assert_eq!(words_matching(&line, "cancel"), None);
+    }
+
+    /// Monospaced lettering is read as pieces with spaces between them.
+    #[test]
+    fn words_read_in_pieces_still_spell_the_text() {
+        let line = Line {
+            text: "[links] (https : / / example . com)".to_string(),
+            box_of: (20, 220, 250, 14),
+            words: vec![
+                ("[links]".to_string(), (20, 220, 60, 14)),
+                ("(https".to_string(), (84, 220, 50, 14)),
+                (":".to_string(), (138, 220, 6, 14)),
+                ("/".to_string(), (148, 220, 8, 14)),
+                ("/".to_string(), (160, 220, 8, 14)),
+                ("example".to_string(), (172, 220, 70, 14)),
+                (".".to_string(), (246, 220, 6, 14)),
+                ("com)".to_string(), (256, 220, 14, 14)),
+            ],
+        };
+        assert_eq!(
+            words_matching(&line, &squeezed("https://example.com")),
+            Some((84, 220, 186, 14))
+        );
     }
 }

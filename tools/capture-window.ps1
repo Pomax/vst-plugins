@@ -23,27 +23,62 @@ param(
     # `powershell -File`, only one token binds to a parameter.
     [string]$ExeArgs = '',
     [string]$Title = 'Markdown Notes',
-    # A sequence of actions, run in order before the grab:
-    #   click:X,Y     left click at X,Y inside the window
+    # A sequence of actions, run in order before the grab. No step names a
+    # position: a place is named by what is drawn there, and found by
+    # photographing the window and reading the picture.
+    #
+    # TEXT names words the window shows, with qualifiers after a `|`:
+    #   TEXT|smallest, TEXT|largest  the one place with that lettering, for
+    #                 words the window shows at two sizes, a tab and the
+    #                 heading under it
+    #   TEXT|below LABEL  only the places under the topmost LABEL
+    # WHERE names a point:
+    #   TEXT          the middle of TEXT
+    #   before TEXT   just left of the line TEXT is on
+    #   after TEXT    the empty space right of the line TEXT is on, before the
+    #                 next thing drawn on that row or the window's edge
+    #   below TEXT    the empty space under the line TEXT is on, before the
+    #                 next thing drawn under it or the window's bottom
+    #   beside TEXT left, beside TEXT right  the thing drawn beside TEXT on
+    #                 its row, past the rest of the label TEXT is part of
+    #                 and past its frame: a glyph on a button, a task's box,
+    #                 a swatch, a dialog's close cross
+    #   between TEXT and TEXT  midway between the two
+    # with TEXT's qualifiers after it.
+    #
+    #   click:WHERE   left click there
     #   type:TEXT     send TEXT as key presses, one at a time
     #   remove:PATH   delete a file, so a save does not hit "already exists"
     #   picture:PATH|W,H  write a PNG of that size to drop or paste
     #   clipboard:PATH    put that picture on the clipboard
+    #   copied:TEXT   fail unless the text on the clipboard holds TEXT, `\n`
+    #                 for a newline; what a select-all and copy put there
     #   geometry:PATH write down what the window and the plugin inside it measure
-    #   hold:X,Y      press the button there and keep holding it
-    #   moveto:X,Y    move the pointer there, at the speed a hand moves
-    #   press:LABEL|X,Y  photograph the window, find the labelled control
-    #                 nearest X,Y in the picture to confirm or correct the spot,
-    #                 delete the picture, and click where the label really is
-    #   press:LABEL|X,Y|smallest  the same, for a label the window shows at
-    #                 two sizes: press the one with the smallest lettering.
-    #                 `|largest` presses the other
-    #   showing:TEXT|Y   fail unless the window below Y shows TEXT
-    #   hidden:TEXT|Y    fail if the window below Y shows TEXT
+    #   hold:WHERE    press the button there and keep holding it
+    #   moveto:WHERE  move the pointer there, at the speed a hand moves
+    #   letgo:        release the button where the pointer is
+    #   letgo:WHERE   move there and release the button
+    #   press:TEXT    click the control that says TEXT
+    #   showing:TEXT  fail unless the window shows TEXT
+    #   hidden:TEXT   fail if the window shows TEXT
     #   dialog:WORD   fail unless a file dialog with WORD on it is open
     #   nodialog:WORD fail if a file dialog is open at all
     #   nowindow:TITLE fail while a window with that title is still there
-    #   letgo:X,Y     move there and release the button
+    #   cursor:SHAPE  fail unless the cursor where the pointer is has that
+    #                 shape: arrow, ibeam, hand or grabbing
+    #   cursor:WHERE|SHAPE  park the pointer there first
+    #   mark:before A, mark:after A  fail unless the drop mark, an upright
+    #                 line in the accent colour, is drawn left or right of
+    #                 the words A on their row
+    #   dragtext:TEXT|to WHERE  drag from TEXT's first letter to WHERE
+    #   dbltext:TEXT  double-click the middle of TEXT
+    #   righttext:TEXT  right-click the middle of TEXT
+    #   dragwords:TEXT|to WHERE  double-click TEXT and drag the second press
+    #                 along its row to WHERE
+    #   write:PATH|TEXT   write TEXT to a file, `\n` for a newline
+    #   dragfile:PATH|WHERE  open PATH's folder in Explorer, pick the file up
+    #                 with the mouse, carry it across the screen and drop it
+    #                 at WHERE inside the window
     [string[]]$Steps = @(),
     # The same, one per line, from a file. `powershell -File` cannot bind more
     # than one token to an array parameter, so a sequence comes from here.
@@ -303,6 +338,33 @@ public class Win32Capture {
         mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
     }
 
+    /// Carry what is under one point to another, the way a file is dragged
+    /// out of one window and dropped on another: press on it, cross the
+    /// screen at the speed a hand moves, rest over the target long enough
+    /// for the window there to say whether it will take it, and let go.
+    public static void Carry(int fromX, int fromY, int toX, int toY) {
+        TakeHold(fromX, fromY);
+        System.Threading.Thread.Sleep(HELD_MS);
+        Glide(fromX, fromY, toX, toY, 600);
+        System.Threading.Thread.Sleep(300);
+        mouse_event(0x0004, 0, 0, 0, System.IntPtr.Zero); // left up
+    }
+
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+
+    /// The screen's size in pixels.
+    public static POINT ScreenSize() {
+        POINT size;
+        size.X = GetSystemMetrics(0);   // SM_CXSCREEN
+        size.Y = GetSystemMetrics(1);   // SM_CYSCREEN
+        return size;
+    }
+
+    /// Put a window at a place on the screen, at a size, without raising it.
+    public static void Place(IntPtr hWnd, int x, int y, int w, int h) {
+        SetWindowPos(hWnd, IntPtr.Zero, x, y, w, h, 0x0004 | 0x0010);  // SWP_NOZORDER | SWP_NOACTIVATE
+    }
+
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     // GetWindowRect gives screen coordinates directly. GetClientRect +
     // ClientToScreen was tried first and returned a bogus size here.
@@ -429,6 +491,25 @@ public class Win32Capture {
         }, IntPtr.Zero);
         if (match != IntPtr.Zero) return match;
         return strict ? IntPtr.Zero : biggest;
+    }
+
+    /// The visible top-level window of this class with exactly this title,
+    /// whichever process owns it: an Explorer window is the shell's, not the
+    /// program's that asked for it.
+    public static IntPtr FindWindowOf(string className, string title) {
+        IntPtr match = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            if (!IsWindowVisible(h)) return true;
+            var kind = new StringBuilder(64);
+            GetClassNameW(h, kind, 64);
+            if (kind.ToString() != className) return true;
+            var text = new StringBuilder(256);
+            GetWindowTextW(h, text, 256);
+            if (text.ToString() != title) return true;
+            match = h;
+            return false;
+        }, IntPtr.Zero);
+        return match;
     }
 
     /// A visible window of this process that is not `notThis`.
@@ -582,26 +663,407 @@ function Find-Label([string]$path, [string]$label, $near, [string]$sized = '') {
     } | Select-Object -First 1
 }
 
+# A step's words, and the qualifiers written after them, each after a `|`.
+function Split-Named([string]$value) {
+    $pieces = @($value -split '\|' | ForEach-Object { $_.Trim() })
+    return @{ Named = $pieces[0]; Qualifiers = @($pieces | Select-Object -Skip 1) }
+}
+
+# Every place TEXT is read in a picture, best match first, kept to the
+# qualifiers: `smallest` or `largest` is the one place with that lettering,
+# and `below LABEL` keeps the places under the topmost LABEL.
+function Find-Qualified([string]$path, [string]$text, [string[]]$qualifiers) {
+    $sized = ''
+    foreach ($q in $qualifiers) {
+        if ($q -in 'smallest', 'largest') { $sized = $q }
+    }
+    $found = @(Find-All $path $text $sized)
+    foreach ($q in $qualifiers) {
+        if ($q -like 'below *') {
+            $anchor = @(Find-All $path $q.Substring(6).Trim() | Sort-Object { $_.Top })[0]
+            if (-not $anchor) { return @() }
+            $found = @($found | Where-Object { $_.Top -ge $anchor.Bottom })
+        }
+    }
+    return $found
+}
+
+# The first line read in a picture that holds TEXT, boxed across the whole
+# line, kept to the qualifiers the way Find-Qualified keeps places.
+function Find-LineOf([string]$path, [string]$text, [string[]]$qualifiers) {
+    $wanted = $text.ToLower()
+    $lines = @(Read-Text $path | Where-Object { $_.Text.ToLower().Contains($wanted) })
+    foreach ($q in $qualifiers) {
+        if ($q -like 'below *') {
+            $anchor = @(Find-All $path $q.Substring(6).Trim() | Sort-Object { $_.Top })[0]
+            if (-not $anchor) { return $null }
+            $lines = @($lines | Where-Object { $_.Top -ge $anchor.Bottom })
+        }
+        if ($q -eq 'smallest') { $lines = @($lines | Sort-Object { $_.Bottom - $_.Top }) }
+        if ($q -eq 'largest') { $lines = @($lines | Sort-Object { $_.Top - $_.Bottom }) }
+    }
+    return $lines[0]
+}
+
+# Something is drawn in a column where the column's pixels vary down the band
+# of rows the words are on: letters, a glyph, the outline of a box, the edge
+# of a swatch all vary. A fill, a frame line, a separator and a caret run
+# straight down the band in one colour and vary nowhere, so they are not
+# things, whatever colour they or the ground around them are.
+#
+# How far two colours have to be apart to be two colours; how many rows above
+# and below the words' own rows the band takes in, so the top and bottom of a
+# box drawn round the words' height are in it and the frame of the tab or
+# button the words are on is not; how many empty columns or rows in a row end
+# the words, the gaps inside a word being narrower; how many empty columns may
+# sit inside one thing drawn; and how wide a thing has to be to be the thing
+# rather than a line or the smoothing of one. A name here is one name in any
+# case, so none of these is a word a counter below is called by.
+$COLOURS_APART = 60
+$BAND_ROWS = 3
+$GAP_ENDS_WORDS = 4
+$GAP_WITHIN_THING = 3
+$THING_WIDTH = 5
+
+function Test-Apart($a, $b) {
+    return ([Math]::Abs($a.R - $b.R) + [Math]::Abs($a.G - $b.G) + [Math]::Abs($a.B - $b.B)) -gt $COLOURS_APART
+}
+
+# Whether column $x is drawn in: its pixels vary between rows $y0 and $y1.
+function Test-ColumnVaries($bmp, [int]$x, [int]$y0, [int]$y1) {
+    if ($x -lt 0 -or $x -ge $bmp.Width) { return $false }
+    $y0 = [Math]::Max(0, $y0)
+    $y1 = [Math]::Min($bmp.Height, $y1)
+    if ($y1 -le $y0) { return $false }
+    $first = $bmp.GetPixel($x, $y0)
+    for ($y = $y0 + 1; $y -lt $y1; $y++) {
+        if (Test-Apart $bmp.GetPixel($x, $y) $first) { return $true }
+    }
+    return $false
+}
+
+# Whether row $y is drawn in: its pixels vary between columns $x0 and $x1.
+function Test-RowVaries($bmp, [int]$y, [int]$x0, [int]$x1) {
+    if ($y -lt 0 -or $y -ge $bmp.Height) { return $false }
+    $x0 = [Math]::Max(0, $x0)
+    $x1 = [Math]::Min($bmp.Width, $x1)
+    if ($x1 -le $x0) { return $false }
+    $first = $bmp.GetPixel($x0, $y)
+    for ($x = $x0 + 1; $x -lt $x1; $x++) {
+        if (Test-Apart $bmp.GetPixel($x, $y) $first) { return $true }
+    }
+    return $false
+}
+
+# The rows the words really take up: from the middle of their box up and
+# down, every row drawn in across the box's columns. The finder's box can be
+# taller than the letters, and a band taken from it would reach the frame of
+# the tab or button the words are on.
+function Get-RowsOf($bmp, $box) {
+    $top = [int]$box.Y
+    while ($top -gt 0 -and (Test-RowVaries $bmp ($top - 1) $box.Left $box.Right)) { $top-- }
+    $bottom = [int]$box.Y
+    while ($bottom + 1 -lt $bmp.Height -and (Test-RowVaries $bmp ($bottom + 1) $box.Left $box.Right)) { $bottom++ }
+    return @{ Top = $top; Bottom = $bottom + 1 }
+}
+
+# The columns from the words' edge outward, past the words themselves: the
+# first $GAP_ENDS_WORDS empty columns in a row end them. The column the words end in,
+# and every column beyond the gap with whether it is drawn in.
+function Get-ColumnsBeyond($bmp, $box, [string]$side) {
+    $rows = Get-RowsOf $bmp $box
+    $y0 = $rows.Top - $BAND_ROWS
+    $y1 = $rows.Bottom + $BAND_ROWS
+    $step = if ($side -eq 'right') { 1 } else { -1 }
+    $x = if ($side -eq 'right') { $box.Right - 1 } else { $box.Left }
+    # A box wider than the letters starts outside them: step in to the last
+    # column drawn in, which is where they end.
+    while (($x - $step) -ge $box.Left -and ($x - $step) -lt $box.Right -and
+        -not (Test-ColumnVaries $bmp $x $y0 $y1)) {
+        $x -= $step
+    }
+    $empty = 0
+    $end = $x
+    $columns = New-Object System.Collections.ArrayList
+    while ($x -ge 0 -and $x -lt $bmp.Width) {
+        $drawn = Test-ColumnVaries $bmp $x $y0 $y1
+        if ($empty -lt $GAP_ENDS_WORDS) {
+            if ($drawn) { $empty = 0; $end = $x } else { $empty++ }
+        } else {
+            [void]$columns.Add(@{ X = $x; Drawn = $drawn })
+        }
+        $x += $step
+    }
+    return @{ End = $end; Columns = $columns }
+}
+
+# How many empty columns in a row end a label: more than the space between
+# two words of one label, fewer than the gap between one control and the next.
+$GAP_ENDS_LABEL = 10
+
+# The words widened to the rest of the label they are part of: the columns
+# drawn on the line they were read on, toward $side, until a gap wider than a
+# word's space. A button's label is read as several words, and the thing
+# beside the button is past all of them. The line's own edge bounds it.
+function Get-LabelOf($bmp, $box, $line, [string]$side) {
+    $label = @{}
+    foreach ($key in $box.Keys) { $label[$key] = $box[$key] }
+    if (-not $line) { return $label }
+    $rows = Get-RowsOf $bmp $box
+    $y0 = $rows.Top - $BAND_ROWS
+    $y1 = $rows.Bottom + $BAND_ROWS
+    $step = if ($side -eq 'right') { 1 } else { -1 }
+    $x = if ($side -eq 'right') { $box.Right } else { $box.Left - 1 }
+    $end = $null
+    $empty = 0
+    while ($x -ge $line.Left -and $x -lt $line.Right) {
+        if (Test-ColumnVaries $bmp $x $y0 $y1) {
+            $end = $x
+            $empty = 0
+        } else {
+            $empty++
+            if ($empty -ge $GAP_ENDS_LABEL) { break }
+        }
+        $x += $step
+    }
+    if ($null -ne $end) {
+        if ($side -eq 'right') { $label.Right = $end + 1 } else { $label.Left = $end }
+        $label.X = [int](($label.Left + $label.Right) / 2)
+    }
+    return $label
+}
+
+# The line a box of words was read on: the one whose box holds the words'
+# middle. Nothing when no line does.
+function Find-LineHolding([string]$path, $words) {
+    return @(Read-Text $path | Where-Object {
+        $_.Left -le $words.X -and $words.X -le $_.Right -and
+        $_.Top -le $words.Y -and $words.Y -le $_.Bottom
+    })[0]
+}
+
+# The middle column of the first thing drawn beside the words on their row,
+# past the words themselves and past any line, such as the frame of the
+# button the words are on. Nothing when nothing is drawn there.
+function Get-Beside($bmp, $box, [string]$side) {
+    $run = $null
+    foreach ($column in (Get-ColumnsBeyond $bmp $box $side).Columns) {
+        if ($column.Drawn) {
+            if ($run) { $run.End = $column.X; $run.Gap = 0 }
+            else { $run = @{ Start = $column.X; End = $column.X; Gap = 0 } }
+        } elseif ($run) {
+            $run.Gap++
+            if ($run.Gap -gt $GAP_WITHIN_THING) {
+                if ([Math]::Abs($run.End - $run.Start) + 1 -ge $THING_WIDTH) {
+                    return [int](($run.Start + $run.End) / 2)
+                }
+                $run = $null
+            }
+        }
+    }
+    if ($run -and ([Math]::Abs($run.End - $run.Start) + 1 -ge $THING_WIDTH)) {
+        return [int](($run.Start + $run.End) / 2)
+    }
+    return $null
+}
+
+# The middle of the empty space right of a line on its row: between the
+# line's end and the next thing drawn there, or the picture's edge.
+function Get-After($bmp, $box) {
+    $beyond = Get-ColumnsBeyond $bmp $box 'right'
+    $next = $bmp.Width
+    foreach ($column in $beyond.Columns) {
+        if ($column.Drawn) { $next = $column.X; break }
+    }
+    return [int](($beyond.End + 1 + $next) / 2)
+}
+
+# The middle of the empty space under a line, in its columns: between the
+# line's bottom and the next thing drawn under it, or the picture's bottom.
+# The line's bottom is found from its middle row down, past every row drawn
+# in, since the finder's box can be off by a little.
+function Get-Below($bmp, $box) {
+    $empty = 0
+    $end = [int]$box.Y
+    $next = $bmp.Height
+    for ($y = [int]$box.Y; $y -lt $bmp.Height; $y++) {
+        $drawn = Test-RowVaries $bmp $y $box.Left $box.Right
+        if ($empty -lt $GAP_ENDS_WORDS) {
+            if ($drawn) { $empty = 0; $end = $y } else { $empty++ }
+            continue
+        }
+        if ($drawn) { $next = $y; break }
+    }
+    return [int](($end + 1 + $next) / 2)
+}
+
+# Where a WHERE phrase points in a picture, as X and Y in the picture, or
+# nothing when what it names is not in the picture.
+function Find-PointIn([string]$path, [string]$phrase, [string[]]$qualifiers) {
+    if ($phrase -match '^between (.+) and (.+)$') {
+        $one, $other = $Matches[1].Trim(), $Matches[2].Trim()
+        $a = @(Find-Qualified $path $one $qualifiers)[0]
+        $b = @(Find-Qualified $path $other $qualifiers)[0]
+        if (-not $a -or -not $b) { return $null }
+        return @{ X = [int](($a.Right + $b.Left) / 2); Y = [int](($a.Y + $b.Y) / 2) }
+    }
+    if ($phrase -match '^beside (.+) (left|right)$') {
+        $text, $side = $Matches[1].Trim(), $Matches[2]
+        $words = @(Find-Qualified $path $text $qualifiers)[0]
+        if (-not $words) { return $null }
+        $line = Find-LineHolding $path $words
+        Add-Type -AssemblyName System.Drawing
+        $bmp = New-Object System.Drawing.Bitmap $path
+        try {
+            $label = Get-LabelOf $bmp $words $line $side
+            $x = Get-Beside $bmp $label $side
+        } finally { $bmp.Dispose() }
+        if ($null -eq $x) { return $null }
+        return @{ X = $x; Y = $words.Y }
+    }
+    if ($phrase -match '^(before|after|below) (.+)$') {
+        $how, $text = $Matches[1], $Matches[2].Trim()
+        $line = Find-LineOf $path $text $qualifiers
+        if (-not $line) { return $null }
+        if ($how -eq 'before') { return @{ X = $line.Left - 2; Y = $line.Y } }
+        Add-Type -AssemblyName System.Drawing
+        $bmp = New-Object System.Drawing.Bitmap $path
+        try {
+            if ($how -eq 'after') { return @{ X = (Get-After $bmp $line); Y = $line.Y } }
+            return @{ X = $line.X; Y = (Get-Below $bmp $line) }
+        } finally { $bmp.Dispose() }
+    }
+    $words = @(Find-Qualified $path $phrase $qualifiers)[0]
+    if (-not $words) { return $null }
+    return @{ X = $words.X; Y = $words.Y }
+}
+
+# Read the controls the steps name beside words while the window is clean
+# and still, as it is when it has just come up: each `beside` phrase in the
+# steps is found on one picture and said, before any step runs.
+function Confirm-Buttons([Win32Capture+RECT]$area, [string[]]$steps) {
+    $phrases = @{}
+    foreach ($step in $steps) {
+        foreach ($match in [regex]::Matches($step, 'beside [^|]+ (left|right)(\|[^|]+)*')) {
+            $value = $match.Value
+            foreach ($cut in '\|hand$', '\|ibeam$', '\|arrow$', '\|grabbing$') {
+                $value = $value -replace $cut, ''
+            }
+            $phrases[$value] = $true
+        }
+    }
+    if ($phrases.Count -eq 0) { return }
+    $probe = Join-Path $env:TEMP 'capture-window-buttons.png'
+    Save-Shot $area $probe
+    foreach ($value in $phrases.Keys) {
+        $parts = Split-Named $value
+        $found = Find-PointIn $probe $parts.Named $parts.Qualifiers
+        if ($found) {
+            Write-Host ("button: {0} at {1},{2}" -f $value, $found.X, $found.Y)
+        } else {
+            Write-Host ("button: {0} is not on the first picture" -f $value)
+        }
+    }
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+}
+
+# How far a pixel's strongest channel is above its weakest for the pixel to
+# be the drop mark's colour: the accent, a medium blue, where the frames and
+# the strip are greys and a tab's fill and the ghost of one are pale.
+$MARK_COLOURED = 70
+
+# Whether column $x is a line of the mark's colour down the band: every pixel
+# from $y0 to $y1 that strongly coloured.
+function Test-ColumnMarked($bmp, [int]$x, [int]$y0, [int]$y1) {
+    if ($x -lt 0 -or $x -ge $bmp.Width) { return $false }
+    for ($y = [Math]::Max(0, $y0); $y -lt [Math]::Min($bmp.Height, $y1); $y++) {
+        $p = $bmp.GetPixel($x, $y)
+        $spread = [Math]::Max($p.R, [Math]::Max($p.G, $p.B)) - [Math]::Min($p.R, [Math]::Min($p.G, $p.B))
+        if ($spread -le $MARK_COLOURED) { return $false }
+    }
+    return $true
+}
+
+# Where the drop mark is in a picture, within a span of columns, on the rows
+# of the words the span is measured from. Nothing when there is none.
+function Find-MarkIn([string]$path, $words, [int]$x0, [int]$x1) {
+    Add-Type -AssemblyName System.Drawing
+    $bmp = New-Object System.Drawing.Bitmap $path
+    try {
+        $rows = Get-RowsOf $bmp $words
+        for ($x = [Math]::Max(0, $x0); $x -lt [Math]::Min($bmp.Width, $x1); $x++) {
+            if (Test-ColumnMarked $bmp $x $rows.Top $rows.Bottom) {
+                return @{ X = $x; Y = [int]$words.Y }
+            }
+        }
+    } finally { $bmp.Dispose() }
+    return $null
+}
+
+# The point on screen a WHERE phrase names, looked for in a fresh picture
+# until it is there: what it names may be what the step before has only just
+# caused to be drawn. A failure says what the window reads instead.
+function Resolve-Point([Win32Capture+RECT]$area, [string]$value, [string]$step) {
+    $parts = Split-Named $value
+    $probe = Join-Path $env:TEMP 'capture-window-point.png'
+    $found = Wait-Until {
+        Save-Shot $area $probe
+        Find-PointIn $probe $parts.Named $parts.Qualifiers
+    }
+    if (-not $found) {
+        $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
+        throw "nothing is at `"$value`" for ${step}; the window reads: $saw; see $probe"
+    }
+    # The picture the point was found in stays beside the test's own, so a
+    # point that landed wrong can be read against it.
+    if ($outDir) {
+        Move-Item -LiteralPath $probe -Destination (Join-Path $outDir 'capture-window-point.png') -Force
+    }
+    return @{ X = $area.Left + [int]$found.X; Y = $area.Top + [int]$found.Y }
+}
+
+# The box of the words a step names, in the window, looked for until it is
+# there. A failure says what the window reads instead, so a word drawn
+# elsewhere can be told from a word the reader could not make out.
+function Find-Words([Win32Capture+RECT]$area, [string]$value, [string]$step) {
+    $parts = Split-Named $value
+    $probe = Join-Path $env:TEMP 'capture-window-words.png'
+    $found = Wait-Until {
+        Save-Shot $area $probe
+        @(Find-Qualified $probe $parts.Named $parts.Qualifiers)[0]
+    }
+    if (-not $found) {
+        $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
+        throw "`"$value`" is not on screen for ${step}; the window reads: $saw; see $probe"
+    }
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $found
+}
+
 # Where ffmpeg is. Recording a window is its job, and screenshots cannot do it:
 # a flicker lasting a frame or two is gone between two grabs half a second
 # apart. gdigrab takes every frame the window draws.
-# The box of the first TEXT drawn below Y in the window, looked for until it is
-# there: the text may be what the step before typed, and not drawn yet. A
-# failure says what the window reads instead, so a word drawn elsewhere can be
-# told from a word the reader could not make out.
-function Find-TextBelow([Win32Capture+RECT]$area, [string]$text, [int]$below, [string]$step) {
-    $probe = Join-Path $env:TEMP 'capture-window-press.png'
-    $found = Wait-Until {
-        Save-Shot $area $probe
-        @(Find-All $probe $text | Where-Object { $_.Top -ge $below })[0]
+
+# Somewhere on the screen for a window `w` by `h` that overlaps `$taken`
+# nowhere: to its right, to its left, under it or above it, the first of
+# those with the room. A file carried from one window to another must cross
+# no part of the window it came from on the way.
+function Find-Room([Win32Capture+RECT]$taken, [int]$w, [int]$h) {
+    $screen = [Win32Capture]::ScreenSize()
+    $tries = @(
+        @{ X = $taken.Right; Y = $taken.Top },
+        @{ X = $taken.Left - $w; Y = $taken.Top },
+        @{ X = $taken.Left; Y = $taken.Bottom },
+        @{ X = $taken.Left; Y = $taken.Top - $h }
+    )
+    foreach ($try in $tries) {
+        $x = [Math]::Max(0, [Math]::Min($try.X, $screen.X - $w))
+        $y = [Math]::Max(0, [Math]::Min($try.Y, $screen.Y - $h))
+        $clear = ($x -ge $taken.Right) -or ($x + $w -le $taken.Left) -or
+            ($y -ge $taken.Bottom) -or ($y + $h -le $taken.Top)
+        if ($clear) { return @{ X = $x; Y = $y } }
     }
-    if (-not $found) {
-        $read = @(Read-Text $probe | Where-Object { $_.Top -ge $below })
-        $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
-        throw "`"$text`" is not on screen for ${step}; below $below the window reads: $saw; see $probe"
-    }
-    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-    $found
+    throw "no room on the screen for a ${w}x${h} window beside the one under test"
 }
 
 function Get-Ffmpeg {
@@ -780,103 +1242,45 @@ try {
     if ($Steps.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
         $restarts = 0
+        Confirm-Buttons $rect $Steps
         foreach ($step in $Steps) {
             $kind, $value = $step -split ':', 2
             switch ($kind) {
                 'click' {
-                    $parts = $value -split ','
-                    [Win32Capture]::Click(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    $at = Resolve-Point $rect $value 'click'
+                    [Win32Capture]::Click($at.X, $at.Y)
                     Start-Sleep -Milliseconds $HAND_MS
+                    Write-Host ("click:  {0} at {1},{2}" -f $value, ($at.X - $rect.Left), ($at.Y - $rect.Top))
                 }
                 'press' {
-                    # `press:LABEL|X,Y` looks first and clicks second. X,Y is
-                    # where the code puts the control, in window coordinates;
-                    # the window is photographed, the label nearest that spot
-                    # is found in the picture, and the click goes where the
-                    # label really is. A label the window does not show is a
-                    # failure, not a blind click.
-                    #
-                    # `press:LABEL|X,Y|smallest` and `|largest` are for a label
-                    # the window shows at two sizes, a tab and the heading
-                    # under it: the one with that lettering is pressed,
-                    # wherever it is.
-                    $label, $at, $sized = $value -split '\|', 3
-                    $label = $label.Trim()
-                    if (-not $label -or -not $at) { throw "cannot read press: $value" }
-                    $parts = $at -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read press: $value" }
-                    $sized = "$sized".Trim()
-                    if ($sized -and $sized -notin 'smallest', 'largest') {
-                        throw "cannot read press: $value"
-                    }
-                    $x = [int]$parts[0]
-                    $y = [int]$parts[1]
-                    $probe = if ($outDir) {
-                        Join-Path $outDir 'capture-window-press.png'
-                    } else {
-                        Join-Path $env:TEMP 'capture-window-press.png'
-                    }
-                    # A pointer left on the control by the run before draws it
-                    # highlighted, and a window that opened under a pointer
-                    # that never moves has not been told where the pointer is.
-                    # It is put on the title bar first, in one jump, and travels
-                    # to the control from there.
-                    if ($currentHwnd -eq $hwnd) {
-                        [Win32Capture]::SetCursorPos(
-                            $rect.Left + [int](($rect.Right - $rect.Left) / 2),
-                            $rect.Top + 12) | Out-Null
-                    }
-                    # Looked for until it is there: the control may be one the
-                    # step before has only just caused to be drawn.
-                    $found = Wait-Until {
-                        Save-Shot $rect $probe
-                        Find-Label $probe $label @{ X = $x; Y = $y } $sized
-                    }
-                    if (-not $found) {
-                        # The picture stays when the label is not in it, and
-                        # what was read in it is said: what the window actually
-                        # held is the only way to tell a control drawn
-                        # elsewhere from one that cannot be read.
-                        $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
-                        throw "no control labelled `"$label`" is in the window; it reads: $saw; it is in $probe"
-                    }
-                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    # `press:TEXT` looks first and clicks second: the window
+                    # is photographed, the words are found in the picture, and
+                    # the click goes where they really are. Words the window
+                    # does not show are a failure, not a blind click.
+                    $found = Find-Words $rect $value 'press'
                     [Win32Capture]::MoveTo(
                         $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
                     [Win32Capture]::Click(
                         $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
                     Start-Sleep -Milliseconds $HAND_MS
-                    Write-Host ("press:  {0} at {1},{2}" -f $label, $found.X, $found.Y)
+                    Write-Host ("press:  {0} at {1},{2}" -f $value, $found.X, $found.Y)
                 }
                 'type' {
                     Send-Typing $value
                 }
                 { $_ -in 'showing', 'hidden' } {
-                    # `showing:TEXT|Y` reads the window below Y and fails
-                    # unless TEXT is there; `hidden:` fails if it is. Below Y
-                    # so the toolbars and the tab labels are out of it: what
-                    # is being asked about is what the document displays, and
-                    # a tab's own label is not that.
-                    $text, $below = $value -split '\|', 2
-                    $text = $text.Trim()
-                    if (-not $text -or -not $below) { throw "cannot read ${kind}: $value" }
-                    # The whole window is photographed and the answer filtered
-                    # to what is below Y afterwards: a picture cut to a band is
-                    # read worse than a whole window.
-                    $probe = if ($outDir) {
-                        Join-Path $outDir 'capture-window-showing.png'
-                    } else {
-                        Join-Path $env:TEMP 'capture-window-showing.png'
-                    }
+                    # `showing:TEXT` reads the window and fails unless TEXT is
+                    # there; `hidden:` fails if it is.
+                    $parts = Split-Named $value
+                    if (-not $parts.Named) { throw "cannot read ${kind}: $value" }
+                    $probe = Join-Path $env:TEMP 'capture-window-showing.png'
                     try {
                         # Looked at until it is as the step says: what the step
                         # before did may not have been drawn yet, and a tooltip
                         # takes its time coming and going.
                         $asSaid = Wait-Until {
                             Save-Shot $rect $probe
-                            $there = @(Find-All $probe $text |
-                                Where-Object { $_.Top -ge [int]$below }).Count -gt 0
+                            $there = @(Find-Qualified $probe $parts.Named $parts.Qualifiers).Count -gt 0
                             $there -eq ($kind -eq 'showing')
                         }
                         $found = if ($asSaid) { $kind -eq 'showing' } else { $kind -ne 'showing' }
@@ -884,20 +1288,18 @@ try {
                         # again, to say what it holds instead.
                         $saw = ''
                         if (-not $asSaid) {
-                            $saw = (Read-Text $probe |
-                                Where-Object { $_.Top -ge [int]$below } |
-                                ForEach-Object { $_.Text }) -join ' | '
+                            $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
                         }
                     } finally {
                         Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     }
                     if ($kind -eq 'showing' -and -not $found) {
-                        throw "the document does not show `"$text`"; below $below the window reads: $saw"
+                        throw "the window does not show `"$value`"; it reads: $saw"
                     }
                     if ($kind -eq 'hidden' -and $found) {
-                        throw "the document still shows `"$text`"; below $below the window reads: $saw"
+                        throw "the window still shows `"$value`"; it reads: $saw"
                     }
-                    Write-Host ("{0}: {1}" -f $kind, $text)
+                    Write-Host ("{0}: {1}" -f $kind, $value)
                 }
                 { $_ -in 'dialog', 'nodialog' } {
                     # `dialog:WORD` fails unless a file dialog is open with
@@ -955,107 +1357,124 @@ try {
                     if (-not $gone) { throw "the window ""$want"" is still open" }
                     Write-Host ("nowindow: {0}" -f $want)
                 }
-                'dragtext' {
-                    # `dragtext:TEXT|Y|X,Y2` selects by dragging from where
-                    # TEXT starts to X,Y2 in window coordinates. Where TEXT is
-                    # comes from looking: the window below Y is photographed,
-                    # the first TEXT in it is found, the picture is deleted,
-                    # and the press lands on TEXT's first character.
-                    $text, $below, $to = $value -split '\|', 3
-                    if (-not $text -or -not $below -or -not $to) {
-                        throw "cannot read dragtext: $value"
+                { $_ -in 'dragtext', 'dragwords' } {
+                    # `dragtext:TEXT|to WHERE` selects by dragging from TEXT's
+                    # first letter to WHERE. `dragwords:TEXT|to WHERE`
+                    # double-clicks the middle of TEXT and drags the second
+                    # press along TEXT's row to WHERE: a drag that selects by
+                    # words. The pieces before the `to` qualify TEXT, the
+                    # pieces after it qualify WHERE.
+                    $pieces = @($value -split '\|' | ForEach-Object { $_.Trim() })
+                    $at = [Array]::FindIndex($pieces, [Predicate[string]]{ param($p) $p -like 'to *' })
+                    if ($at -lt 1) { throw "cannot read ${kind}: $value" }
+                    $named = ($pieces[0..($at - 1)]) -join '|'
+                    $target = (@($pieces[$at].Substring(3)) + @($pieces | Select-Object -Skip ($at + 1))) -join '|'
+                    $found = Find-Words $rect $named $kind
+                    $row = $rect.Top + [int]$found.Y
+                    $to = Resolve-Point $rect $target $kind
+                    if ($kind -eq 'dragtext') {
+                        # On the first glyph, not beside it: a press lands on
+                        # the nearest character boundary, and the boundary
+                        # before the first letter is the one its ink starts at.
+                        [Win32Capture]::Drag($rect.Left + [int]$found.Left, $row, $to.X, $to.Y)
+                    } else {
+                        [Win32Capture]::DoubleHold($rect.Left + [int]$found.X, $row)
+                        [Win32Capture]::LetGo($to.X, $row)
                     }
-                    $parts = $to -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read dragtext: $value" }
-                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dragtext'
-                    # On the first glyph, not beside it: a press lands on the
-                    # nearest character boundary, and the boundary before the
-                    # first letter is the one its ink starts at.
-                    [Win32Capture]::Drag(
-                        $rect.Left + [int]$found.Left,
-                        $rect.Top + [int](($found.Top + $found.Bottom) / 2),
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
                     Start-Sleep -Milliseconds $HAND_MS
-                    Write-Host ("dragtext: {0}" -f $text.Trim())
+                    Write-Host ("{0}: {1}" -f $kind, $value)
                 }
-                'dbltext' {
-                    # `dbltext:TEXT|Y` double-clicks the middle of TEXT, found
-                    # below Y the way dragtext finds it. The middle, so the
-                    # press is inside the word and not on its edge.
-                    $text, $below = $value -split '\|', 2
-                    if (-not $text -or -not $below) { throw "cannot read dbltext: $value" }
-                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dbltext'
-                    [Win32Capture]::DoubleClick(
-                        $rect.Left + [int](($found.Left + $found.Right) / 2),
-                        $rect.Top + [int](($found.Top + $found.Bottom) / 2))
-                    Start-Sleep -Milliseconds $HAND_MS
-                    Write-Host ("dbltext: {0}" -f $text.Trim())
-                }
-                'righttext' {
-                    # `righttext:TEXT|Y` clicks the middle of TEXT with the
-                    # right button.
-                    $text, $below = $value -split '\|', 2
-                    if (-not $text -or -not $below) { throw "cannot read righttext: $value" }
-                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'righttext'
-                    [Win32Capture]::RightClick(
-                        $rect.Left + [int](($found.Left + $found.Right) / 2),
-                        $rect.Top + [int](($found.Top + $found.Bottom) / 2))
-                    Start-Sleep -Milliseconds $HAND_MS
-                    Write-Host ("righttext: {0}" -f $text.Trim())
-                }
-                'dragwords' {
-                    # `dragwords:TEXT|Y|X` double-clicks the middle of TEXT
-                    # and drags the second press along TEXT's row to X: a drag
-                    # that selects by words.
-                    $text, $below, $to = $value -split '\|', 3
-                    if (-not $text -or -not $below -or -not $to) {
-                        throw "cannot read dragwords: $value"
+                'mark' {
+                    # `mark:before A` and `mark:after A` fail unless the drop
+                    # mark, an upright line in the accent colour, is drawn
+                    # left or right of the words A on their row.
+                    $parts = Split-Named $value
+                    $phrase = $parts.Named
+                    $probe = Join-Path $env:TEMP 'capture-window-mark.png'
+                    $found = Wait-Until {
+                        Save-Shot $rect $probe
+                        if ($phrase -match '^before (.+)$') {
+                            $a = @(Find-Qualified $probe $Matches[1].Trim() $parts.Qualifiers)[0]
+                            if ($a) { Find-MarkIn $probe $a 0 $a.Left }
+                        } elseif ($phrase -match '^after (.+)$') {
+                            $a = @(Find-Qualified $probe $Matches[1].Trim() $parts.Qualifiers)[0]
+                            if ($a) { Find-MarkIn $probe $a $a.Right ($rect.Right - $rect.Left) }
+                        } else {
+                            throw "cannot read mark: $value"
+                        }
                     }
-                    $found = Find-TextBelow $rect $text.Trim() ([int]$below) 'dragwords'
-                    $row = $rect.Top + [int](($found.Top + $found.Bottom) / 2)
-                    [Win32Capture]::DoubleHold(
-                        $rect.Left + [int](($found.Left + $found.Right) / 2), $row)
-                    [Win32Capture]::LetGo($rect.Left + [int]$to, $row)
+                    if (-not $found) {
+                        throw "no drop mark is drawn $value; see $probe"
+                    }
+                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    Write-Host ("mark:   {0} at {1},{2}" -f $value, $found.X, $found.Y)
+                }
+                { $_ -in 'dbltext', 'righttext' } {
+                    # `dbltext:TEXT` double-clicks the middle of TEXT, so the
+                    # press is inside the word and not on its edge;
+                    # `righttext:TEXT` clicks it with the right button.
+                    $found = Find-Words $rect $value $kind
+                    if ($kind -eq 'dbltext') {
+                        [Win32Capture]::DoubleClick($rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
+                    } else {
+                        [Win32Capture]::RightClick($rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
+                    }
                     Start-Sleep -Milliseconds $HAND_MS
-                    Write-Host ("dragwords: {0}" -f $text.Trim())
+                    Write-Host ("{0}: {1}" -f $kind, $value)
                 }
                 'hold' {
-                    # `hold:X,Y` presses and keeps holding, so the steps after
-                    # it happen mid-drag.
-                    $parts = $value -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read hold: $value" }
-                    [Win32Capture]::TakeHold(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    # `hold:WHERE` presses and keeps holding, so the steps
+                    # after it happen mid-drag.
+                    $at = Resolve-Point $rect $value 'hold'
+                    [Win32Capture]::TakeHold($at.X, $at.Y)
+                    Write-Host ("hold:   {0}" -f $value)
                 }
                 'moveto' {
-                    # `moveto:X,Y` moves the pointer there, button or no button.
-                    $parts = $value -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read moveto: $value" }
-                    [Win32Capture]::MoveTo(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    # `moveto:WHERE` moves the pointer there, button or no
+                    # button.
+                    $at = Resolve-Point $rect $value 'moveto'
+                    [Win32Capture]::MoveTo($at.X, $at.Y)
+                    Write-Host ("moveto: {0}" -f $value)
                 }
                 'letgo' {
-                    # `letgo:X,Y` moves there and releases the button.
-                    $parts = $value -split ','
-                    if ($parts.Count -ne 2) { throw "cannot read letgo: $value" }
-                    [Win32Capture]::LetGo(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1])
+                    # `letgo:` releases the button where the pointer is;
+                    # `letgo:WHERE` moves there first.
+                    if ($value.Trim() -eq '') {
+                        $now = New-Object Win32Capture+POINT
+                        [Win32Capture]::GetCursorPos([ref]$now) | Out-Null
+                        $at = @{ X = $now.X; Y = $now.Y }
+                    } else {
+                        $at = Resolve-Point $rect $value 'letgo'
+                    }
+                    [Win32Capture]::LetGo($at.X, $at.Y)
                     Start-Sleep -Milliseconds $HAND_MS
+                    Write-Host ("letgo:  {0}" -f $value)
                 }
                 'cursor' {
-                    # `cursor:X,Y|ibeam` parks the pointer and checks what the
-                    # window asked the cursor to be there.
-                    $where, $want = $value -split '\|', 2
-                    $parts = $where -split ','
-                    [Win32Capture]::SetCursorPos(
-                        $rect.Left + [int]$parts[0], $rect.Top + [int]$parts[1]) | Out-Null
+                    # `cursor:SHAPE` checks what the window asked the cursor
+                    # to be where the pointer is; `cursor:WHERE|SHAPE` parks
+                    # the pointer at WHERE first.
+                    $pieces = @($value -split '\|' | ForEach-Object { $_.Trim() })
+                    $want = $pieces[-1]
+                    $where = ($pieces[0..($pieces.Count - 2)]) -join '|'
+                    if ($pieces.Count -ge 2) {
+                        $at = Resolve-Point $rect $where 'cursor'
+                        [Win32Capture]::SetCursorPos($at.X, $at.Y) | Out-Null
+                    } else {
+                        $now = New-Object Win32Capture+POINT
+                        [Win32Capture]::GetCursorPos([ref]$now) | Out-Null
+                        $at = @{ X = $now.X; Y = $now.Y }
+                        $where = 'the pointer'
+                    }
                     # The window only changes it when it next redraws, so it is
                     # looked at until it is what was asked for.
-                    $right = Wait-Until { [Win32Capture]::CursorNow() -eq $want.Trim() } 2000
+                    $right = Wait-Until { [Win32Capture]::CursorNow() -eq $want } 2000
                     if (-not $right) {
                         $shown = [Win32Capture]::CursorNow()
-                        throw "cursor at $where is $shown, expected $($want.Trim())"
+                        throw ("cursor at $where, which is {0},{1}, is $shown, expected $want" -f
+                            ($at.X - $rect.Left), ($at.Y - $rect.Top))
                     }
+                    Write-Host ("cursor: {0} is {1}" -f $where, $want)
                 }
                 'shortcut' {
                     # `shortcut:ctrl+a` is a modifier held down over one key.
@@ -1141,6 +1560,7 @@ try {
                     Wait-Loaded $rect
                     $hostRect = $rect
                     $currentHwnd = $hwnd
+                    Confirm-Buttons $rect $Steps
                     $currentTitle = $Title
                 }
                 'row' {
@@ -1312,6 +1732,109 @@ try {
                     $held = [System.Drawing.Image]::FromFile($value)
                     [System.Windows.Forms.Clipboard]::SetImage($held)
                     $held.Dispose()
+                }
+                'copied' {
+                    # `copied:TEXT` reads the text on the clipboard and fails
+                    # unless TEXT is in it. The program writes the clipboard
+                    # a frame after the key, so it is read until it holds
+                    # TEXT or the wait runs out. Line ends are read as `\n`
+                    # whatever the clipboard wrote them as.
+                    $wanted = "$value".Replace('\n', "`n")
+                    if (-not $wanted) { throw "cannot read copied: $value" }
+                    $held = ''
+                    $found = Wait-Until {
+                        $held = "$([System.Windows.Forms.Clipboard]::GetText())".Replace("`r`n", "`n")
+                        $held.Contains($wanted)
+                    }
+                    if (-not $found) {
+                        throw "the clipboard does not hold `"$value`"; it holds: $held"
+                    }
+                    Write-Host ("copied: {0}" -f $value)
+                }
+                'write' {
+                    # `write:PATH|TEXT` writes TEXT to a file, `\n` for a
+                    # newline, for a test to drag or open.
+                    $p, $text = $value -split '\|', 2
+                    $p = $p.Trim()
+                    if (-not $p) { throw "cannot read write: $value" }
+                    $dir = Split-Path -Parent $p
+                    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+                        New-Item -ItemType Directory -Force $dir | Out-Null
+                    }
+                    [System.IO.File]::WriteAllText($p, "$text".Replace('\n', "`n"))
+                }
+                'dragfile' {
+                    # `dragfile:PATH|WHERE` drags a file out of Explorer and
+                    # drops it at WHERE in the window: the file's folder is
+                    # opened in Explorer, the file's name is found in that
+                    # window by reading it, the mouse presses on the name,
+                    # carries it across the screen to WHERE and lets go there.
+                    # Explorer is the source of the drag, as it is when a
+                    # person does this, and nothing here is told what is
+                    # being dragged. The Explorer window is closed afterwards.
+                    $p, $where = $value -split '\|', 2
+                    $p = "$p".Trim()
+                    if (-not $p -or -not "$where".Trim()) { throw "cannot read dragfile: $value" }
+                    if (-not (Test-Path -LiteralPath $p)) { throw "nothing to drag at $p" }
+                    # The drop's place is found before Explorer comes up over
+                    # anything.
+                    $target = Resolve-Point $rect $where.Trim() 'dragfile'
+                    $folder = Split-Path -Parent $p
+                    $folderName = Split-Path -Leaf $folder
+                    # Explorer hides the extension of a file type it knows,
+                    # so the name is looked for without it.
+                    $stem = [System.IO.Path]::GetFileNameWithoutExtension($p)
+                    Start-Process -FilePath explorer.exe -ArgumentList "/select,`"$p`""
+                    $source = Wait-Until {
+                        $seen = [Win32Capture]::FindWindowOf('CabinetWClass', $folderName)
+                        if ($seen -ne [IntPtr]::Zero) { $seen }
+                    } 15000
+                    if (-not $source) { throw "Explorer never opened $folder" }
+                    # Beside the window under test, so the file's trip to
+                    # X,Y crosses no part of Explorer: a file let go over
+                    # Explorer is dropped there instead.
+                    $room = Find-Room $rect 640 480
+                    [Win32Capture]::Place($source, $room.X, $room.Y, 640, 480)
+                    if (-not [Win32Capture]::BringToFront($source)) {
+                        Write-Warning 'Explorer would not come to the front'
+                    }
+                    $area = [Win32Capture]::ClientRect($source)
+                    # The look is kept away from the folder Explorer is
+                    # showing until the drop is done: a file appearing in that
+                    # folder moves every row under it, and the press lands on
+                    # the wrong file.
+                    $probe = Join-Path $env:TEMP 'capture-window-dragfile.png'
+                    # The leftmost place the name is read: the file list is
+                    # left of the details pane, which names the file too, and
+                    # a press there picks nothing up.
+                    $found = Wait-Until {
+                        Save-Shot $area $probe
+                        @(Find-All $probe $stem | Sort-Object { $_.X })[0]
+                    } 10000
+                    if (-not $found) {
+                        $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
+                        throw "Explorer shows no file called `"$stem`"; it reads: $saw; see $probe"
+                    }
+                    Write-Host ("dragfile: `"{0}`" read at {1},{2} in Explorer" -f
+                        $stem, $found.X, $found.Y)
+                    [Win32Capture]::Carry(
+                        $area.Left + [int]$found.X, $area.Top + [int]$found.Y,
+                        $target.X, $target.Y)
+                    Start-Sleep -Milliseconds $HAND_MS
+                    # The picture stays beside the test's own, named after the
+                    # file, so a press that picked up the wrong row can be read
+                    # against it.
+                    if ($outDir) {
+                        Move-Item -LiteralPath $probe -Destination (Join-Path $outDir "dragfile-$stem.png") -Force
+                    }
+                    [Win32Capture]::PostMessage($source, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                    Wait-Until {
+                        [Win32Capture]::FindWindowOf('CabinetWClass', $folderName) -eq [IntPtr]::Zero
+                    } 5000 | Out-Null
+                    if (-not [Win32Capture]::BringToFront($currentHwnd)) {
+                        Write-Warning 'the window would not come back to the front'
+                    }
+                    Write-Host ("dragfile: {0} to {1}" -f $p, $where.Trim())
                 }
                 'written' {
                     # `written:PATH|TEXT` checks a file in code, mid-test,

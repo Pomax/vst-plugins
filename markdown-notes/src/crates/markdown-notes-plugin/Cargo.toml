@@ -71,6 +71,12 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL", "NSGeometry"] }
 objc2-app-kit = { version = "0.3", features = ["NSView", "NSResponder", "NSDragging", "NSPasteboard", "NSPasteboardItem"] }
 
+# The drop target on the editor's window, see drop.rs: the plugin talks to the
+# X server itself for it, through the crate baseview opens the window with, so
+# nothing new enters the build.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
 # The drop target on the editor's window, see drop.rs. The same crates baseview
 # registers its own with, so nothing new enters the build.
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -156,10 +162,6 @@ required-features = ["snapshots"]
 
 [[test]]
 name = "clickable_cursor"
-required-features = ["snapshots"]
-
-[[test]]
-name = "dropping_a_document"
 required-features = ["snapshots"]
 
 [[test]]

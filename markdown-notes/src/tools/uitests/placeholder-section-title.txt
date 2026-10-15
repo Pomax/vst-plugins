@@ -3,7 +3,7 @@
 # whenever the caret arrives back on it, by the keys or by a click, so the
 # next thing typed replaces it. One section per way of arriving: the first is
 # the one the note opens with, each of the others is made with the + button,
-# which follows the last section and so sits one tab further right each time.
+# which is the thing drawn after the last tab.
 #
 # Every key route starts the same way. The heading is selected, End collapses
 # that to the end of the heading, Enter and a line of text put the caret on a
@@ -14,87 +14,87 @@
 type:{ENTER}
 
 # By Up: two presses, over the blank line.
-showing:Section Title|140
+showing:Section Title|largest
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-up-body.png
-showing:Section Title|140
+showing:Section Title|largest
 type:{UP 2}
 shot:%CACHE%\placeholder-up-arrived.png
 type:Drums
 shot:%CACHE%\placeholder-up-named.png
-showing:Drums|140
-hidden:Section Title|140
+showing:Drums|largest
+hidden:Section Title
 
 # By a click: the caret clicked away into the empty space below the heading,
 # and the heading then clicked by its words.
-plugin:129,87
-showing:Section Title|140
-click:450,400
+click:beside Drums right|smallest
+showing:Section Title|largest
+click:below Section Title|largest
 shot:%CACHE%\placeholder-click-away.png
-press:Section Title|120,158
+press:Section Title|largest
 shot:%CACHE%\placeholder-click-arrived.png
 type:Bass
 shot:%CACHE%\placeholder-click-named.png
-showing:Bass|140
-hidden:Section Title|140
+showing:Bass|largest
+hidden:Section Title
 
 # By Left: the body line is nine characters, and two more presses cross the
 # two line ends above it onto the end of the heading.
-plugin:239,87
-showing:Section Title|140
+click:beside Bass right|smallest
+showing:Section Title|largest
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-left-body.png
-showing:Section Title|140
+showing:Section Title|largest
 type:{LEFT 11}
 shot:%CACHE%\placeholder-left-arrived.png
 type:Guitar
 shot:%CACHE%\placeholder-left-named.png
-showing:Guitar|140
-hidden:Section Title|140
+showing:Guitar|largest
+hidden:Section Title
 
 # By Page Up: a page is more lines than the section has, so one press is the
 # heading.
-plugin:349,87
-showing:Section Title|140
+click:beside Guitar right|smallest
+showing:Section Title|largest
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-pageup-body.png
-showing:Section Title|140
+showing:Section Title|largest
 type:{PGUP}
 shot:%CACHE%\placeholder-pageup-arrived.png
 type:Piano
 shot:%CACHE%\placeholder-pageup-named.png
-showing:Piano|140
-hidden:Section Title|140
+showing:Piano|largest
+hidden:Section Title
 
 # By Ctrl+Home: the start of the section, which is the heading.
-plugin:459,87
-showing:Section Title|140
+click:beside Piano right|smallest
+showing:Section Title|largest
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-ctrl-home-body.png
-showing:Section Title|140
+showing:Section Title|largest
 shortcut:ctrl+home
 shot:%CACHE%\placeholder-ctrl-home-arrived.png
 type:Vocals
 shot:%CACHE%\placeholder-ctrl-home-named.png
-showing:Vocals|140
-hidden:Section Title|140
+showing:Vocals|largest
+hidden:Section Title
 
 # By Ctrl+Left: a word at a time back up the section, to the start of `line`,
 # to the start of `body`, and over the blank line to the start of `Title`,
 # which is the heading.
-plugin:569,87
-showing:Section Title|140
+click:beside Vocals right|smallest
+showing:Section Title|largest
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-ctrl-left-body.png
-showing:Section Title|140
+showing:Section Title|largest
 shortcut:ctrl+left
 shortcut:ctrl+left
 shortcut:ctrl+left
 shot:%CACHE%\placeholder-ctrl-left-arrived.png
 type:Synths
 shot:%CACHE%\placeholder-ctrl-left-named.png
-showing:Synths|140
-hidden:Section Title|140
+showing:Synths|largest
+hidden:Section Title
 
 expect:sections is 6
 expect:section 0 is # Drums\n\nbody line

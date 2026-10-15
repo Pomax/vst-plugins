@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use crate::edit::{Editor, DEFAULT_TITLE};
 use crate::frontmatter;
 
-/// Extensions offered in the open/save dialogs.
-pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "txt"];
+/// The markdown extension: the one the open and save dialogs offer, and the
+/// one a dropped file is a document by.
+pub const MARKDOWN_EXTENSIONS: &[&str] = &["md"];
 
 impl Editor {
     /// Load `path` into the editor, replacing every section.

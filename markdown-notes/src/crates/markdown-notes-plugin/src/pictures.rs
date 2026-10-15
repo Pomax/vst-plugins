@@ -20,10 +20,15 @@ pub struct Incoming {
 
 impl Incoming {
     /// A file dropped on the window, called by its name. Nothing for a file
-    /// that cannot be read or is not a PNG or a JPEG.
+    /// that cannot be read, or whose name and bytes do not agree on one kind
+    /// of picture: `.png` with a PNG's magic number, `.jpg` or `.jpeg` with a
+    /// JPEG's, the extension in any case.
     pub fn from_file(path: &Path) -> Option<Incoming> {
+        let named = kind_named(path)?;
         let bytes = std::fs::read(path).ok()?;
-        images::kind_of(&bytes)?;
+        if images::kind_of(&bytes) != Some(named) {
+            return None;
+        }
         let alt = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
@@ -45,6 +50,17 @@ impl Incoming {
         let mut bytes = std::io::Cursor::new(Vec::new());
         picture.write_to(&mut bytes, image::ImageFormat::Png).ok()?;
         Some(Incoming { alt: "image".to_string(), bytes: bytes.into_inner() })
+    }
+}
+
+/// The kind of picture a file's name says it is: PNG for `.png`, JPEG for
+/// `.jpg` or `.jpeg`, the extension in any case. Nothing for any other name.
+fn kind_named(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some(images::PNG),
+        "jpg" | "jpeg" => Some(images::JPEG),
+        _ => None,
     }
 }
 
@@ -117,19 +133,46 @@ mod tests {
         assert_eq!(pixels.pixels[1], egui::Color32::from_rgb(0, 0, 255));
     }
 
+    /// A 2 by 2 JPEG.
+    fn jpeg() -> Vec<u8> {
+        let rgb = [255, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 255];
+        let picture = image::RgbImage::from_raw(2, 2, rgb.to_vec()).expect("not a picture");
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        picture.write_to(&mut bytes, image::ImageFormat::Jpeg).expect("nothing was encoded");
+        bytes.into_inner()
+    }
+
+    /// `bytes` written under `name`, in a directory of this test's own, and
+    /// what the file is taken for.
+    fn dropped(dir: &Path, name: &str, bytes: &[u8]) -> Option<Incoming> {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        Incoming::from_file(&path)
+    }
+
     #[test]
-    fn a_file_is_called_by_its_name_and_refused_when_it_is_not_a_picture() {
+    fn a_file_is_a_picture_when_its_name_and_its_bytes_agree() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.cache/pictures-test");
         std::fs::create_dir_all(&dir).unwrap();
-        let picture = dir.join("cat.png");
-        std::fs::write(&picture, png()).unwrap();
-        let text = dir.join("notes.txt");
-        std::fs::write(&text, b"not a picture").unwrap();
+        assert_eq!(images::kind_of(&jpeg()), Some(images::JPEG));
 
-        let incoming = Incoming::from_file(&picture).expect("the PNG was refused");
-        assert_eq!(incoming.alt, "cat");
-        assert_eq!(incoming.bytes, png());
-        assert!(Incoming::from_file(&text).is_none());
+        let cat = dropped(&dir, "cat.png", &png()).expect("the PNG was refused");
+        assert_eq!(cat.alt, "cat");
+        assert_eq!(cat.bytes, png());
+        assert!(dropped(&dir, "CAT.PNG", &png()).is_some());
+        assert!(dropped(&dir, "dog.jpg", &jpeg()).is_some());
+        assert!(dropped(&dir, "dog.jpeg", &jpeg()).is_some());
+        assert!(dropped(&dir, "DOG.JPEG", &jpeg()).is_some());
+
+        // The name says one kind and the bytes another.
+        assert!(dropped(&dir, "cat.jpg", &png()).is_none());
+        assert!(dropped(&dir, "dog.png", &jpeg()).is_none());
+        // The name says no kind at all, whatever the bytes are.
+        assert!(dropped(&dir, "cat.gif", &png()).is_none());
+        assert!(dropped(&dir, "cat", &png()).is_none());
+        assert!(dropped(&dir, "notes.txt", b"not a picture").is_none());
+        // The name says a kind and the bytes are nothing.
+        assert!(dropped(&dir, "empty.png", b"").is_none());
         assert!(Incoming::from_file(&dir.join("missing.png")).is_none());
     }
 

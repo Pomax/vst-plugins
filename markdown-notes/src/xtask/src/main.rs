@@ -21,8 +21,14 @@
 //! cargo run -p xtask -- bundle [--release] [--target <triple>]
 //! ```
 
+// The Windows driver is `tools/capture-window.ps1`, which reads pictures its
+// own way, so there the module is its tests.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+mod drawn;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+mod locate;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -398,7 +404,9 @@ fn mini_host(root: &Path) -> Result<PathBuf, String> {
     let parent = root.parent().ok_or("no directory above this project")?;
     let project = parent.join("tools").join("mini-host");
     let name = if cfg!(windows) { "mini-host.exe" } else { "mini-host" };
-    let script = if cfg!(windows) { "build.bat" } else { "build.sh" };
+    // By its path and not its bare name: a shell that does not search the
+    // current directory for a program does not find the bare name.
+    let script = if cfg!(windows) { r".\build.bat" } else { "build.sh" };
 
     let mut build = if cfg!(windows) {
         let mut cmd = Command::new("cmd");
@@ -773,7 +781,6 @@ const RENDERING_TESTS: &[&str] = &[
     "caret_rendering",
     "clickable_cursor",
     "clicking_the_document",
-    "dropping_a_document",
     "link_clicking",
     "block_spacing",
     "mermaid_blocks",

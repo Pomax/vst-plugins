@@ -1,9 +1,14 @@
-//! Pictures in a note: a file dropped on the window goes in at the caret as a
-//! reference on a line of its own, its data goes into the images tab, the
-//! picture is drawn in the document, and deleting the reference takes the
-//! data with it.
+//! Pictures in a note, as the window draws them: a picture in the note is
+//! drawn in the document at its size, is text while the caret is on its
+//! reference, has its images tab after the sections, and survives the state
+//! being saved and loaded.
+//!
+//! How a picture gets into the note is a user's doing, and the real-window
+//! tests `dropping-files` and `pictures-in-a-note` do it: a file dragged out
+//! of the system's file manager and dropped on the window, and a paste. Here
+//! the picture is put in through the editor, and what is measured is the
+//! drawing.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use egui_kittest::kittest::Queryable;
@@ -13,24 +18,6 @@ use markdown_notes_plugin::gui::{Pictures, IMAGES_TAB};
 
 const WIDTH: f32 = 700.0;
 const HEIGHT: f32 = 500.0;
-
-/// A file dropped on the window.
-///
-/// egui describes a dropped file by a trait and ships no implementation of it,
-/// because a browser hands one over differently from a desktop. A test drops
-/// files that are really on disk.
-#[derive(Debug)]
-struct ADroppedFile(PathBuf);
-
-impl egui::DroppedFile for ADroppedFile {
-    fn path(&self) -> &std::path::Path {
-        &self.0
-    }
-
-    fn bytes(&self) -> Result<Vec<u8>, String> {
-        std::fs::read(&self.0).map_err(|e| e.to_string())
-    }
-}
 
 /// A 40 by 30 picture, all one colour that nothing else in the window is.
 const PICTURE_COLOUR: [u8; 4] = [200, 40, 160, 255];
@@ -43,20 +30,6 @@ fn picture_bytes() -> Vec<u8> {
     markdown_notes_plugin::pictures::Incoming::from_rgba(40, 30, &rgba)
         .expect("the pixels did not encode")
         .bytes
-}
-
-/// The picture written to a file the test can drop, under the workspace's
-/// own cache. In a directory of the test's own: the tests run at the same
-/// time, and one writing a file while another reads it hands the reader half
-/// a picture.
-fn picture_file(test: &str, name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.cache/pictures-in-notes")
-        .join(test);
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    std::fs::write(&path, picture_bytes()).unwrap();
-    path
 }
 
 struct Window {
@@ -89,42 +62,10 @@ impl Window {
         self.harness.run_steps(3);
     }
 
-    fn drop_file(&mut self, path: PathBuf) {
-        self.harness
-            .input_mut()
-            .dropped_files
-            .push(std::sync::Arc::new(ADroppedFile(path)));
+    /// The picture put into the note at the caret, as a drop puts it.
+    fn put_in(&mut self, alt: &str) {
+        self.editor.lock().unwrap().insert_image(alt, &picture_bytes());
         self.step();
-    }
-
-    fn type_text(&mut self, text: &str) {
-        self.harness.input_mut().events.push(egui::Event::Text(text.to_string()));
-        self.step();
-    }
-
-    fn press(&mut self, key: egui::Key) {
-        self.harness.input_mut().events.push(egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        });
-        self.step();
-    }
-
-    fn click(&mut self, at: egui::Pos2) {
-        self.harness.input_mut().events.push(egui::Event::PointerMoved(at));
-        self.step();
-        for pressed in [true, false] {
-            self.harness.input_mut().events.push(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            self.step();
-        }
     }
 
     fn text(&self) -> String {
@@ -150,45 +91,17 @@ impl Window {
 }
 
 #[test]
-fn the_pointer_points_at_the_images_tab() {
-    let mut window = open("# Notes\n\nbefore");
-    window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-    window.drop_file(picture_file("pointer-on-the-tab", "cat.png"));
-
-    let tab = window.images_tab().expect("there is no images tab after a picture went in");
-    window.harness.input_mut().events.push(egui::Event::PointerMoved(tab.center()));
-    window.step();
-
-    assert_eq!(
-        window.harness.output().platform_output.cursor_icon,
-        egui::CursorIcon::PointingHand
-    );
-}
-
-#[test]
-fn a_dropped_file_goes_in_at_the_caret_on_a_line_of_its_own() {
-    let mut window = open("# Notes\n\nbefore");
-    window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-
-    window.drop_file(picture_file("at-the-caret", "cat.png"));
-
-    assert_eq!(window.text(), "# Notes\n\nbefore\n\n![cat][1]\n\n");
-    let editor = window.editor.lock().unwrap();
-    assert_eq!(editor.images().len(), 1);
-    assert_eq!(editor.images()[0].mime, markdown_notes_core::images::PNG);
-    assert_eq!(editor.images()[0].bytes().unwrap(), picture_bytes());
-}
-
-#[test]
 fn the_picture_is_drawn_in_the_document() {
     let mut window = open("# Notes\n\nbefore");
     window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
     assert_eq!(window.picture_pixels(), 0, "the picture's colour is in the window before any drop");
 
-    window.drop_file(picture_file("drawn", "cat.png"));
+    window.put_in("cat");
     // The caret is on the line after the reference, so the reference is a
     // picture and not text.
-    window.type_text("after");
+    let text = window.text();
+    window.editor.lock().unwrap().set_caret(text.len());
+    window.step();
 
     let drawn = window.pictures();
     assert_eq!(drawn.len(), 1, "one picture should be drawn: {drawn:?}");
@@ -202,7 +115,7 @@ fn the_picture_is_drawn_in_the_document() {
 fn the_reference_is_text_while_the_caret_is_on_it() {
     let mut window = open("# Notes\n\nbefore");
     window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-    window.drop_file(picture_file("text-on-it", "cat.png"));
+    window.put_in("cat");
 
     let text = window.text();
     window.editor.lock().unwrap().set_caret(text.find("![cat]").unwrap() + 2);
@@ -212,118 +125,22 @@ fn the_reference_is_text_while_the_caret_is_on_it() {
     assert_eq!(window.picture_pixels(), 0);
 }
 
-/// A dropped file that is not a picture puts no picture in. Not a markdown
-/// file either: that is opened as the document, see dropping_a_document.rs.
 #[test]
-fn a_file_that_is_not_a_picture_is_refused() {
-    let mut window = open("# Notes\n\nbefore");
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.cache/pictures-in-notes");
-    std::fs::create_dir_all(&dir).unwrap();
-    let text = dir.join("notes.rtf");
-    std::fs::write(&text, b"{\\rtf1 words}").unwrap();
-
-    window.drop_file(text);
-
-    assert_eq!(window.text(), "# Notes\n\nbefore");
-    assert!(window.images_tab().is_none());
-}
-
-#[test]
-fn the_images_tab_appears_last_and_shows_the_data_read_only() {
+fn the_images_tab_comes_after_the_sections() {
     let mut window = open("# Notes\n\nbefore");
     assert!(window.images_tab().is_none(), "an images tab with no pictures");
 
-    window.drop_file(picture_file("the-tab", "cat.png"));
-    let tab = window.images_tab().expect("no images tab after a drop");
+    window.put_in("cat");
+    let tab = window.images_tab().expect("no images tab with a picture in the note");
     let section = window.harness.get_by_label("Notes").rect();
     assert!(tab.left() > section.right(), "the images tab is not after the sections");
-
-    window.click(tab.center());
-    let editor = window.editor.lock().unwrap();
-    assert!(editor.viewing_images());
-    assert!(editor.text().starts_with("[1]: data:image/png;base64,"));
-    assert!(!editor.has_caret());
-    drop(editor);
-
-    window.type_text("x");
-    assert!(window.text().starts_with("[1]: data:image/png;base64,"));
-    assert_eq!(window.editor.lock().unwrap().section_text(0), "# Notes\n\nbefore\n\n![cat][1]\n\n");
-
-    window.click(section.center());
-    assert!(!window.editor.lock().unwrap().viewing_images());
-    assert_eq!(window.text(), "# Notes\n\nbefore\n\n![cat][1]\n\n");
-}
-
-#[test]
-fn deleting_the_reference_drops_the_data_and_the_tab() {
-    let mut window = open("# Notes\n\nbefore");
-    window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-    window.drop_file(picture_file("deleting", "cat.png"));
-    window.drop_file(picture_file("deleting", "dog.png"));
-    assert_eq!(window.text(), "# Notes\n\nbefore\n\n![cat][1]\n\n![dog][2]\n\n");
-
-    let text = window.text();
-    let from = text.find("![cat][1]").unwrap();
-    window.editor.lock().unwrap().select(from..from + "![cat][1]".len());
-    window.press(egui::Key::Backspace);
-
-    assert_eq!(window.text(), "# Notes\n\nbefore\n\n\n\n![dog][1]\n\n");
-    let numbers: Vec<usize> = window.editor.lock().unwrap().images().iter().map(|i| i.number).collect();
-    assert_eq!(numbers, vec![1]);
-    assert!(window.images_tab().is_some());
-
-    let text = window.text();
-    let from = text.find("![dog][1]").unwrap();
-    window.editor.lock().unwrap().select(from..from + "![dog][1]".len());
-    window.press(egui::Key::Backspace);
-
-    assert!(window.editor.lock().unwrap().images().is_empty());
-    assert!(window.images_tab().is_none(), "the images tab is still there with nothing in it");
-}
-
-/// Undo after deleting a reference brings the reference, its definition and
-/// the images tab back, frame after frame, with nothing tidying them away
-/// again.
-#[test]
-fn undo_brings_a_deleted_picture_and_the_images_tab_back() {
-    let mut window = open("# Notes\n\nbefore");
-    window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-    window.drop_file(picture_file("undo", "cat.png"));
-    let text = window.text();
-    let from = text.find("![cat][1]").unwrap();
-    window.editor.lock().unwrap().select(from..from + "![cat][1]".len());
-    window.press(egui::Key::Backspace);
-    assert!(window.images_tab().is_none(), "the tab is still there after the deletion");
-
-    window.harness.input_mut().events.push(egui::Event::Key {
-        key: egui::Key::Z,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::CTRL,
-    });
-    window.step();
-    window.step();
-
-    assert_eq!(window.text(), text);
-    assert!(window.images_tab().is_some(), "the images tab did not come back");
-    let editor = window.editor.lock().unwrap();
-    assert_eq!(editor.images().len(), 1);
-    assert_eq!(editor.images()[0].bytes().unwrap(), picture_bytes());
-    drop(editor);
-
-    // The undo leaves the caret on the reference, which is text while the
-    // caret is on it. Away from it, the picture is drawn again.
-    window.editor.lock().unwrap().set_caret(0);
-    window.step();
-    assert_eq!(window.pictures().len(), 1, "the picture is not drawn again");
 }
 
 #[test]
 fn the_pictures_survive_being_saved_and_loaded() {
     let mut window = open("# Notes\n\nbefore");
     window.editor.lock().unwrap().set_caret("# Notes\n\nbefore".len());
-    window.drop_file(picture_file("saved", "cat.png"));
+    window.put_in("cat");
 
     let saved = window.editor.lock().unwrap().state_bytes();
     let mut back = Editor::new();

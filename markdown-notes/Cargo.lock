@@ -3504,6 +3504,7 @@ dependencies = [
  "vst3",
  "windows",
  "windows-core",
+ "x11rb",
 ]
 
 [[package]]

@@ -3,20 +3,33 @@
 # through the clipboard read the plugin does on that key.
 #
 # A file dragged onto the window goes the same way from the window's own drop
-# target, which nothing here drives: a drag needs a source outside the
-# plugin, and the driver has none.
+# target, which `dropping-files` drives, out of the system's file manager.
 #
 # The picture is a PNG written here. The clipboard is left holding it.
 picture:%CACHE%\cat.png|40,30
 clipboard:%CACHE%\cat.png
 type:funky cake{TAB}
-showing:Section Title|140
+showing:Section Title|largest
 type:Drums{ENTER}kick on one
 
 # Pasted at the caret, after the line being typed: a reference on a line of
-# its own, the picture drawn there, and the images tab after the sections.
+# its own, the picture drawn there, and the images tab after the sections,
+# with the pointer turning into a pointing hand over it. The pointer is then
+# taken off the tab, which is drawn plain again.
 shortcut:ctrl+v
-showing:images|100
+showing:images
+cursor:images|hand
+moveto:below kick on one
+
+# Up onto the reference, which is text while the caret is on it, and the
+# eleven characters of `![image][1]` off the end of the line: the data goes
+# with the reference, and the tab with the data. Undo brings all of it back,
+# and the caret goes back down to where the paste left it.
+type:{UP 2}{END}{BS 11}
+hidden:images
+shortcut:ctrl+z
+showing:images
+type:{DOWN 2}
 
 # Pasted again, as the second reference.
 shortcut:ctrl+v
@@ -24,10 +37,10 @@ shortcut:ctrl+v
 # The images tab reads as the definitions: data URLs, which is what the note
 # saves as its bottom. Back on the section afterwards, so the state written
 # is the document's.
-press:images|240,113
-showing:base64|140
-press:Drums|60,113
-showing:kick on one|140
+press:images
+showing:base64
+press:Drums|smallest
+showing:kick on one
 
 expect:title is funky cake
 expect:sections is 1

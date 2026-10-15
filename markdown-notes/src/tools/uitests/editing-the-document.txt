@@ -19,40 +19,38 @@ type:{ENTER}
 # a paragraph, drawn at the height a paragraph is drawn at.
 type:{BS 3}
 type:text goes here
-cursor:60,155|ibeam
-cursor:400,400|arrow
-cursor:450,76|arrow
+cursor:text goes here|ibeam
+cursor:below text goes here|arrow
+cursor:after project title|arrow
 
 # Dragging through the text selects what it crosses, which typing then
 # replaces. The press has to land inside the text: a line is only as wide as
 # what is written on it, and a press beside it belongs to no line at all.
-# The drag runs from where "goes" starts, found by looking rather than by a
-# pixel count, to past the end of the line, so what it selects is everything
-# from there on: "text goes here" becomes "text X". The end of the drag sits
-# far right of the text so it is past the line's end whatever width a
-# platform's font gives it. A word rather than part of one: text recognition
-# places words, and a mark inside one snaps to its start. Not the last word on
-# the line either: the caret stands against it, and a reader takes the two
-# together and makes a different letter of it.
-dragtext:goes|140|300,155
+# The drag runs from where "goes" starts, found by looking, to the empty
+# space after the line, so what it selects is everything from there on: "text
+# goes here" becomes "text X". A word rather than part of one: text
+# recognition places words, and a mark inside one snaps to its start. Not the
+# last word on the line either: the caret stands against it, and a reader
+# takes the two together and makes a different letter of it.
+dragtext:goes|to after here
 type:X
 shot:%CACHE%\editing-dragged-to-select.png
 
-# Clicking far to the right of a line puts the caret at the end of that line,
-# not nowhere: the empty space to the right of a line belongs to it. A second
+# Clicking in the empty space to the right of a line puts the caret at the
+# end of that line, not nowhere: that space belongs to the line. A second
 # line first, so the click has a short line above a long one to land beside.
 type:{ENTER}second line
-click:600,155
+click:after text X
 type:!
 
 # Clicking where there is no line takes the caret away, and typing then has
 # nowhere to go. The empty space below the last line is document, but it is not
 # a line: there is nothing there to put a caret on. Clicking beside the first
 # line again puts the caret back at the end of it, and the `?` lands there.
-click:450,400
+click:below second line
 type:this must not appear
 shot:%CACHE%\clicking-away-the-caret.png
-click:600,155
+click:after text X
 type:?
 
 # Select the lot, cut it, and paste it back after some new text: the shortcuts
@@ -68,13 +66,14 @@ shot:%CACHE%\editing-pasted.png
 # Dragging selects across lines, the way it does in any text area. Each line
 # of the document is drawn as its own row, so a selection that runs from one
 # line into the next is the case to check: a third line, and one drag that
-# starts on the second and ends well below the last, which is off the end of
-# the text. A drag that runs past the end selects to the end, rather than
-# stopping at the line it began on, and typing replaces all of it. The second
-# line's first character is the boundary being pressed on, so no space beside
-# it can be taken in or left out depending on which pixel the press lands.
+# starts on the second and ends in the empty space below the last, which is
+# off the end of the text. A drag that runs past the end selects to the end,
+# rather than stopping at the line it began on, and typing replaces all of
+# it. The second line's first character is the boundary being pressed on, so
+# no space beside it can be taken in or left out depending on which pixel the
+# press lands.
 type:{ENTER}third line here
-dragtext:second line|140|400,400
+dragtext:second line|to below third line here
 type:Y
 shot:%CACHE%\selecting-across-lines.png
 
@@ -111,13 +110,14 @@ shot:%CACHE%\caret-below-a-code-block.png
 # is selected, so what the line reads afterwards says what was selected.
 #
 # The double click lands in the middle of `beta`, not on its edge, and the
-# drag starts in the middle of `gamma`: a drag by characters from there would
-# leave `ga` behind, and a drag by words takes all of it. What the line holds
-# afterwards is checked at the end of the run.
+# drag starts in the middle of `gamma` and ends in the empty space after the
+# line: a drag by characters from there would leave `ga` behind, and a drag
+# by words takes all of it. What the line holds afterwards is checked at the
+# end of the run.
 type:{ENTER}alpha beta gamma delta
-dbltext:beta|140
+dbltext:beta
 type:bravo
-dragwords:gamma|140|650
+dragwords:gamma|to after delta
 type:zulu
 shot:%CACHE%\selecting-by-words.png
 
@@ -125,19 +125,19 @@ shot:%CACHE%\selecting-by-words.png
 # it leaves the selection as it is; the menu's option then acts on it. Cut
 # takes `alpha` out, Paste puts it back over the `zulu` selected next, and
 # Copy followed by the keyboard shortcut shows what Copy put on the clipboard.
-dbltext:alpha|140
-righttext:alpha|140
-showing:Copy|140
-showing:Paste|140
-press:Cut|300,300
-hidden:alpha|140
-dbltext:zulu|140
-righttext:zulu|140
-press:Paste|300,300
-hidden:zulu|140
-dbltext:bravo|140
-righttext:bravo|140
-press:Copy|300,300
+dbltext:alpha
+righttext:alpha
+showing:Copy
+showing:Paste
+press:Cut
+hidden:alpha
+dbltext:zulu
+righttext:zulu
+press:Paste
+hidden:zulu
+dbltext:bravo
+righttext:bravo
+press:Copy
 type:{END}
 shortcut:ctrl+v
 shot:%CACHE%\clipboard-menu.png
@@ -155,22 +155,22 @@ type:{ENTER}flowchart LR
 type:{ENTER}Start --> End
 type:{ENTER}{%}{%} sentinel words
 type:{DOWN}{END}{ENTER}{ENTER}after the picture
-hidden:sentinel|140
-press:Start|300,400
+hidden:sentinel
+press:Start
 shot:%CACHE%\mermaid-picture-clicked.png
-showing:sentinel|140
-press:after the picture|300,400
-hidden:sentinel|140
-showing:Start|140
+showing:sentinel
+press:after the picture
+hidden:sentinel
+showing:Start
 shot:%CACHE%\mermaid-clicked-away.png
 # Leaving it by a click in the empty space below the last line, which takes
 # the caret away rather than placing it, draws the picture too, and draws it
 # as the picture: nothing over it, its labels readable.
-press:Start|300,400
-showing:sentinel|140
-click:450,655
-hidden:sentinel|140
-showing:Start|140
+press:Start
+showing:sentinel
+click:below after the picture
+hidden:sentinel
+showing:Start
 shot:%CACHE%\mermaid-clicked-below.png
 
 expect:sections is 1

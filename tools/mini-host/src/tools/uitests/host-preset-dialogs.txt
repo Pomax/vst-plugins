@@ -20,7 +20,7 @@ type:one
 # Save a preset for real, so the Load button has something to offer. The name
 # field opens with the last name saved or loaded in it, so it is cleared first.
 # Enter commits, so this dialog has to be gone too.
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}escape-test
 type:{ENTER}
@@ -31,15 +31,14 @@ window:
 # is what proves nothing was loaded.
 #
 # Beside the line rather than below it: the empty space under the last line
-# takes the caret away instead of placing it, and how much of that there is
-# depends on how big the window happens to be.
-plugin:400,128
+# takes the caret away instead of placing it.
+click:after one
 type: two
 
 # Load preset, then Escape. The dialog has to be gone afterwards, which is
 # what this test is about: the expectations at the end catch a dialog that
 # committed, and say nothing about one that simply stayed open.
-press:Load preset|128,41
+press:Load preset
 window:Load preset
 type:{ESC}
 nowindow:Load preset
@@ -47,7 +46,7 @@ window:
 
 # Save preset with a name typed in, then Escape. No file by that name, and
 # again no dialog left behind.
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}not-written
 type:{ESC}
@@ -58,10 +57,10 @@ window:
 # one escaped out of is not. The file assertions below say the same thing
 # about the disk; this says it about what the dialog shows, which is what
 # somebody looking for their preset would see.
-press:Load preset|128,41
+press:Load preset
 window:Load preset
-showing:escape-test|0
-hidden:not-written|0
+showing:escape-test
+hidden:not-written
 type:{ESC}
 nowindow:Load preset
 window:
@@ -76,7 +75,7 @@ window:
 # One real preset, saved the way any preset is saved, holding the document as
 # it stands: `one two`. Had either Escape above loaded `escape-test`, it would
 # hold `one` instead, and so would the document at the end.
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}zz-bulk
 type:{ENTER}
@@ -92,19 +91,19 @@ copies:%PRESETS%\zz-bulk.preset|%PRESETS%\zz-bulk|24
 # Change the document, so loading has something to undo, and see the change on
 # screen. Not the last word typed: the caret stands against it and is read as
 # part of it.
-plugin:400,128
+click:after one
 type: three more
-showing:three|140
+showing:three
 
 # Open the list and take the last row. Getting there means the scrollbar
 # worked: the heads are live and each click moves one row.
-press:Load preset|128,41
+press:Load preset
 window:Load preset
 shot:%CACHE%\host-preset-scrolling-list.png
 row:%PRESETS%|zz-bulk-24
 nowindow:Load preset
 window:
-hidden:three|140
+hidden:three
 
 cleanup:%PRESETS%\escape-test.preset
 cleanup:%PRESETS%\not-written.preset

@@ -20,6 +20,9 @@ use core_graphics::event::{
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 
+use crate::drawn::Place;
+use crate::locate::{self, Finder, Named};
+
 /// A window's place on screen, in points, top left origin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -37,6 +40,33 @@ impl Rect {
     fn bottom(&self) -> i32 {
         self.y + self.height
     }
+}
+
+/// Somewhere on the screen for a window `width` by `height` that overlaps
+/// `taken` nowhere: to its right, to its left, under it or above it, the
+/// first of those with the room. A file carried from one window to another
+/// must cross no part of the window it came from on the way.
+fn room_beside(taken: Rect, screen: Rect, width: i32, height: i32) -> Result<(i32, i32), String> {
+    let tries = [
+        (taken.right(), taken.y),
+        (taken.x - width, taken.y),
+        (taken.x, taken.bottom()),
+        (taken.x, taken.y - height),
+    ];
+    for (x, y) in tries {
+        let x = x.clamp(screen.x, (screen.right() - width).max(screen.x));
+        let y = y.clamp(screen.y, (screen.bottom() - height).max(screen.y));
+        let clear = x >= taken.right()
+            || x + width <= taken.x
+            || y >= taken.bottom()
+            || y + height <= taken.y;
+        if clear {
+            return Ok((x, y));
+        }
+    }
+    Err(format!(
+        "no room on the screen for a {width}x{height} window beside the one under test"
+    ))
 }
 
 fn source() -> Result<CGEventSource, String> {
@@ -193,11 +223,6 @@ fn let_go(x: i32, y: i32) -> Result<(), String> {
     Ok(())
 }
 
-fn drag(from: (i32, i32), to: (i32, i32)) -> Result<(), String> {
-    take_hold(from.0, from.1)?;
-    let_go(to.0, to.1)
-}
-
 /// A key going down and coming back up, with whatever modifiers are held,
 /// taking the time one keystroke takes.
 fn tap(code: u16, flags: CGEventFlags) -> Result<(), String> {
@@ -247,7 +272,7 @@ const COMMAND: u16 = 55;
 /// selected; one that does not exist yet is a save, so the sheet gets its
 /// directory and the name field gets its name. Either way the test's own
 /// Enter still confirms the dialog, the same keystroke it is on Windows.
-fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
+fn dialog_path(finder: &Finder, area: Rect, work: &Path, path: &str) -> Result<(), String> {
     // Numbered pictures of every stage, because none of this is visible in
     // the test's own output when it goes wrong.
     let stage = {
@@ -266,7 +291,7 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
     let opened = picture("opened");
     let deadline = Instant::now() + Duration::from_secs(6);
     loop {
-        if find_on_screen(area, "Cancel", &opened)?.is_some() {
+        if find_on_screen(finder, area, "Cancel", &opened)?.is_some() {
             break;
         }
         if Instant::now() > deadline {
@@ -305,7 +330,7 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if find_on_screen(area, &tail, &typed)?.is_none() {
+        if find_on_screen(finder, area, &tail, &typed)?.is_none() {
             return Err(format!(
                 "the path never appeared in the dialog; see {}",
                 typed.display()
@@ -337,7 +362,7 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if find_on_screen(area, &tail, &typed)?.is_none() {
+    if find_on_screen(finder, area, &tail, &typed)?.is_none() {
         return Err(format!(
             "the directory never appeared in the dialog; see {}",
             typed.display()
@@ -352,7 +377,7 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
     write(&name)?;
     sleep(Duration::from_millis(200));
     let named = picture("named");
-    if find_on_screen(area, &name, &named)?.is_none() {
+    if find_on_screen(finder, area, &name, &named)?.is_none() {
         return Err(format!(
             "the name never appeared in the dialog; see {}",
             named.display()
@@ -502,10 +527,14 @@ fn window_rect(pid: u32, title: &str) -> Result<Rect, String> {
     } else {
         format!("(first window whose name is {title:?})")
     };
-    let answer = osascript(&format!(
+    placed(&osascript(&format!(
         "tell application \"System Events\" to tell (first process whose unix id is {pid}) \
          to get {{position, size}} of {which}"
-    ))?;
+    ))?)
+}
+
+/// A window's place as System Events answers it: position, then size.
+fn placed(answer: &str) -> Result<Rect, String> {
     let numbers: Vec<i32> = answer
         .split(',')
         .filter_map(|part| part.trim().parse().ok())
@@ -518,6 +547,53 @@ fn window_rect(pid: u32, title: &str) -> Result<Rect, String> {
         y: numbers[1],
         width: numbers[2],
         height: numbers[3],
+    })
+}
+
+/// Where Finder's window on a folder is. Finder titles the window with the
+/// folder's name.
+fn finder_window(folder: &str) -> Result<Rect, String> {
+    placed(&osascript(&format!(
+        "tell application \"System Events\" to tell process \"Finder\" \
+         to get {{position, size}} of (first window whose name is {folder:?})"
+    ))?)
+}
+
+/// Put Finder's window on a folder at a place on the screen, at a size.
+fn place_finder_window(folder: &str, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    osascript(&format!(
+        "tell application \"System Events\" to tell process \"Finder\" \
+         to tell (first window whose name is {folder:?})\n\
+         set position to {{{x}, {y}}}\n\
+         set size to {{{width}, {height}}}\n\
+         end tell"
+    ))
+    .map(|_| ())
+}
+
+/// Close Finder's windows on a folder.
+fn close_finder_window(folder: &str) -> Result<(), String> {
+    osascript(&format!(
+        "tell application \"Finder\" to close (every window whose name is {folder:?})"
+    ))
+    .map(|_| ())
+}
+
+/// The screen, as Finder measures it: left, top, right, bottom.
+fn screen_rect() -> Result<Rect, String> {
+    let answer = osascript("tell application \"Finder\" to get bounds of window of desktop")?;
+    let numbers: Vec<i32> = answer
+        .split(',')
+        .filter_map(|part| part.trim().parse().ok())
+        .collect();
+    if numbers.len() != 4 {
+        return Err(format!("could not read the screen's size: {answer:?}"));
+    }
+    Ok(Rect {
+        x: numbers[0],
+        y: numbers[1],
+        width: numbers[2] - numbers[0],
+        height: numbers[3] - numbers[1],
     })
 }
 
@@ -760,97 +836,59 @@ fn path_of(value: &str) -> PathBuf {
     PathBuf::from(value.replace('\\', "/"))
 }
 
-/// Where a piece of text is on screen inside `area`, found by looking.
-///
-/// The area is photographed and the system's text recognition finds the text
-/// in the picture, so the click goes where the row really is rather than
-/// where a layout constant says it ought to be. Returns the centre of the
-/// text, in screen points, or nothing when it is not on screen.
-fn find_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<(i32, i32)>, String> {
-    Ok(find_box_on_screen(area, text, probe)?.map(|found| {
+/// The centre of the first place `text` is on screen inside `area`, in
+/// screen points, or nothing when it is not on screen.
+fn find_on_screen(finder: &Finder, area: Rect, text: &str, probe: &Path) -> Result<Option<(i32, i32)>, String> {
+    Ok(find_box_on_screen(finder, area, text, probe)?.map(|found| {
         (found.x + found.width / 2, found.y + found.height / 2)
     }))
 }
 
-/// `TEXT|Y` taken apart: the text, and the row of the window below which
-/// it is looked for.
-fn text_and_row<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32), String> {
-    let (text, below) = value
-        .split_once('|')
-        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
-    let below = below
-        .trim()
-        .parse()
-        .map_err(|_| format!("not a row: {value}"))?;
-    Ok((text.trim(), below))
-}
-
-/// `TEXT|Y|X,Y2` taken apart: the text, the row, and the point left as
-/// written for [`pair`].
-fn text_row_and_point<'a>(value: &'a str, step: &str) -> Result<(&'a str, i32, &'a str), String> {
-    let (text_and_row, to) = value
-        .rsplit_once('|')
-        .ok_or_else(|| format!("cannot read {step}: {value}"))?;
-    let (text, below) = self::text_and_row(text_and_row, step)?;
-    Ok((text, below, to))
-}
-
-/// The box of the first `text` drawn below row `below` of the window, or why
-/// it is not there.
-fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, String> {
-    let window = window_rect(run.pid, &run.title)?;
-    let band = Rect {
-        x: window.x,
-        y: window.y + below,
-        width: window.width,
-        height: (window.height - below).max(1),
-    };
-    let probe = run
-        .state
-        .parent()
-        .map(|work| work.join("press.png"))
-        .ok_or("nowhere to put the look")?;
-    let found = find_box_on_screen(band, text, &probe);
-    let _ = std::fs::remove_file(&probe);
-    found?.ok_or_else(|| format!("{text:?} is not on screen for {step}"))
-}
-
-/// The box the text occupies on screen inside `area`, found by looking.
-fn find_box_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
+/// The box of the first place `text` is on screen inside `area`.
+fn find_box_on_screen(finder: &Finder, area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
     shot(area, probe)?;
-    let out = Command::new(finder()?)
-        .arg(probe)
-        .arg(text)
-        .output()
-        .map_err(|e| format!("running the text finder: {e}"))?;
-    if out.status.code() == Some(1) {
+    let Some(first) = finder.all(probe, text, None)?.into_iter().next() else {
         return Ok(None);
+    };
+    Ok(Some(on_screen(area, locate::width_of(probe)?, first)))
+}
+
+/// The display's scale: the width of a picture of `area`, in the display's
+/// pixels, over the area's width in points.
+fn scale_of(area: Rect, picture_width: u32) -> f64 {
+    picture_width as f64 / area.width.max(1) as f64
+}
+
+/// A box in a picture of `area`, on the screen.
+fn on_screen(area: Rect, picture_width: u32, place: Place) -> Rect {
+    let scale = scale_of(area, picture_width);
+    Rect {
+        x: area.x + (place.x as f64 / scale) as i32,
+        y: area.y + (place.y as f64 / scale) as i32,
+        width: (place.width as f64 / scale) as i32,
+        height: (place.height as f64 / scale) as i32,
     }
-    if !out.status.success() {
-        return Err(format!(
-            "the text finder failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    let numbers: Vec<f64> = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .filter_map(|part| part.parse().ok())
-        .collect();
-    if numbers.len() != 6 || numbers[4] <= 0.0 {
-        return Err(format!(
-            "the text finder said something unreadable: {}",
-            String::from_utf8_lossy(&out.stdout).trim()
-        ));
-    }
-    // The picture is of `area`, so its pixel count over the area's width is
-    // the display's scale.
-    let scale = numbers[4] / area.width as f64;
-    Ok(Some(Rect {
-        x: area.x + (numbers[0] / scale) as i32,
-        y: area.y + (numbers[1] / scale) as i32,
-        width: (numbers[2] / scale) as i32,
-        height: (numbers[3] / scale) as i32,
-    }))
+}
+
+/// A point in a picture of `area`, on the screen.
+fn point_on_screen(area: Rect, picture_width: u32, point: (i32, i32)) -> (i32, i32) {
+    let scale = scale_of(area, picture_width);
+    (
+        area.x + (point.0 as f64 / scale) as i32,
+        area.y + (point.1 as f64 / scale) as i32,
+    )
+}
+
+/// How long a place is looked for before a step gives up on it.
+const PATIENCE: Duration = Duration::from_secs(5);
+
+/// The text on the clipboard, line ends as `\n`.
+fn clipboard_text() -> String {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+
+    let board = NSPasteboard::generalPasteboard();
+    let held = unsafe { board.stringForType(NSPasteboardTypeString) };
+    held.map(|text| text.to_string()).unwrap_or_default().replace("\r\n", "\n")
 }
 
 /// Where the text finder is, built if it is not there yet.
@@ -1061,6 +1099,8 @@ struct Film {
 struct Run {
     child: Child,
     pid: u32,
+    /// The text finder, which reads the pictures the steps take.
+    finder: Finder,
     /// How many times `restart:` has started the host again.
     restarts: usize,
     /// What the run was started with, so `restart:` can do it again.
@@ -1094,10 +1134,12 @@ impl Run {
         reported: &Path,
         settle: Duration,
     ) -> Result<Run, String> {
+        let finder = Finder::new(finder()?);
         let (child, pid, rect) = launch(program, plugin, state, reported, &[], settle)?;
         Ok(Run {
             child,
             pid,
+            finder,
             restarts: 0,
             program: program.to_path_buf(),
             plugin: plugin.to_path_buf(),
@@ -1161,9 +1203,69 @@ impl Run {
         Ok(())
     }
 
-    /// A point inside the window the steps are addressing, on screen.
-    fn at(&self, x: i32, y: i32) -> (i32, i32) {
-        (self.rect.x + x, self.rect.y + y)
+    /// Where the window the steps are addressing is now.
+    fn area(&self) -> Rect {
+        window_rect(self.pid, &self.title).unwrap_or(self.rect)
+    }
+
+    /// A file beside the test's own for a look at the window.
+    fn probe(&self, name: &str) -> Result<PathBuf, String> {
+        self.state
+            .parent()
+            .map(|work| work.join(name))
+            .ok_or_else(|| "nowhere to put the look".to_string())
+    }
+
+    /// The point on screen a WHERE phrase names, looked for in fresh
+    /// pictures of the window until it is there. A failure says what the
+    /// window reads instead.
+    fn resolve(&self, named: &Named, step: &str) -> Result<(i32, i32), String> {
+        let probe = self.probe("point.png")?;
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let area = self.area();
+            shot(area, &probe)?;
+            if let Some(point) = self.finder.point_in(&probe, named)? {
+                let width = locate::width_of(&probe)?;
+                let _ = std::fs::remove_file(&probe);
+                return Ok(point_on_screen(area, width, point));
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "nothing is at \"{named}\" for {step}; the window reads: {}; see {}",
+                    self.finder.reads(&probe),
+                    probe.display()
+                ));
+            }
+        }
+    }
+
+    fn resolve_point(&self, value: &str, step: &str) -> Result<(i32, i32), String> {
+        self.resolve(&locate::split_named(value), step)
+    }
+
+    /// The box on screen of the named words, looked for in fresh pictures of
+    /// the window until it is there. A failure says what the window reads
+    /// instead.
+    fn find_words(&self, named: &Named, step: &str) -> Result<Rect, String> {
+        let probe = self.probe("words.png")?;
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let area = self.area();
+            shot(area, &probe)?;
+            if let Some(words) = self.finder.first(&probe, named)? {
+                let width = locate::width_of(&probe)?;
+                let _ = std::fs::remove_file(&probe);
+                return Ok(on_screen(area, width, words));
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "\"{named}\" is not on screen for {step}; the window reads: {}; see {}",
+                    self.finder.reads(&probe),
+                    probe.display()
+                ));
+            }
+        }
     }
 
     /// Close the host and hold it to a clean exit.
@@ -1272,7 +1374,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .parent()
                 .map(Path::to_path_buf)
                 .ok_or("nowhere to put the dialog pictures")?;
-            dialog_path(run.rect, &work, &value.replace('\\', "/"))
+            dialog_path(&run.finder, run.rect, &work, &value.replace('\\', "/"))
         }
         "type" => send_keys(value),
         "wait" => {
@@ -1284,43 +1386,42 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             Ok(())
         }
         "click" => {
-            let (x, y) = pair(value, "click")?;
-            let (x, y) = run.at(x, y);
+            // `click:WHERE` clicks the point WHERE names.
+            let (x, y) = run.resolve_point(value, "click")?;
+            let area = run.area();
             click(x, y)?;
             sleep(Duration::from_millis(500));
+            println!("click:  {value} at {},{}", x - area.x, y - area.y);
             Ok(())
         }
         "hold" => {
-            let (x, y) = pair(value, "hold")?;
-            let (x, y) = run.at(x, y);
+            // `hold:WHERE` presses there and keeps holding, so the steps
+            // after it happen mid-drag.
+            let (x, y) = run.resolve_point(value, "hold")?;
             run.holding = true;
-            take_hold(x, y)
-        }
-        "moveto" => {
-            let (x, y) = pair(value, "moveto")?;
-            let (x, y) = run.at(x, y);
-            move_to(x, y, run.holding)
-        }
-        "letgo" => {
-            let (x, y) = pair(value, "letgo")?;
-            let (x, y) = run.at(x, y);
-            run.holding = false;
-            let_go(x, y)?;
-            sleep(Duration::from_millis(400));
+            take_hold(x, y)?;
+            println!("hold:   {value}");
             Ok(())
         }
-        "drag" => {
-            let numbers: Vec<i32> = value
-                .split(',')
-                .filter_map(|part| part.trim().parse().ok())
-                .collect();
-            if numbers.len() != 4 {
-                return Err(format!("cannot read drag: {value}"));
+        "moveto" => {
+            // `moveto:WHERE` moves the pointer there, button or no button.
+            let (x, y) = run.resolve_point(value, "moveto")?;
+            move_to(x, y, run.holding)?;
+            println!("moveto: {value}");
+            Ok(())
+        }
+        "letgo" => {
+            // `letgo:` releases the button where the pointer is;
+            // `letgo:WHERE` moves there first.
+            if value.trim().is_empty() {
+                mouse(CGEventType::LeftMouseUp, pointer()?)?;
+            } else {
+                let (x, y) = run.resolve_point(value, "letgo")?;
+                let_go(x, y)?;
             }
-            let from = run.at(numbers[0], numbers[1]);
-            let to = run.at(numbers[2], numbers[3]);
-            drag(from, to)?;
+            run.holding = false;
             sleep(Duration::from_millis(400));
+            println!("letgo:  {value}");
             Ok(())
         }
         "shortcut" => {
@@ -1413,51 +1514,21 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             Ok(())
         }
         "press" => {
-            // `press:LABEL|X,Y` looks first and clicks second. X,Y is where
-            // the code puts the control, in window coordinates; the region
-            // around that spot is photographed, the label is found in the
-            // picture to confirm or correct the position, the picture is
-            // deleted, and the click goes where the label really is. A label
-            // that is not in its region is a failure, not a blind click.
-            //
-            // `press:LABEL|X,Y|smallest` and `|largest` say which of two sizes
-            // of the same label is meant. Here only the region round X,Y is
-            // looked at, which holds one of them, so the word is read past.
-            let (label, at) = value
-                .split_once('|')
-                .ok_or_else(|| format!("cannot read press: {value}"))?;
-            let label = label.trim();
-            if label.is_empty() {
-                return Err("press: needs a label".to_string());
+            // `press:TEXT` looks first and clicks second: the window is
+            // photographed, the words are found in the picture, and the
+            // click goes where they are. Words the window does not show are
+            // a failure, not a blind click.
+            let named = locate::split_named(value);
+            if named.text.is_empty() {
+                return Err("press: needs words".to_string());
             }
-            let at = at.split_once('|').map_or(at, |(at, _)| at);
-            let (x, y) = pair(at, "press")?;
-            let window = window_rect(run.pid, &run.title)?;
-            let region = Rect {
-                x: window.x + (x - 110).max(0),
-                y: window.y + (y - 30).max(0),
-                width: 220.min(window.width),
-                height: 60.min(window.height),
-            };
-            let probe = run
-                .state
-                .parent()
-                .map(|work| work.join("press.png"))
-                .ok_or("nowhere to put the look")?;
-            let found = find_on_screen(region, label, &probe);
-            let _ = std::fs::remove_file(&probe);
-            let Some((found_x, found_y)) = found? else {
-                return Err(format!(
-                    "no control labelled {label:?} is near {x},{y}"
-                ));
-            };
-            click(found_x, found_y)?;
+            let found = run.find_words(&named, "press")?;
+            let area = run.area();
+            let (x, y) = (found.x + found.width / 2, found.y + found.height / 2);
+            mouse(CGEventType::MouseMoved, point(x, y))?;
+            click(x, y)?;
             sleep(Duration::from_millis(500));
-            println!(
-                "press:  {label} at {},{}",
-                found_x - window.x,
-                found_y - window.y
-            );
+            println!("press:  {value} at {},{}", x - area.x, y - area.y);
             Ok(())
         }
         "dialog" | "nodialog" => {
@@ -1496,7 +1567,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     // Which dialog, read off the panel itself. A picture of
                     // one window is small enough for text recognition to
                     // read; a picture of the whole screen is not.
-                    let found = find_on_screen(rect, want, &probe)?;
+                    let found = find_on_screen(&run.finder, rect, want, &probe)?;
                     if found.is_none() {
                         return Err(format!(
                             "a dialog is open, but nothing on it says {want:?}; see {}",
@@ -1521,143 +1592,110 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             }
         }
         "showing" | "hidden" => {
-            // `showing:TEXT|Y` reads the window below Y and fails unless TEXT
-            // is there; `hidden:` fails if it is. Below Y so the toolbars and
-            // the tab labels are out of it: what is being asked about is what
-            // the document displays, and a tab's own label is not that.
-            let (text, below) = value
-                .split_once('|')
-                .ok_or_else(|| format!("cannot read {kind}: {value}"))?;
-            let text = text.trim();
-            let below: i32 = below
-                .trim()
-                .parse()
-                .map_err(|_| format!("not a row: {value}"))?;
-            let window = window_rect(run.pid, &run.title)?;
-            let area = Rect {
-                x: window.x,
-                y: window.y + below,
-                width: window.width,
-                height: (window.height - below).max(1),
-            };
-            let probe = run
-                .state
-                .parent()
-                .map(|work| work.join("showing.png"))
-                .ok_or("nowhere to put the look")?;
-            // Looked at until it is as the step says: what the step before did
-            // may not have been drawn yet, and a tooltip takes its time coming
-            // and going. No step pauses for a length of time instead.
+            // `showing:TEXT` fails unless the window shows TEXT; `hidden:`
+            // fails if it does. The window is read until it is as the step
+            // says or the wait runs out.
+            let named = locate::split_named(value);
+            if named.text.is_empty() {
+                return Err(format!("cannot read {kind}: {value}"));
+            }
+            let probe = run.probe("showing.png")?;
             let wanted = kind == "showing";
-            let deadline = Instant::now() + Duration::from_secs(5);
+            let deadline = Instant::now() + PATIENCE;
             let found = loop {
-                let found = find_on_screen(area, text, &probe);
-                let _ = std::fs::remove_file(&probe);
-                let found = found?.is_some();
+                shot(run.area(), &probe)?;
+                let found = run.finder.first(&probe, &named)?.is_some();
                 if found == wanted || Instant::now() >= deadline {
                     break found;
                 }
             };
-            match (kind, found) {
-                ("showing", false) => {
-                    Err(format!("the document does not show {text:?}"))
-                }
-                ("hidden", true) => Err(format!("the document still shows {text:?}")),
-                _ => {
-                    println!("{kind}: {text}");
-                    Ok(())
-                }
+            if found != wanted {
+                let complaint = if wanted { "does not show" } else { "still shows" };
+                return Err(format!(
+                    "the window {complaint} {value:?}; it reads: {}; see {}",
+                    run.finder.reads(&probe),
+                    probe.display()
+                ));
             }
-        }
-        "dragtext" => {
-            // `dragtext:TEXT|Y|X,Y2` selects by dragging from where TEXT
-            // starts to X,Y2 in window coordinates. Where TEXT is comes from
-            // looking: the window below Y is photographed, the first TEXT in
-            // it is found, the picture is deleted, and the press lands on
-            // TEXT's first character. What width a font gives the characters
-            // before it stops mattering, and the same words in the toolbar
-            // above Y are not mistaken for it.
-            let (text, below, to) = text_row_and_point(value, "dragtext")?;
-            let (to_x, to_y) = pair(to, "dragtext")?;
-            let window = window_rect(run.pid, &run.title)?;
-            let from = text_below(run, text, below, "dragtext")?;
-            // On the first glyph, not beside it. A press lands on the nearest
-            // character boundary, and the boundary before the first letter is
-            // the one its ink starts at.
-            let start = from.x;
-            take_hold(start, from.y + from.height / 2)?;
-            let_go(window.x + to_x, window.y + to_y)?;
-            sleep(Duration::from_millis(500));
-            println!(
-                "dragtext: from {},{}",
-                start - window.x,
-                from.y + from.height / 2 - window.y
-            );
+            let _ = std::fs::remove_file(&probe);
+            println!("{kind}: {value}");
             Ok(())
         }
-        "dbltext" => {
-            // `dbltext:TEXT|Y` double-clicks the middle of TEXT, found below Y
-            // the way dragtext finds it. The middle, so the press is inside
-            // the word and not on its edge.
-            let (text, below) = text_and_row(value, "dbltext")?;
-            let found = text_below(run, text, below, "dbltext")?;
-            double_click(found.x + found.width / 2, found.y + found.height / 2)?;
-            sleep(Duration::from_millis(500));
-            println!("dbltext: {text}");
-            Ok(())
-        }
-        "righttext" => {
-            // `righttext:TEXT|Y` clicks the middle of TEXT with the right
-            // button.
-            let (text, below) = text_and_row(value, "righttext")?;
-            let found = text_below(run, text, below, "righttext")?;
-            right_click(found.x + found.width / 2, found.y + found.height / 2)?;
-            sleep(Duration::from_millis(500));
-            println!("righttext: {text}");
-            Ok(())
-        }
-        "dragwords" => {
-            // `dragwords:TEXT|Y|X` double-clicks the middle of TEXT and drags
-            // the second press along TEXT's row to X: a drag that selects by
-            // words.
-            let (text, below, to) = text_row_and_point(value, "dragwords")?;
-            let to_x: i32 = to
-                .trim()
-                .parse()
-                .map_err(|_| format!("cannot read dragwords: {value}"))?;
-            let window = window_rect(run.pid, &run.title)?;
-            let found = text_below(run, text, below, "dragwords")?;
+        "dragtext" | "dragwords" => {
+            // `dragtext:TEXT|to WHERE` drags from TEXT's first letter to
+            // WHERE. `dragwords:TEXT|to WHERE` double-clicks the middle of
+            // TEXT and drags the second press along TEXT's row to WHERE.
+            let (named, target) = locate::split_to(value, kind)?;
+            let found = run.find_words(&named, kind)?;
             let row = found.y + found.height / 2;
-            double_hold(found.x + found.width / 2, row)?;
-            let_go(window.x + to_x, row)?;
+            let to = run.resolve(&target, kind)?;
+            if kind == "dragtext" {
+                take_hold(found.x, row)?;
+                let_go(to.0, to.1)?;
+            } else {
+                double_hold(found.x + found.width / 2, row)?;
+                let_go(to.0, row)?;
+            }
             sleep(Duration::from_millis(500));
-            println!("dragwords: {text}");
+            println!("{kind}: {value}");
             Ok(())
         }
-        "dragedge" => {
-            let numbers: Vec<i32> = value
-                .split(',')
-                .filter_map(|part| part.trim().parse().ok())
-                .collect();
-            if numbers.len() != 3 {
-                return Err(format!("cannot read dragedge: {value}"));
+        "dbltext" | "righttext" => {
+            // `dbltext:TEXT` double-clicks the middle of TEXT;
+            // `righttext:TEXT` clicks it with the right button.
+            let found = run.find_words(&locate::split_named(value), kind)?;
+            let (x, y) = (found.x + found.width / 2, found.y + found.height / 2);
+            if kind == "dbltext" {
+                double_click(x, y)?;
+            } else {
+                right_click(x, y)?;
             }
-            let corner = (run.host.right() - 3, run.host.bottom() - 3);
-            take_hold(corner.0, corner.1)?;
-            glide(
-                point(corner.0, corner.1),
-                point(corner.0 + numbers[0], corner.1 + numbers[1]),
-                Duration::from_millis(numbers[2] as u64),
-                true,
-            )?;
-            let_go(corner.0 + numbers[0], corner.1 + numbers[1])?;
             sleep(Duration::from_millis(500));
-            run.rect = window_rect(run.pid, "")?;
-            run.host = run.rect;
-            println!(
-                "dragedge: {},{} over {}ms",
-                numbers[0], numbers[1], numbers[2]
-            );
+            println!("{kind}: {value}");
+            Ok(())
+        }
+        "mark" => {
+            // `mark:before A` and `mark:after A` fail unless the drop mark,
+            // an upright line in the accent colour, is drawn left or right
+            // of the words A on their row.
+            let named = locate::split_named(value);
+            let probe = run.probe("mark.png")?;
+            let deadline = Instant::now() + PATIENCE;
+            loop {
+                let area = run.area();
+                shot(area, &probe)?;
+                let width = locate::width_of(&probe)?;
+                if let Some(found) = run.finder.mark_in(&probe, &named, width as i32)? {
+                    let (x, y) = point_on_screen(area, width, found);
+                    let _ = std::fs::remove_file(&probe);
+                    println!("mark:   {value} at {},{}", x - area.x, y - area.y);
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!("no drop mark is drawn {value}; see {}", probe.display()));
+                }
+            }
+        }
+        "copied" => {
+            // `copied:TEXT` fails unless the text on the clipboard holds
+            // TEXT, `\n` for a newline. The clipboard is read until it does
+            // or the wait runs out.
+            let wanted = value.replace("\\n", "\n");
+            if wanted.is_empty() {
+                return Err(format!("cannot read copied: {value}"));
+            }
+            let deadline = Instant::now() + PATIENCE;
+            let held = loop {
+                let held = clipboard_text();
+                if held.contains(&wanted) || Instant::now() >= deadline {
+                    break held;
+                }
+                sleep(Duration::from_millis(25));
+            };
+            if !held.contains(&wanted) {
+                return Err(format!("the clipboard does not hold {value:?}; it holds: {held}"));
+            }
+            println!("copied: {value}");
             Ok(())
         }
         "dragto" => {
@@ -1711,6 +1749,117 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             write_picture(&path_of(path), width as u32, height as u32)
         }
         "clipboard" => put_on_clipboard(&path_of(value)),
+        "write" => {
+            // `write:PATH|TEXT` writes TEXT to a file, `\n` for a newline,
+            // for a test to drag or open.
+            let (path, text) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read write: {value}"))?;
+            let path = path_of(path.trim());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+            }
+            std::fs::write(&path, text.replace("\\n", "\n"))
+                .map_err(|e| format!("writing {}: {e}", path.display()))
+        }
+        "dragfile" => {
+            // `dragfile:PATH|WHERE` drags a file out of Finder and drops it
+            // at WHERE in the window: the file is revealed in Finder, its
+            // name is found in that window by reading it, the mouse presses
+            // on the name, carries it across the screen to WHERE and lets go
+            // there. Finder is the source of the drag, as it is when a person
+            // does this, and nothing here tells the plugin what is being
+            // dragged. The Finder window is closed afterwards. The drop's
+            // place is found before Finder comes up over anything.
+            let (path, at) = value
+                .split_once('|')
+                .ok_or_else(|| format!("cannot read dragfile: {value}"))?;
+            let path = path_of(path.trim());
+            if at.trim().is_empty() {
+                return Err(format!("cannot read dragfile: {value}"));
+            }
+            if !path.exists() {
+                return Err(format!("nothing to drag at {}", path.display()));
+            }
+            let (to_x, to_y) = run.resolve_point(at.trim(), "dragfile")?;
+            let folder = path
+                .parent()
+                .and_then(|folder| folder.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or_else(|| format!("{} is in no folder Finder can show", path.display()))?;
+            // Finder hides the extension of a file type it knows, so the name
+            // is looked for without it.
+            let stem = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let revealed = Command::new("open")
+                .arg("-R")
+                .arg(&path)
+                .status()
+                .map_err(|e| format!("running open: {e}"))?;
+            if !revealed.success() {
+                return Err(format!("Finder would not show {}", path.display()));
+            }
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut opened = finder_window(&folder);
+            while opened.is_err() && Instant::now() < deadline {
+                sleep(Duration::from_millis(200));
+                opened = finder_window(&folder);
+            }
+            opened.map_err(|e| format!("Finder never opened {folder:?}: {e}"))?;
+            // Beside the window under test, so the file's trip to X,Y crosses
+            // no part of Finder: a file let go over Finder is dropped there.
+            let (px, py) = room_beside(run.host, screen_rect()?, 640, 480)?;
+            place_finder_window(&folder, px, py, 640, 480)?;
+            osascript("tell application \"Finder\" to activate")?;
+            sleep(Duration::from_millis(500));
+            let area = finder_window(&folder)?;
+            let probe = run.probe("dragfile.png")?;
+            // The leftmost place the name is read, which is the file list.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let found = loop {
+                shot(area, &probe)?;
+                let leftmost = run
+                    .finder
+                    .all(&probe, &stem, None)?
+                    .into_iter()
+                    .min_by_key(|found| found.x);
+                if let Some(leftmost) = leftmost {
+                    break Some(on_screen(area, locate::width_of(&probe)?, leftmost));
+                }
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                sleep(Duration::from_millis(200));
+            };
+            let Some(found) = found else {
+                return Err(format!(
+                    "Finder shows no file called {stem:?}; it reads: {}; see {}",
+                    run.finder.reads(&probe),
+                    probe.display()
+                ));
+            };
+            let _ = std::fs::remove_file(&probe);
+            let (from_x, from_y) = (found.x + found.width / 2, found.y + found.height / 2);
+            take_hold(from_x, from_y)?;
+            glide(
+                point(from_x, from_y),
+                point(to_x, to_y),
+                Duration::from_millis(600),
+                true,
+            )?;
+            // Over the target long enough for the window there to say whether
+            // it will take the file.
+            sleep(Duration::from_millis(300));
+            let_go(to_x, to_y)?;
+            sleep(Duration::from_millis(500));
+            close_finder_window(&folder)?;
+            front(run.pid)?;
+            println!("dragfile: {} to {}", path.display(), at.trim());
+            Ok(())
+        }
         "written" => {
             // `written:PATH|TEXT` checks a file in code, mid-test, right when
             // the step before it claims to have written it. Failing here names
@@ -1804,7 +1953,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .ok_or("nowhere to put the row picture")?;
             let mut turns = 0;
             loop {
-                if let Some((x, y)) = find_on_screen(run.rect, name.trim(), &probe)? {
+                if let Some((x, y)) = find_on_screen(&run.finder, run.rect, name.trim(), &probe)? {
                     click(x, y)?;
                     sleep(Duration::from_millis(500));
                     return Ok(());
@@ -1846,18 +1995,31 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             Ok(())
         }
         "cursor" => {
-            let (where_at, want) = value
-                .split_once('|')
-                .ok_or_else(|| format!("cannot read cursor: {value}"))?;
-            let (x, y) = pair(where_at, "cursor")?;
-            let (x, y) = run.at(x, y);
-            mouse(CGEventType::MouseMoved, point(x, y))?;
-            sleep(Duration::from_millis(700));
-            let shown = cursor_now();
-            let want = want.trim();
+            // `cursor:SHAPE` checks what the window asked the cursor to be
+            // where the pointer is; `cursor:WHERE|SHAPE` parks the pointer at
+            // WHERE first. The window only changes it when it next redraws,
+            // so it is looked at until it is what was asked for.
+            let (place, want) = locate::split_cursor(value);
+            let where_at = match &place {
+                Some(named) => {
+                    let (x, y) = run.resolve(named, "cursor")?;
+                    mouse(CGEventType::MouseMoved, point(x, y))?;
+                    named.to_string()
+                }
+                None => "the pointer".to_string(),
+            };
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let shown = loop {
+                let shown = cursor_now();
+                if shown == want || Instant::now() >= deadline {
+                    break shown;
+                }
+                sleep(Duration::from_millis(25));
+            };
             if shown != want {
                 return Err(format!("cursor at {where_at} is {shown}, expected {want}"));
             }
+            println!("cursor: {where_at} is {want}");
             Ok(())
         }
         "film" => {
@@ -1971,5 +2133,36 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             Ok(())
         }
         other => Err(format!("unknown step: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_goes_beside_the_one_under_test_where_there_is_room() {
+        let screen = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+
+        let host = Rect { x: 100, y: 100, width: 800, height: 600 };
+        assert_eq!(room_beside(host, screen, 640, 480), Ok((900, 100)));
+
+        let at_the_right = Rect { x: 1100, y: 100, width: 800, height: 600 };
+        assert_eq!(room_beside(at_the_right, screen, 640, 480), Ok((460, 100)));
+
+        let wide = Rect { x: 0, y: 0, width: 1920, height: 500 };
+        assert_eq!(room_beside(wide, screen, 640, 480), Ok((0, 500)));
+
+        let whole = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        assert!(room_beside(whole, screen, 640, 480).is_err());
+    }
+
+    #[test]
+    fn a_place_is_read_as_position_then_size() {
+        assert_eq!(
+            placed("543, 252, 900, 646"),
+            Ok(Rect { x: 543, y: 252, width: 900, height: 646 })
+        );
+        assert!(placed("543, 252").is_err());
     }
 }

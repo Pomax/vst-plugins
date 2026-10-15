@@ -7,6 +7,7 @@ setlocal
 cd /d "%~dp0.."
 
 set ONE=
+if /I "%~1"=="find-text" set ONE=tools\find-text
 if /I "%~1"=="mini-host" set ONE=tools\mini-host
 if /I "%~1"=="vst3-loader" set ONE=tools\vst3-loader
 if /I "%~1"=="markdown-notes" set ONE=markdown-notes
@@ -21,7 +22,7 @@ popd
 exit /b %RESULT%
 
 :all
-for %%p in (tools\mini-host tools\vst3-loader markdown-notes) do (
+for %%p in (tools\find-text tools\mini-host tools\vst3-loader markdown-notes) do (
     echo === %%p ===
     pushd "%%p"
     call ".\test.bat" %*

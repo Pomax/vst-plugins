@@ -1,0 +1,85 @@
+# Dragging a section's tab reorders the sections, through the real window.
+# A tab taken hold of and carried shows the drop mark where the section
+# would land, and the pointer says it is carrying; letting go puts the
+# section there. The three kinds of place a section can be dropped: between
+# two tabs, in front of the first, after the last.
+#
+# Three sections: Mix notes, Drum bus, Vocal chain. The order after all three
+# drags is Vocal chain, Drum bus, Mix notes, and nothing else produces that
+# order. Fail any one drag and the result is different every time:
+#
+#   the first fails  -> Drum bus, Vocal chain, Mix notes
+#   the second fails -> Mix notes, Drum bus, Vocal chain
+#   the third fails  -> Vocal chain, Mix notes, Drum bus
+#
+# A tab is taken hold of by its words, the smallest of the places they are,
+# since the heading says the same in bigger letters. While it is carried the
+# tab under the pointer is covered by what is carried, so the mark is looked
+# for from the tabs that are not covered.
+#
+# Enter leaves the note's name as it is and goes to the document.
+type:{ENTER}
+showing:Section Title|largest
+type:Mix notes
+type:{ENTER}levels are close
+click:beside Mix notes right|smallest
+showing:Section Title|largest
+type:Drum bus
+click:beside Drum bus right|smallest
+showing:Section Title|largest
+type:Vocal chain
+showing:Vocal chain|largest
+
+# Between two: the last section carried onto the middle one, which puts the
+# mark in the gap between the first two. The button stays down across these
+# steps, which is what makes it a drag rather than two clicks. On Windows the
+# carrying pointer is the four-way arrow, which is what baseview asks for
+# when egui reports a grabbing pointer.
+hold:Vocal chain|smallest
+moveto:Drum bus|smallest
+cursor:grabbing
+mark:after Mix notes|smallest
+shot:%CACHE%\section-drag-between.png
+letgo:
+# Now: Mix notes, Vocal chain, Drum bus.
+shot:%CACHE%\section-drag-between-landed.png
+
+# In front of the first: the section that just landed in the middle, carried
+# left to the space before the first tab's words, where the mark stands. The
+# first tab is under what is carried, so the mark is looked for before the
+# last tab, which is the space before both.
+hold:Vocal chain|smallest
+moveto:before Mix notes|smallest
+cursor:grabbing
+mark:before Drum bus|smallest
+shot:%CACHE%\section-drag-to-front.png
+letgo:
+# Now: Vocal chain, Mix notes, Drum bus.
+shot:%CACHE%\section-drag-to-front-landed.png
+
+# After the last: the middle section carried out to the space after the last
+# tab, where the mark stands. The last tab is under what is carried, so the
+# mark is looked for after the first tab.
+hold:Mix notes|smallest
+moveto:after Drum bus|smallest
+cursor:grabbing
+mark:after Vocal chain|smallest
+shot:%CACHE%\section-drag-to-end.png
+letgo:
+# Now: Vocal chain, Drum bus, Mix notes.
+shot:%CACHE%\section-drag-to-end-landed.png
+
+# Each tab, read in turn, holds its own section and not a neighbour's.
+press:Vocal chain|smallest
+showing:Vocal chain|largest
+hidden:levels are close
+press:Drum bus|smallest
+showing:Drum bus|largest
+hidden:levels are close
+press:Mix notes|smallest
+showing:levels are close
+
+expect:sections is 3
+expect:section 0 is # Vocal chain
+expect:section 1 is # Drum bus
+expect:section 2 is # Mix notes\n\nlevels are close

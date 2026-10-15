@@ -1,0 +1,65 @@
+type:{ENTER}
+type:{BS 3}
+type:text goes here
+click:before text goes here
+type:<
+type:{END}{ENTER}-[] a task{ENTER}{ENTER}[links]{(}https://example.com{)}
+
+righttext:untitled
+showing:Delete section
+click:below links
+hidden:Delete section
+
+click:beside a task left
+shot:%CACHE%\clicking-the-controls-toolbar.png
+
+click:after text goes here
+press:Markdown source
+shot:%CACHE%\clicking-the-controls-source.png
+showing:https://example.com
+press:Markdown source
+hidden:https://example.com
+
+click:after links
+type:{END}{ENTER 40}last line here
+press:Markdown source
+press:Markdown source
+showing:last line here
+
+press:Markdown source
+click:beside untitled right
+press:untitled|smallest
+
+click:beside Theme right
+showing:Reset this scheme
+press:Light|below Markdown source
+showing:Theme: light
+press:Auto|below Markdown source
+showing:Theme: auto
+press:Dark|below Markdown source
+showing:Theme: dark
+shot:%CACHE%\clicking-the-controls-settings.png
+click:beside Window background left
+showing:Blending
+click:Settings
+hidden:Blending
+press:Reset this scheme
+showing:Reset this scheme
+click:beside Settings right
+hidden:Reset this scheme
+
+press:Theme
+showing:Theme: auto
+press:Theme
+showing:Theme: light
+press:Theme
+showing:Theme: dark
+
+righttext:Section Title|smallest
+press:Delete section
+hidden:Section Title
+
+expect:sections is 1
+expect:notes contain <text goes here\n\n- [x] a task\n\n[links](https://example.com)
+expect:theme is dark
+expect:mode is wysiwyg

@@ -15,12 +15,6 @@ use std::process::Command;
 
 use markdown_notes_core::PluginState;
 
-/// How far down the mini host's own strip pushes the plugin's window.
-///
-/// It is the host's `chrome::HEIGHT`. The two live in separate projects, and a
-/// mismatch shows up as clicks landing one row off.
-const HOST_STRIP_HEIGHT: i32 = 26;
-
 /// Where the mini host keeps this plugin's presets: beside the executable it
 /// was run from, which is the shared `binaries`.
 fn presets_dir(root: &Path) -> PathBuf {
@@ -228,6 +222,19 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
             .then_some(())
             .ok_or_else(|| format!("title is {:?}, expected {want:?}", state.title));
     }
+    if let Some(want) = expect.strip_prefix("mode is") {
+        // `mode is raw`: the view the plugin was left in, as it saves it.
+        let want = want.trim();
+        return (state.mode == want)
+            .then_some(())
+            .ok_or_else(|| format!("mode is {:?}, expected {want:?}", state.mode));
+    }
+    if let Some(want) = expect.strip_prefix("theme is") {
+        let want = want.trim();
+        return (state.theme == want)
+            .then_some(())
+            .ok_or_else(|| format!("theme is {:?}, expected {want:?}", state.theme));
+    }
     // The sections are not part of the state: they are cut from the document by
     // its headings, the same way the plugin cuts them when it opens one, after
     // its images tail comes off the end.
@@ -359,31 +366,6 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
 }
 
 /// Run one test and report what failed, if anything.
-/// Turn a step written in the plugin's coordinates into one in the window's.
-///
-/// `plugin:X,Y` is a click, and `plugin:VERB:X,Y` is whatever else the driver
-/// can do at a point: `plugin:hold:60,87` presses there. Anything after a `|`
-/// is carried over untouched, which is how `plugin:cursor:60,87|grabbing` says
-/// what it expects to find.
-fn in_the_plugin(step: &str) -> Option<String> {
-    let rest = step.strip_prefix("plugin:")?;
-    let (verb, value) = match rest.split_once(':') {
-        Some((verb, value)) => (verb, value),
-        None => ("click", rest),
-    };
-    let (coordinates, tail) = match value.split_once('|') {
-        Some((coordinates, tail)) => (coordinates, Some(tail)),
-        None => (value, None),
-    };
-    let (x, y) = coordinates.split_once(',')?;
-    let y: i32 = y.trim().parse().ok()?;
-    let moved = format!("{}:{},{}", verb, x.trim(), y + HOST_STRIP_HEIGHT);
-    Some(match tail {
-        Some(tail) => format!("{moved}|{tail}"),
-        None => moved,
-    })
-}
-
 fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), String> {
     let work = root.join(".cache").join("uitests");
     std::fs::create_dir_all(&work).map_err(|e| format!("creating {}: {e}", work.display()))?;
@@ -393,16 +375,8 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     let _ = std::fs::remove_file(&state_file);
     // `%CACHE%` becomes this run's working directory, so a test can name a
     // file to save without depending on where a dialog happens to open.
-    //
-    // `plugin:X,Y` is a click in the plugin's own window, which sits below the
-    // host's strip. Written as a window coordinate it would move every time
-    // the host's chrome changed height.
-    let steps: Vec<String> = test
+    let steps = test
         .steps
-        .iter()
-        .map(|step| in_the_plugin(step).unwrap_or_else(|| step.clone()))
-        .collect();
-    let steps = steps
         .join("\n")
         .replace("%CACHE%", &work.display().to_string())
         .replace("%PRESETS%", &presets_dir(root).display().to_string());
@@ -702,6 +676,19 @@ mod tests {
         assert!(check("image 1 is image/png", &state).is_ok());
         assert!(check("image 2 is image/png", &state).is_err());
         assert!(check("images is 0", &state).is_err());
+    }
+
+    #[test]
+    fn the_view_and_the_theme_are_checked_as_the_plugin_saves_them() {
+        let state = PluginState {
+            mode: "raw".to_string(),
+            theme: "dark".to_string(),
+            ..PluginState::default()
+        };
+        assert!(check("mode is raw", &state).is_ok());
+        assert!(check("mode is wysiwyg", &state).is_err());
+        assert!(check("theme is dark", &state).is_ok());
+        assert!(check("theme is auto", &state).is_err());
     }
 
     #[test]

@@ -138,6 +138,11 @@ impl Input {
     /// Move there and let the button go.
     pub fn let_go(&mut self, x: i32, y: i32) -> Result<(), String> {
         self.move_to(x, y)?;
+        self.let_go_here()
+    }
+
+    /// Let the button go where the pointer is.
+    pub fn let_go_here(&mut self) -> Result<(), String> {
         self.release()?;
         sleep(Duration::from_millis(200));
         Ok(())

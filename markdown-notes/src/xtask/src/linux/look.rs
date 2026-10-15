@@ -89,39 +89,6 @@ pub fn read_all(picture: &Path) -> Result<(u32, Vec<(Rect, String)>), String> {
     run_finder(picture, None)
 }
 
-/// The box whose middle is closest to a spot.
-pub fn nearest(boxes: &[Rect], near: (i32, i32)) -> Option<Rect> {
-    boxes.iter().copied().min_by_key(|found| {
-        let dx = (found.x + found.width / 2 - near.0) as i64;
-        let dy = (found.y + found.height / 2 - near.1) as i64;
-        dx * dx + dy * dy
-    })
-}
-
-/// How far the middle of a `+` may be from where a click was sent, across
-/// and down, and still be what the click is for.
-const REACH: i32 = 24;
-
-/// The `+` a click at `point` is for: the nearest line that is a `+` and
-/// nothing else, of those within reach of the point.
-///
-/// A button with only a `+` on it sits after whatever is before it, and how
-/// wide that is comes from the face the lettering is drawn in. The numbers
-/// in a step do not know the face.
-pub fn plus_near(lines: &[(Rect, String)], point: (i32, i32)) -> Option<Rect> {
-    let within_reach: Vec<Rect> = lines
-        .iter()
-        .filter(|(_, text)| text.trim() == "+")
-        .map(|(found, _)| *found)
-        .filter(|found| {
-            let across = found.x + found.width / 2 - point.0;
-            let down = found.y + found.height / 2 - point.1;
-            across.abs() <= REACH && down.abs() <= REACH
-        })
-        .collect();
-    nearest(&within_reach, point)
-}
-
 /// A box in a picture of `area`, in `area`'s own units from its top left.
 ///
 /// A picture is in the screen's pixels, which on a scaled monitor are not
@@ -212,45 +179,5 @@ mod tests {
         // A picture with nothing in it to read is its size and no boxes.
         assert_eq!(parsed("900 683\n"), Some((900, Vec::new())));
         assert_eq!(parsed(""), None);
-    }
-
-    #[test]
-    fn a_click_beside_a_plus_is_for_the_plus() {
-        let line = |x: i32, y: i32, width: i32, text: &str| {
-            (Rect { x, y, width, height: 10 }, text.to_string())
-        };
-        // A tab, the `+` after it, and a line of the document that starts
-        // with one.
-        let strip = [
-            line(150, 114, 72, "Drum bus"),
-            line(247, 114, 9, "+"),
-            line(26, 150, 60, "+ a list"),
-        ];
-        let plus = Some(strip[1].0);
-
-        // Sent a little short of it, and a little past it.
-        assert_eq!(plus_near(&strip, (239, 113)), plus);
-        assert_eq!(plus_near(&strip, (262, 125)), plus);
-        // Sent to the tab, and to the line of the document.
-        assert_eq!(plus_near(&strip, (181, 119)), None);
-        assert_eq!(plus_near(&strip, (50, 155)), None);
-        // Out of reach across, and out of reach down.
-        assert_eq!(plus_near(&strip, (226, 119)), None);
-        assert_eq!(plus_near(&strip, (251, 144)), None);
-
-        // Of two, the nearer.
-        let two = [line(247, 114, 9, "+"), line(277, 114, 9, "+")];
-        assert_eq!(plus_near(&two, (268, 119)), Some(two[1].0));
-    }
-
-    #[test]
-    fn the_box_nearest_the_expected_spot_wins() {
-        // The same word twice: a tab at the top and a heading further down.
-        let tab = Rect { x: 40, y: 105, width: 40, height: 14 };
-        let heading = Rect { x: 26, y: 150, width: 90, height: 24 };
-
-        assert_eq!(nearest(&[heading, tab], (60, 113)), Some(tab));
-        assert_eq!(nearest(&[tab, heading], (60, 160)), Some(heading));
-        assert_eq!(nearest(&[], (60, 113)), None);
     }
 }
