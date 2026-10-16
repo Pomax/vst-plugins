@@ -13,6 +13,10 @@ markdown-notes-core.workspace = true
 # Used to read the freshly built plugin's own factory metadata when generating
 # moduleinfo.json, so the file can never drift from the binary it describes.
 vst3-loader.workspace = true
+# The pictures the UI tests take of a window, read for what is drawn beside
+# the words in them, see src/drawn.rs; on Linux also cutting a window out of
+# a picture of the screen, and the picture a `picture:` step writes.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # Synthesising clicks and keystrokes, and finding the window to send them to.
 # Windows has `tools/capture-window.ps1` for this; macOS has no equivalent
@@ -34,11 +38,6 @@ objc2-app-kit = { version = "0.3.2", features = [
 ] }
 objc2-foundation = { version = "0.3.2", features = ["std", "NSData"] }
 
-# The picture a `picture:` step writes is built by hand, and decoding it back
-# is how its tests know it is a picture at all.
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-image = { version = "0.25.10", default-features = false, features = ["png"] }
-
 # The window driver for Linux is built in as well, see src/linux.rs.
 [target.'cfg(target_os = "linux")'.dependencies]
 # Finding the host's windows, asking where they and the pointer are, and
@@ -53,8 +52,6 @@ pollster = "0.4"
 xcursor = "0.3"
 # Leaving a picture on the clipboard for a `clipboard:` step.
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
-# Cutting a window out of a picture of the screen.
-image = { version = "0.25.10", default-features = false, features = ["png"] }
 # Handing the screen stream's file descriptor to the program that reads it,
 # and asking that program to stop.
 libc = "0.2"

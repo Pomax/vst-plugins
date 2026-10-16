@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask, Window,
+    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask, Window,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -88,6 +88,54 @@ impl Desktop {
                 self.numbers(*window, self.atoms._NET_WM_PID).first() == Some(&pid)
                     && self.title(*window) == title
             })
+    }
+
+    /// The names a window's program gives the desktop, from `WM_CLASS`: the
+    /// instance and the class.
+    fn class(&self, window: Window) -> Vec<String> {
+        self.conn
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, u32::MAX)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| {
+                reply
+                    .value
+                    .split(|byte| *byte == 0)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| String::from_utf8_lossy(part).into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The managed window of the program with this class, if there is one:
+    /// the name a program registers with the desktop, such as
+    /// `org.gnome.Nautilus`.
+    pub fn window_of_class(&self, class: &str) -> Option<Window> {
+        self.numbers(self.root, self.atoms._NET_CLIENT_LIST)
+            .into_iter()
+            .find(|window| self.class(*window).iter().any(|name| name.eq_ignore_ascii_case(class)))
+    }
+
+    /// The process a window belongs to, as the window says.
+    pub fn pid_of(&self, window: Window) -> Option<u32> {
+        self.numbers(window, self.atoms._NET_WM_PID).first().copied()
+    }
+
+    /// Ask the window manager to put a window at a place on the desktop, at
+    /// a size.
+    pub fn place(&self, window: Window, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+        let moved = ConfigureWindowAux::new()
+            .x(x)
+            .y(y)
+            .width(width.max(1) as u32)
+            .height(height.max(1) as u32);
+        self.conn
+            .configure_window(window, &moved)
+            .map_err(|e| format!("asking for the window to be moved: {e}"))?;
+        self.conn
+            .flush()
+            .map_err(|e| format!("asking for the window to be moved: {e}"))
     }
 
     /// Where a window's own area is on the desktop, without its frame.

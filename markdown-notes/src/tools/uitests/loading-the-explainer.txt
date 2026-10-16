@@ -1,0 +1,65 @@
+# The menu's last option loads the explainer that ships inside the plugin.
+# It replaces the document, its frontmatter names the note, and the document
+# needs no file, so nothing is asked for.
+#
+# The explainer has seven sections: Intro, Instruments, Beat, Lead, Melody,
+# Vocals, Timeline. Loaded correctly means the title reads from the
+# frontmatter, every one of the seven tabs is on the window, and each tab
+# holds its own section. A tab's section is read by pressing the tab,
+# selecting everything with Ctrl+A, copying it with Ctrl+C, and reading the
+# clipboard: it has to hold that section's heading and its first line, which
+# no other section has. Pressing a tab gives the document the keyboard, so
+# the shortcuts go to it. What the window has scrolled to plays no part.
+#
+# The tabs are pressed in order, and each is the smallest of the places its
+# word is: the words Beat, Lead, Melody and Vocals are also subheadings
+# inside Instruments, drawn bigger than a tab.
+type:{ENTER}
+showing:Section Title|largest
+type:Mix notes
+type:{ENTER}levels are close
+
+click:beside Markdown source left
+press:Load explainer
+showing:How to use this plugin
+hidden:levels are close
+hidden:Mix notes
+
+press:Intro|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Intro\n\nSome kind of text outlining the project brief, maybe some stake holders like this:\n\n- Alice\n- Bob\n- Carol\n\nWith [links](https://example.com) because obviously those should work.\n\nAlso, tabs, because you want to be able to organize your work well enough that you can use this VSTi as part of a template, where it's simply part of your master out and has everything already set up for you to "fill in the blanks".
+
+press:Instruments|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Instruments\n\nLet's say you generally work with this kind of breakdown
+
+press:Beat|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Beat\n\nWe could get real detailed about all aspects of the beat.
+
+press:Lead|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Lead\n\nA bit traditional, but... piano? organ? We could talk about which kind of spectral profile we're looking for, which specific VSTi, etc. etc.
+
+press:Melody|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Melody\n\nEveryone likes a motown string section, right? Which VST are good for that? What do we even need?
+
+press:Vocals|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Vocals\n\nLet's talk about singers.
+
+press:Timeline|smallest
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:# Timeline\n\nCharts are supported, too, so we can stub out a timeline gannt chart and then fill that in as the project progresses.
+
+expect:title is How to use this plugin
+expect:sections is 7
+expect:section 0 is # Intro\n\nSome kind of text outlining the project brief, maybe some stake holders like this:\n\n- Alice\n- Bob\n- Carol\n\nWith [links](https://example.com) because obviously those should work.\n\nAlso, tabs, because you want to be able to organize your work well enough that you can use this VSTi as part of a template, where it's simply part of your master out and has everything already set up for you to "fill in the blanks".

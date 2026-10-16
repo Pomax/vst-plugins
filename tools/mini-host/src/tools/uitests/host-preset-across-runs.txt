@@ -16,19 +16,19 @@ type:{ENTER}
 # than typing a `#` of its own.
 type:first
 type:{ENTER}the first paragraph
-# The + button carries no word, and a lone glyph is not something text
-# recognition reads reliably: it is clicked where the code puts it, and that
-# the click landed is said by the two tabs read after the preset comes back.
-plugin:129,87
+# The + button carries no word: it is the thing drawn after the last tab, and
+# that the click landed is said by the two tabs read after the preset comes
+# back.
+click:beside first right|smallest
 type:second
 type:{ENTER}the second paragraph
 
 remove:%CACHE%\across-runs.md
 # Save As is in the menu behind the plugin's three-dot button. The button
-# carries no word, so it is clicked where the code puts it, and the option is
-# then found by what it says.
-plugin:585,50
-press:Save As|615,153
+# carries no word: it is the thing drawn left of the Markdown source button,
+# and the option is then found by what it says.
+click:beside Markdown source left
+press:Save As
 dialog:Save
 type:%CACHE%\across-runs.md
 type:{ENTER}
@@ -40,7 +40,7 @@ written:%CACHE%\across-runs.md|# first\n\nthe first paragraph\n\n# second\n\nthe
 
 # The name field opens with the last name saved or loaded in it, so it is
 # cleared before this one is typed.
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 shot:%CACHE%\host-presets-save.png
 type:{END}{BS 40}across-runs
@@ -51,7 +51,7 @@ window:
 # A new host, holding a plugin that starts empty.
 restart:
 
-press:Load preset|128,41
+press:Load preset
 window:Load preset
 shot:%CACHE%\host-presets-list.png
 # One click on a row is the whole interaction, and it goes by name: the list
@@ -77,12 +77,12 @@ shot:%CACHE%\across-runs-restored.png
 # Both tabs came back, each holding its own section. The expectations below
 # cut the document into sections here, so they cannot tell two tabs from one
 # tab holding everything; reading each tab can.
-press:first|60,113|smallest
-showing:the first paragraph|140
-hidden:the second paragraph|140
-press:second|170,113|smallest
-showing:the second paragraph|140
-hidden:the first paragraph|140
+press:first|smallest
+showing:the first paragraph
+hidden:the second paragraph
+press:second|smallest
+showing:the second paragraph
+hidden:the first paragraph
 
 cleanup:%PRESETS%\across-runs.preset
 cleanup:%CACHE%\across-runs.md

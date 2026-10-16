@@ -1,0 +1,87 @@
+# Files dropped on the window, through the real window: each one is picked up
+# in the system's own file manager with the mouse, carried across the screen
+# and let go over the document. The file manager is the source of the drag,
+# as it is when a person does this; nothing here hands the plugin a file by
+# any other road, so what reaches the document came through the window's own
+# drop target.
+#
+# A markdown file opens in place of the document, named by its frontmatter,
+# and is then the file Save writes to without asking. A picture goes in at the
+# caret as a reference on a line of its own, with its data in the images tab.
+# A file that is neither changes nothing, and nor does a picture whose name
+# and bytes disagree: a PNG called `.jpg`. The extension is matched whatever
+# its case: the last drop is a `.MD` that shouts.
+#
+# Nothing here is done to the document but drops. What each drop did is read
+# off the window at once, or off the file Save writes, and the state the
+# plugin writes on the way out says what the last one left.
+#
+# The files to drop are in a folder of their own, holding nothing else: the
+# file manager shows that folder, and a file of the runner's own appearing in
+# it moves every row under it.
+write:%CACHE%\dropped\brief.md|---\ntitle: funky cake\n---\n\n# Outline\n\nthe brief\n\n# Stakeholders\n\nthem\n
+picture:%CACHE%\dropped\cat.png|40,30
+picture:%CACHE%\dropped\fake.jpg|40,30
+write:%CACHE%\dropped\notes.rtf|{\rtf1 not markdown}
+write:%CACHE%\dropped\SHOUT.MD|# Shouted\n\nloud\n
+# Enter leaves the note's name as it is and goes to the document.
+type:{ENTER}
+showing:Section Title|largest
+
+# The markdown file, dropped under the heading: both its sections arrive, the
+# first in front. The file has a path now, so Save, in the menu behind the
+# three dots left of the Markdown source button, writes to it with no dialog,
+# and what it writes is the file as it was dropped.
+dragfile:%CACHE%\dropped\brief.md|below Section Title|largest
+showing:Outline
+showing:Stakeholders
+showing:the brief
+hidden:Section Title
+click:beside Markdown source left
+press:Save|below Open
+nodialog:Save
+written:%CACHE%\dropped\brief.md|title: funky cake\n---\n\n# Outline\n\nthe brief\n\n# Stakeholders\n\nthem
+
+# The picture: at the caret, which the open left in the first section, on a
+# line of its own, and the images tab after the sections. The file Save
+# writes holds the reference and, at its bottom, the data.
+dragfile:%CACHE%\dropped\cat.png|below the brief
+showing:images
+click:beside Markdown source left
+press:Save|below Open
+nodialog:Save
+written:%CACHE%\dropped\brief.md|![cat][1]
+written:%CACHE%\dropped\brief.md|[1]: data:image/png;base64,
+
+# A file that is neither markdown nor a picture, and a PNG called `.jpg`:
+# nothing changes. The file Save writes still holds one picture, and holds
+# nothing from either of them.
+dragfile:%CACHE%\dropped\notes.rtf|below the brief
+showing:the brief
+showing:images
+dragfile:%CACHE%\dropped\fake.jpg|below the brief
+showing:the brief
+showing:images
+click:beside Markdown source left
+press:Save|below Open
+nodialog:Save
+written:%CACHE%\dropped\brief.md|[1]: data:image/png;base64,
+hidden:fake
+
+# The shouting extension: opened like any other markdown file. It has no
+# frontmatter, so the name stays what the first file made it.
+dragfile:%CACHE%\dropped\SHOUT.MD|below the brief
+showing:loud
+hidden:the brief
+hidden:images
+
+cleanup:%CACHE%\dropped\brief.md
+cleanup:%CACHE%\dropped\cat.png
+cleanup:%CACHE%\dropped\fake.jpg
+cleanup:%CACHE%\dropped\notes.rtf
+cleanup:%CACHE%\dropped\SHOUT.MD
+
+expect:title is funky cake
+expect:sections is 1
+expect:section 0 is # Shouted\n\nloud\n
+expect:images is 0

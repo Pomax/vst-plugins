@@ -18,31 +18,31 @@ remove:%PRESETS%\opening-two-tabs.preset
 # on screen and the start has scrolled out of it. The last word is not what is
 # looked for: the caret stands against it and is read as part of it.
 type:This is a long title, three times the length any toolbar could show, with more words after those, that does not fit
-showing:does not|60
-hidden:This is a long|60
+showing:does not
+hidden:This is a long
 
 # Tab sends the keyboard to the text area, the same as Enter does (Enter is
 # what `sections-and-files` uses). The section there still has the heading it
 # was made with, which is on screen. No tab reaches the title or the document,
 # which the state this run writes says.
 type:{TAB}
-showing:Section Title|140
+showing:Section Title|largest
 
 # The title nobody is editing is cut to fit. The pointer is put over the
-# document, so nothing in the toolbar is hovered: the start of the title is on
-# screen and the end of it is not.
-moveto:300,300
-showing:This is|60
-hidden:does not fit|60
+# document, under the heading, so nothing in the toolbar is hovered: the start
+# of the title is on screen and the end of it is not.
+moveto:below Section Title|largest
+showing:This is
+hidden:does not fit
 
 # The pointer over the title brings up the whole of it, and taking the pointer
 # away takes it away again.
-moveto:63,77
-showing:does not fit|60
-moveto:300,300
-hidden:does not fit|60
+moveto:This is
+showing:does not fit
+moveto:below Section Title|largest
+hidden:does not fit
 
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}opening-unnamed-section
 type:{ENTER}
@@ -59,13 +59,13 @@ expect:section 0 is # Section Title
 # the heading are selected. What is typed replaces `Section Title`, keeps the
 # `# `, and does not reach the name.
 restart:--preset|%PRESETS%\opening-unnamed-section.preset
-showing:Section Title|140
+showing:Section Title|largest
 type:Drums
-showing:Drums|140
-hidden:Section Title|140
+showing:Drums|largest
+hidden:Section Title
 type:{ENTER}kick on one
 
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}opening-named-section
 type:{ENTER}
@@ -82,18 +82,17 @@ expect:section 0 is # Drums\n\nkick on one
 # for: the caret stands against the last letter of the body and is read as part
 # of the word.
 restart:--preset|%PRESETS%\opening-named-section.preset
-showing:Drums|140
+showing:Drums|largest
 type:!
 
 # A second tab, kept in front when the preset is saved. The + button carries no
-# word, and a lone glyph is not something text recognition reads reliably: it
-# is clicked where the code puts it, and that the click landed is said by the
-# two sections this run wrote.
-plugin:129,87
+# word: it is the thing drawn after the last tab, and that the click landed is
+# said by the two sections this run wrote.
+click:beside Drums right|smallest
 type:Two
 type:{ENTER}second
 
-press:Save preset|44,41
+press:Save preset
 window:Save preset
 type:{END}{BS 40}opening-two-tabs
 type:{ENTER}
@@ -108,8 +107,8 @@ expect:section 1 is # Two\n\nsecond
 # first tab, not the last, with the cursor after the end of what is written in
 # it, which is where the second `!` lands.
 restart:--preset|%PRESETS%\opening-two-tabs.preset
-showing:Drums|140
-hidden:Two|140
+showing:Drums|largest
+hidden:Two|below Two
 type:!
 
 cleanup:%PRESETS%\opening-unnamed-section.preset

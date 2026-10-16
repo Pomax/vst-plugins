@@ -1,7 +1,6 @@
 # The section strip and the file buttons, in one run: making sections, naming
-# the note, Save, Save As, dragging sections into each of the three kinds of
-# place one can be dropped (between two sections, in front of the first, after
-# the last), and opening a file back.
+# the note, Save, Save As, and opening a file back. Dragging sections is
+# `dragging-sections`; the built-in explainer is `loading-the-explainer`.
 #
 # Every file is checked in code the moment its dialog closes, which is where
 # each stage is proven: the state the plugin writes is written once, on the
@@ -11,14 +10,6 @@
 # frame being drawn leaves the frame timer firing into a layout that is already
 # under way, and the plugin dies. A dead plugin never reaches its shutdown, so
 # this test sees that as no state written at all.
-#
-# The order after all three drags is `Vocal chain`, `Drum bus`, `Mix notes`,
-# and nothing else produces that order. Fail any one drag and the result is
-# different every time:
-#
-#   the first fails  -> Drum bus, Vocal chain, Mix notes
-#   the second fails -> Mix notes, Drum bus, Vocal chain
-#   the third fails  -> Vocal chain, Mix notes, Drum bus
 #
 # Two things about the keyboard are settled in the first few steps. Nothing is
 # clicked before the first line is typed: a note nobody has named opens with
@@ -34,12 +25,11 @@
 # name typed straight after has to have replaced it: still showing afterwards
 # means the selection was not there.
 remove:%CACHE%\round-trip.md
-remove:%CACHE%\dragged.md
 type:{ENTER}
-showing:Section Title|140
+showing:Section Title|largest
 type:Mix notes
-showing:Mix notes|140
-hidden:Section Title|140
+showing:Mix notes|largest
+hidden:Section Title
 type:{ENTER}levels are close
 
 # Save is Save As until the document has a path, so this is the first dialog.
@@ -48,10 +38,11 @@ type:{ENTER}levels are close
 # one did.
 #
 # Open, Save and Save As are in the menu behind the toolbar's three-dot button.
-# The button carries no word, so it is clicked where the code puts it, and the
-# option is then found by what it says.
-plugin:585,50
-press:Save|600,126
+# The button carries no word: it is the thing drawn left of the Markdown
+# source button, and the option is then found by what it says, under the
+# menu's Open.
+click:beside Markdown source left
+press:Save|below Open
 dialog:Save
 type:%CACHE%\round-trip.md
 type:{ENTER}
@@ -61,69 +52,32 @@ remove:%CACHE%\round-trip.md
 
 # A name that fits the window at this size and not at the smaller one it is
 # dragged to at the end.
-press:project title|204,76
+press:project title
 type:{END}{BS 40}funky cake with a cherry on top and sprinkles
-# The + button carries no word, and a lone glyph is not something text
-# recognition reads reliably: it is clicked where the code puts it, and that
-# the click landed is said by the tabs read at the end.
-plugin:129,87
-showing:Section Title|140
+# The + button carries no word: it is the thing drawn after the last tab, and
+# that the click landed is said by the tabs read at the end.
+click:beside Mix notes right|smallest
+showing:Section Title|largest
 type:Drum bus
-showing:Drum bus|140
-hidden:Section Title|140
+showing:Drum bus|largest
+hidden:Section Title
 
 # Save As. The document has a path by now, which is what makes this a
 # different action from the save above rather than the same one twice. Both
 # sections, in order.
-plugin:585,50
-press:Save As|615,153
+click:beside Markdown source left
+press:Save As
 dialog:Save
 type:%CACHE%\round-trip.md
 type:{ENTER}
 nodialog:Save
 written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close\n\n# Drum bus
 
-plugin:239,87
-showing:Section Title|140
+click:beside Drum bus right|smallest
+showing:Section Title|largest
 type:Vocal chain
-showing:Vocal chain|140
-hidden:Section Title|140
-
-# With three sections the centres are 60, 170 and 280, and the last one ends at
-# 334.
-#
-# Between two: the last section carried over the middle one, which puts the mark
-# in the gap between the first two. The button stays down across these steps,
-# which is what makes it a drag rather than two clicks.
-#
-# The mid-drag pictures are for reading a failure. What the strip draws while
-# a section is being carried, the ghost and the drop mark, is measured in
-# `section_dragging.rs` against a headless render; nothing here decides it.
-plugin:hold:280,87
-plugin:moveto:170,87
-shot:%CACHE%\section-drag-between.png
-# While it is held, the pointer says so. On Windows that is the four-way arrow,
-# which is what baseview asks for when egui reports a grabbing pointer.
-plugin:cursor:170,87|grabbing
-plugin:letgo:170,87
-# Now: Mix notes, Vocal chain, Drum bus.
-shot:%CACHE%\section-drag-between-landed.png
-
-# In front of the first: the section that just landed in the middle, carried
-# left past the first one's middle.
-plugin:hold:170,87
-plugin:moveto:20,87
-shot:%CACHE%\section-drag-to-front.png
-plugin:letgo:20,87
-# Now: Vocal chain, Mix notes, Drum bus.
-shot:%CACHE%\section-drag-to-front-landed.png
-
-# After the last: the middle section carried out beyond every section there is.
-plugin:hold:170,87
-plugin:moveto:330,87
-shot:%CACHE%\section-drag-to-end.png
-plugin:letgo:330,87
-shot:%CACHE%\section-drag-to-end-landed.png
+showing:Vocal chain|largest
+hidden:Section Title
 
 # Each tab, read in turn. The expectations below take the document the plugin
 # wrote and cut it into sections here, so they say nothing about how many tabs
@@ -131,70 +85,61 @@ shot:%CACHE%\section-drag-to-end-landed.png
 # them. Each tab has to show its own text and not its neighbours'.
 #
 # A section's heading says what its tab says, in bigger letters, so a tab is
-# asked for as the smallest of the places its words are.
-press:Vocal chain|60,113|smallest
-showing:Vocal chain|140
-hidden:levels are close|140
-press:Drum bus|170,113|smallest
-showing:Drum bus|140
-hidden:levels are close|140
-press:Mix notes|280,113|smallest
-showing:levels are close|140
+# asked for as the smallest of the places its words are, and the heading as
+# the words under the tab.
+press:Vocal chain|smallest
+showing:Vocal chain|largest
+hidden:levels are close
+press:Drum bus|smallest
+showing:Drum bus|largest
+hidden:levels are close
+press:Mix notes|smallest
+showing:levels are close
 
-# The order the drags left, written to a file and checked in code.
-plugin:585,50
-press:Save As|615,153
-dialog:Save
-type:%CACHE%\dragged.md
-type:{ENTER}
-nodialog:Save
-written:%CACHE%\dragged.md|# Vocal chain\n\n# Drum bus\n\n# Mix notes\n\nlevels are close
-
-# Open the two-section file back. It replaces what is open: three sections in
-# another order become exactly what that file holds. An open that silently did
-# nothing leaves the three, and the expectations below refuse it.
-plugin:585,50
-press:Open|607,99
+# Open the two-section file back. It replaces what is open: three sections
+# become exactly what that file holds. An open that silently did nothing
+# leaves the three, and the expectations below refuse it.
+click:beside Markdown source left
+press:Open
 dialog:Open
 type:%CACHE%\round-trip.md
 type:{ENTER}
 nodialog:Open
 # The file holds two sections, so the third tab going is the file having come
-# in. The tabs are above the document, so this looks from above them.
-hidden:Vocal chain|100
+# in.
+hidden:Vocal chain
 
 cleanup:%CACHE%\round-trip.md
-cleanup:%CACHE%\dragged.md
 
 # Both tabs, read rather than typed into. A load that put the whole file in
 # one tab satisfies the expectations below. Reading each tab does not: the
 # second tab has to show its own line and not the first tab's.
-press:Mix notes|60,113|smallest
-showing:levels are close|140
-press:Drum bus|170,113|smallest
-showing:Drum bus|140
-hidden:levels are close|140
+press:Mix notes|smallest
+showing:levels are close
+press:Drum bus|smallest
+showing:Drum bus|largest
+hidden:levels are close
 
 # The whole name is on show at this size. The window dragged down to a size
 # with no room for it cuts the name to what fits and `...`, and hovering over
 # the cut name brings up the whole of it. The name is what is drawn, not what
-# is kept, which the expectations below say.
-showing:sprinkles|60
+# is kept, which the expectations below say. The pointer is taken away to the
+# empty space under the heading.
+showing:sprinkles
 dragto:620,420,500
 shot:%CACHE%\sections-dragged-small.png
-hidden:sprinkles|60
-showing:funky|60
-moveto:63,77
-showing:sprinkles|60
-moveto:300,300
-hidden:sprinkles|60
+hidden:sprinkles
+showing:funky
+moveto:funky
+showing:sprinkles
+moveto:below Drum bus|largest
+hidden:sprinkles
 
 # The name is not part of the document, so opening a file leaves it alone:
 # the file written here carries it in its frontmatter, and what it holds is
-# the two sections the open brought in, in order. The window is at the small
-# size the drag above left it, where the menu button sits further left.
-plugin:320,50
-press:Save As|350,153
+# the two sections the open brought in, in order.
+click:beside Markdown source left
+press:Save As
 dialog:Save
 type:%CACHE%\opened.md
 type:{ENTER}
@@ -202,15 +147,7 @@ nodialog:Save
 written:%CACHE%\opened.md|title: funky cake with a cherry on top and sprinkles\n---\n\n# Mix notes\n\nlevels are close\n\n# Drum bus
 cleanup:%CACHE%\opened.md
 
-# The menu's last option loads the explainer that ships inside the plugin:
-# it replaces the document, and its frontmatter names it. The document needs no file, so nothing is asked for.
-plugin:320,50
-press:Load explainer|350,190
-showing:How to use this plugin|60
-showing:stake holders|140
-hidden:levels are close|140
-shot:%CACHE%\explainer-loaded.png
-
-expect:title is How to use this plugin
-expect:sections is 7
-expect:section 0 is # Intro\n\nSome kind of text outlining the project brief, maybe some stake holders like this:\n\n- Alice\n- Bob\n- Carol\n\nWith [links](https://example.com) because obviously those should work.\n\nAlso, tabs, because you want to be able to organize your work well enough that you can use this VSTi as part of a template, where it's simply part of your master out and has everything already set up for you to "fill in the blanks".
+expect:title is funky cake with a cherry on top and sprinkles
+expect:sections is 2
+expect:section 0 is # Mix notes\n\nlevels are close
+expect:section 1 is # Drum bus

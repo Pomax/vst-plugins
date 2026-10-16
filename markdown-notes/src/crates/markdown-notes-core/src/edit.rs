@@ -1226,17 +1226,25 @@ impl Editor {
         };
         let marker_end = ls + quote_len + marker_len;
         let caret = self.caret();
-        match kind.checked() {
-            Some(true) => self.replace_range(marker_end - 4..marker_end, "[ ] "),
-            Some(false) => self.replace_range(marker_end - 4..marker_end, "[x] "),
+        let grown = match kind.checked() {
+            Some(true) => {
+                self.replace_range(marker_end - 4..marker_end, "[ ] ");
+                0
+            }
+            Some(false) => {
+                self.replace_range(marker_end - 4..marker_end, "[x] ");
+                0
+            }
             None => {
                 self.replace_range(marker_end..marker_end, "[ ] ");
-                // Typing continues where it was, not where the tick landed.
-                if caret >= marker_end {
-                    self.set_caret(caret + 4);
-                }
+                4
             }
-        }
+        };
+        // Typing continues where it was, not where the tick landed, moved
+        // along by what was put in ahead of it. The click on the box is a
+        // click on the document, so the caret is placed, whether or not a
+        // click elsewhere had taken it away.
+        self.set_caret(if caret >= marker_end { caret + grown } else { caret });
         self.dirty = true;
         true
     }

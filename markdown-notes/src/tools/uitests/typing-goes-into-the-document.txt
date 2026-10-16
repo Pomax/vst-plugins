@@ -12,7 +12,7 @@ type:{ENTER}
 # what the rest of this is about.
 type:{BS 3}
 type:typed straight into the document
-showing:typed straight into|140
+showing:typed straight into
 shot:%CACHE%\typing-goes-into-the-document.png
 
 expect:sections is 1

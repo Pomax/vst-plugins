@@ -171,12 +171,14 @@ the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux` elements, and `ffmpeg`.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
-There are six, and each is one long run that covers a whole area rather than a launch of the host per behaviour: `typing-goes-into-the-document` (the baseline), `editing-the-document`, `sections-and-files`, `opening-a-note`, `pictures-in-a-note` and `placeholder-section-title` (every way the caret can arrive back on a section's placeholder heading, one section each). A new behaviour goes into the run whose note it can reuse, not into a new file that types the same title, heading and body again.
+There are ten, and each is one long run that covers a whole area rather than a launch of the host per behaviour: `typing-goes-into-the-document` (the baseline), `editing-the-document`, `sections-and-files` (making sections, naming the note, Save, Save As, Open), `dragging-sections` (a tab carried to each place it can be dropped, with the drop mark checked before it is let go), `loading-the-explainer` (the built-in explainer, each of its seven tabs opened and its section copied out with Ctrl+A and Ctrl+C and read off the clipboard), `opening-a-note`, `pictures-in-a-note`, `dropping-files` (files picked up in the system's file manager with the mouse and dropped on the window), `clicking-the-controls` (every control clicked and what the click does checked: the task's checkbox, the source view, the theme choices, a colour swatch, the settings dialog's reset and close, the Theme button's cycle, Delete section) and `placeholder-section-title` (every way the caret can arrive back on a section's placeholder heading, one section each). A new behaviour goes into the run whose note it can reuse, not into a new file that types the same title, heading and body again.
 
 That is the `markdown-notes` suite. The host has one of its own, `mini-host`,
 in `tools/mini-host/src/tools/uitests/`: `host-preset-across-runs`,
 `host-preset-dialogs` and `host-resize`. The same task runs both, and
 `test.bat --full` runs both after everything else.
+
+No step names a position. A place is named by what is drawn there, and the driver photographs the window and reads the picture to find it, on every step. TEXT is words the window shows, with qualifiers after a `|`: `TEXT|smallest` or `TEXT|largest` for words the window shows at two sizes, a tab and the heading under it, and `TEXT|below LABEL` for the places under the topmost LABEL. WHERE is a point: `TEXT` is the middle of the words; `before TEXT` is just left of the line they are on; `after TEXT` and `below TEXT` are the empty space right of that line and under it, up to the next thing drawn; `beside TEXT left` and `beside TEXT right` are the thing drawn beside the label TEXT is part of, past its frame, which is how a control with no word on it is named, the gear right of the Theme button, the `+` after the last tab, a task's box before its words, a swatch before its name, a dialog's close cross after its title; `between TEXT and TEXT` is midway between the two. `click:WHERE`, `hold:WHERE`, `moveto:WHERE` and `letgo:WHERE` take a point, and `letgo:` on its own releases where the pointer is. `press:TEXT`, `dbltext:TEXT` and `righttext:TEXT` click the words; `dragtext:TEXT|to WHERE` drags from their first letter and `dragwords:TEXT|to WHERE` double-clicks them and drags the second press along their row. `showing:TEXT` and `hidden:TEXT` read the window; `cursor:SHAPE` reads the pointer's shape where it is, and `cursor:WHERE|SHAPE` moves it there first; `mark:before TEXT` and `mark:after TEXT` look for the drop mark on the words' row; `copied:TEXT` reads the text on the clipboard; `dragfile:PATH|WHERE` picks a file up in the file manager and drops it at WHERE. The text finder compares words without regard to case or spaces, so lettering in a monospaced face, which it reads in pieces, still matches. On Windows the driver is `tools/capture-window.ps1`; on macOS and Linux the drivers in `xtask/src/macos.rs` and `xtask/src/linux.rs` resolve the same language through `xtask/src/locate.rs` and `xtask/src/drawn.rs`, and the port there has not been compiled or run.
 
 No step pauses for a length of time, and there is no `wait:` step. A step that
 needs the window to have caught up says what it is waiting to see, and the
@@ -277,7 +279,7 @@ title: funky cake
 
 A document whose name is still the placeholder is written without a block. Opening a file that starts with a block takes its `title` field as the document's name and keeps the rest of the block, written back ahead of the title on the next save. A byte order mark in front of the block is dropped. A block is only a block on the first line: `---` further down is a horizontal rule. See `markdown-notes-core/src/frontmatter.rs`.
 
-A markdown file dropped on the window, with any extension the open dialog offers, in any case, is opened the way File > Open opens it. The drop reaches the plugin through the same two routes a picture does, the drop target in `drop.rs` and egui's own dropped files, and `gui::Dropped::from_file` tells a document from a picture by the extension. The headless `dropping_a_document` tests drop through egui's input.
+A markdown file dropped on the window, `.md` in any case, is opened the way File > Open opens it. The drop reaches the plugin through the same two routes a picture does, the drop target in `drop.rs` and egui's own dropped files, and `gui::Dropped::from_file` tells a document from a picture: a document by the extension, a picture by the extension and the bytes agreeing. The real-window test `dropping-files` picks each file up in the system's file manager with the mouse and drops it on the window; on Windows it passes, and on macOS and Linux it has not been run.
 
 Typing converts as you go: `* ` becomes a `- ` bullet, `-[] ` becomes a
 `- [ ] ` task box, Enter continues lists and blockquotes, Enter on an empty
@@ -348,19 +350,26 @@ Where a picture comes from:
 - A drop. baseview delivers drops to egui-baseview, which discards them, so
   the plugin registers its own drop target on the window baseview opened:
   `drop.rs`, an `IDropTarget` on Windows, an overlay `NSView` registered for
-  file URLs on macOS. Both queue the files for the next frame. The Windows
-  target is proven by hand: a file dragged from Explorer lands. The macOS one
-  has not been run. Linux has no target: a file dropped on the window there
-  is not taken in.
+  file URLs on macOS, and on Linux an XDND proxy. A file manager's drag looks
+  for `XdndAware` on the window the window manager manages, which is the
+  host's, and nowhere below it, so the plugin puts `XdndProxy` on that window
+  naming a window of its own, answers the drag while it is over the editor,
+  and passes it through to whatever took drops on the host's window before
+  while it is not. All three queue the files for the next frame. A dropped
+  file is a picture only when its name and its bytes agree: `.png` with a
+  PNG's magic number, `.jpg` or `.jpeg` with a JPEG's. The real-window test
+  `dropping-files` drags out of Explorer, Finder and Files; the Windows run
+  passes, and the macOS and Linux ones have not been run.
 - A paste. On Windows and macOS egui-baseview turns Ctrl+V into a text event
   only when the clipboard holds text, so on that key with no text the plugin
   reads the clipboard's picture with `arboard` and encodes it as PNG. On
   Linux the text event comes either way, and is empty when the clipboard
   holds no text, so there an empty one counts as none.
 
-The real-window test `pictures-in-a-note` pastes; nothing in the driver can
-drag a file. The headless `pictures_in_notes` tests drop through egui's own
-dropped-files input, which reaches the same queue.
+The real-window test `pictures-in-a-note` pastes, and `dropping-files` drags
+a picture out of the file manager and drops it on the window. The headless
+`pictures_in_notes` tests put a picture in through `Editor::insert_image` and
+measure what is drawn.
 
 ## Sections
 
