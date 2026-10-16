@@ -61,6 +61,10 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Make every shell script executable
+        working-directory: .
+        run: find . -name '*.sh' -exec chmod +x {} +
+
       - name: Build
         run: ./build.sh
 
@@ -84,6 +88,10 @@ jobs:
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Make every shell script executable
+        working-directory: .
+        run: find . -name '*.sh' -exec chmod +x {} +
 
       - name: Build
         run: ./build.sh

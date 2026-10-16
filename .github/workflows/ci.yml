@@ -30,6 +30,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
+      - name: Make every shell script executable
+        if: runner.os != 'Windows'
+        run: find . -name '*.sh' -exec chmod +x {} +
+
       # The build asks pkg-config for fontconfig, freetype and wayland-client.
       # The rendering tests draw through Vulkan, which a runner only has in
       # software, in the system's sans-serif and monospace faces. One of the
