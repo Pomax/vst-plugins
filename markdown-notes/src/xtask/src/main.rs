@@ -398,15 +398,15 @@ fn mini_host(root: &Path) -> Result<PathBuf, String> {
     let parent = root.parent().ok_or("no directory above this project")?;
     let project = parent.join("tools").join("mini-host");
     let name = if cfg!(windows) { "mini-host.exe" } else { "mini-host" };
-    let script = if cfg!(windows) { "build.bat" } else { "build.sh" };
+    let script = project.join(if cfg!(windows) { "build.bat" } else { "build.sh" });
 
     let mut build = if cfg!(windows) {
         let mut cmd = Command::new("cmd");
-        cmd.args(["/C", script]);
+        cmd.arg("/C").arg(&script);
         cmd
     } else {
         let mut cmd = Command::new("sh");
-        cmd.arg(script);
+        cmd.arg(&script);
         cmd
     };
     let status = build
