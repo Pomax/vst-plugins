@@ -654,6 +654,13 @@ $POLL_MS = 25
 # This is the only waiting the driver does. No step pauses for a length of
 # time: a step that needs the window to have caught up says what it is waiting
 # to see, and carries on the moment it is there.
+# A length of time as a person reads it: milliseconds under a second, seconds
+# otherwise.
+function Format-Span([TimeSpan]$span) {
+    if ($span.TotalSeconds -lt 1) { return ('{0}ms' -f [int]$span.TotalMilliseconds) }
+    return ('{0:0.0}s' -f $span.TotalSeconds)
+}
+
 function Wait-Until([scriptblock]$Look, [int]$TimeoutMs = 5000) {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
@@ -780,8 +787,16 @@ try {
     if ($Steps.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
         $restarts = 0
+        # When the step before ended, so each line can say how long passed
+        # between that and this step starting, as well as how long this step
+        # took.
+        $lastEnded = [DateTime]::UtcNow
         foreach ($step in $Steps) {
             $kind, $value = $step -split ':', 2
+            # The time goes on the line even when the step throws: the step
+            # that ran out of patience is the one whose time matters most.
+            $started = [DateTime]::UtcNow
+            try {
             switch ($kind) {
                 'click' {
                     $parts = $value -split ','
@@ -1435,6 +1450,11 @@ try {
                     Write-Host "film:   $distinct distinct of $total frames; $filmVideo"
                 }
                 default { throw "unknown step: $step" }
+            }
+            } finally {
+                $ended = [DateTime]::UtcNow
+                Write-Host ("({0}) {1} - step took {2}" -f (Format-Span ($started - $lastEnded)), $step, (Format-Span ($ended - $started)))
+                $lastEnded = $ended
             }
         }
     }

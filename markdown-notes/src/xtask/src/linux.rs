@@ -504,6 +504,9 @@ pub fn drive(
 }
 
 fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
+    // When the step before ended, so each line can say how long passed
+    // between that and this step starting, as well as how long this step took.
+    let mut last_ended = Instant::now();
     for line in text.lines() {
         let line = line.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -513,7 +516,17 @@ fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
             Some((kind, value)) => (kind, value),
             None => (line, ""),
         };
-        step(run, kind, value)?;
+        // The time goes on the line even when the step fails: the step that
+        // ran out of patience is the one whose time matters most.
+        let began = Instant::now();
+        let done = step(run, kind, value);
+        println!(
+            "({}) {line} - step took {}",
+            crate::uitest::took(began - last_ended),
+            crate::uitest::took(began.elapsed())
+        );
+        last_ended = Instant::now();
+        done?;
     }
 
     // Always the window under test, whichever window the steps were last

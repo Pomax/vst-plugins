@@ -12,8 +12,21 @@
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::time::Duration;
 
 use markdown_notes_core::PluginState;
+
+/// A length of time as a person reads it: milliseconds under a second,
+/// seconds otherwise.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn took(spent: Duration) -> String {
+    if spent < Duration::from_secs(1) {
+        format!("{}ms", spent.as_millis())
+    } else {
+        format!("{:.1}s", spent.as_secs_f64())
+    }
+}
 
 /// How far down the mini host's own strip pushes the plugin's window.
 ///

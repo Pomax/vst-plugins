@@ -87,7 +87,7 @@ fn main() -> ExitCode {
             println!(
                 "tasks:\n  \
                  bundle [--release] [--target <triple>]   assemble the VST3 bundle\n  \
-                 test [--release] [--full]                every test but the UI tests\n  \
+                 test [--release] [--all]                every test but the UI tests\n  \
                  test --only <name>                       one test and nothing else\n  \
                  test --ui <name>                         one UI test, or one suite\n  \
                  uitest [name]                            drive the real window\n  \
@@ -97,7 +97,7 @@ fn main() -> ExitCode {
                  Build output goes to .cache/ and stays there, so a run only\n  \
                  recompiles what changed. `clean` empties it.\n  \
                  test runs the unit tests, the scenarios and the headless pixel\n  \
-                 tests. --full also runs the UI tests, which drive a real\n  \
+                 tests. --all also runs the UI tests, which drive a real\n  \
                  window and so need a desktop to run on.\n  \
                  --only takes the name of a pixel test file, optionally with\n  \
                  ::<test> after it, or a filter on the unit tests. It builds\n  \
@@ -715,12 +715,13 @@ fn test(args: &[String]) -> Result<(), String> {
         }
     };
 
-    // One real-window test, or one suite of them, and nothing else.
+    // The real-window tests and nothing else: all of them, or the one test or
+    // suite named after the flag.
     if let Some(at) = args.iter().position(|a| a == "--ui") {
-        let name = args
-            .get(at + 1)
-            .ok_or("--ui needs the name of a UI test or of a suite")?;
-        return uitest(std::slice::from_ref(name));
+        return match args.get(at + 1).filter(|a| !a.starts_with("--")) {
+            Some(name) => uitest(std::slice::from_ref(name)),
+            None => uitest(&[]),
+        };
     }
 
     if let Some(at) = args.iter().position(|a| a == "--only") {
@@ -739,7 +740,7 @@ fn test(args: &[String]) -> Result<(), String> {
     run("unit tests", &["test", "--workspace"])?;
     run("scenarios", &["run", "-q", "-p", "markdown-notes-testrunner"])?;
 
-    let full = args.iter().any(|a| a == "--full");
+    let full = args.iter().any(|a| a == "--all");
 
     // The pixel tests are behind a feature because they need the wgpu stack,
     // which the plugin itself does not.
