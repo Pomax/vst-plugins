@@ -17,7 +17,7 @@ user a minute of an unusable desktop and proves nothing.
 single test. The runner takes one name for exactly this. A change to the
 driver or the harness is not a reason to run everything either: rerun the
 tests that were failing, one at a time, and stop when each has passed. On
-2026-09-29 I started `./test.sh --full` after every UI test had already
+2026-09-29 I started `./test.sh --all` after every UI test had already
 passed on its own, and was stopped: *"stop fucking running every goddamn test
 if you only fix one or two"*. Related: [[never-run-a-test-you-do-not-save]],
 [[redo-the-failed-step-not-the-procedure]].

@@ -12,8 +12,30 @@
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use markdown_notes_core::PluginState;
+
+/// What a test came to: how many checks passed, how many failed, and the
+/// account of the failure when there was one.
+struct Outcome {
+    passed: usize,
+    failed: usize,
+    error: Option<String>,
+}
+
+/// A length of time as a person reads it: milliseconds under a second,
+/// seconds under a minute, minutes and seconds past that.
+pub(crate) fn took(spent: Duration) -> String {
+    if spent < Duration::from_secs(1) {
+        format!("{}ms", spent.as_millis())
+    } else if spent < Duration::from_secs(60) {
+        format!("{:.1}s", spent.as_secs_f64())
+    } else {
+        let secs = spent.as_secs();
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}
 
 /// How far down the mini host's own strip pushes the plugin's window.
 ///
@@ -333,6 +355,46 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
                 .ok_or_else(|| format!("{key} is {got}, expected at most {limit}"));
         }
 
+        // `file at PATH is section N of FILE`: what a step copied off the
+        // clipboard into PATH, against section N of the document FILE, cut
+        // into sections the way the plugin cuts a document it opens: after
+        // its frontmatter and before its images. Line endings and trailing
+        // blank lines are not part of the comparison: the clipboard has its
+        // own ideas about both.
+        if let Some((path, rest)) = rest.split_once(" is section ") {
+            let (index, source) = rest
+                .split_once(" of ")
+                .ok_or_else(|| format!("cannot read: {expect}"))?;
+            let index: usize = index
+                .trim()
+                .parse()
+                .map_err(|_| format!("not a section number: {expect}"))?;
+            let path = platform_path(path.trim());
+            let source = platform_path(source.trim());
+            let plain = |text: String| {
+                let text = text.replace("\r\n", "\n");
+                text.strip_prefix('\u{feff}').unwrap_or(&text).trim_end().to_string()
+            };
+            let got = plain(
+                std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{path} was not written: {e}"))?,
+            );
+            let document = plain(
+                std::fs::read_to_string(&source)
+                    .map_err(|e| format!("cannot read {source}: {e}"))?,
+            );
+            let (_, body) = markdown_notes_core::frontmatter::split_off(&document);
+            let (body, _) = markdown_notes_core::images::split_off(body);
+            let sections = markdown_notes_core::split_document(&body);
+            let want = sections
+                .get(index)
+                .map(|section| section.trim_end().to_string())
+                .ok_or_else(|| format!("{source} has no section {index}"))?;
+            return (got == want).then_some(()).ok_or_else(|| {
+                format!("{path} holds {got:?}, expected section {index} of {source}: {want:?}")
+            });
+        }
+
         // The file on disk, not the plugin's idea of it: a save that reports
         // success and writes nothing is still a failure.
         let (path, want) = rest
@@ -384,7 +446,7 @@ fn in_the_plugin(step: &str) -> Option<String> {
     })
 }
 
-fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), String> {
+fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outcome, String> {
     let work = root.join(".cache").join("uitests");
     std::fs::create_dir_all(&work).map_err(|e| format!("creating {}: {e}", work.display()))?;
     let step_file = work.join(format!("{}.steps", test.name));
@@ -405,11 +467,23 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     let steps = steps
         .join("\n")
         .replace("%CACHE%", &work.display().to_string())
-        .replace("%PRESETS%", &presets_dir(root).display().to_string());
+        .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string());
     std::fs::write(&step_file, steps)
         .map_err(|e| format!("writing {}: {e}", step_file.display()))?;
 
-    drive(root, host, plugin, &step_file, &state_file, &shot)?;
+    // The driver counts the checks that pass as it goes and leaves the count
+    // here, so a run that stops partway still says how many there were.
+    let tally = work.join(format!("{}.tally", test.name));
+    let _ = std::fs::remove_file(&tally);
+    let driven = drive(root, host, plugin, &step_file, &state_file, &shot, &tally);
+    let checks: usize = std::fs::read_to_string(&tally)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0);
+    if let Err(e) = driven {
+        return Ok(Outcome { passed: checks, failed: 1, error: Some(e) });
+    }
 
     // A test that ends with `kill:` chose not to have state: a killed program
     // writes none, and that test asserts on files instead.
@@ -418,11 +492,15 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
         Ok(bytes) => bytes,
         Err(_) if killed => Vec::new(),
         Err(_) => {
-            return Err(format!(
-                "the plugin wrote no state — the window did not close cleanly. \
-                 The screenshot of what was on screen is at {}",
-                shot.display()
-            ))
+            return Ok(Outcome {
+                passed: checks,
+                failed: 1,
+                error: Some(format!(
+                    "the plugin wrote no state: the window did not close cleanly. \
+                     The screenshot of what was on screen is at {}",
+                    shot.display()
+                )),
+            })
         }
     };
     let last = PluginState::from_bytes(&bytes);
@@ -437,17 +515,22 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     }
 
     let mut failures = Vec::new();
+    let mut passed = checks;
     for (run, expect) in &test.expects {
         let expect = expect
             .replace("%CACHE%", &work.display().to_string())
-            .replace("%PRESETS%", &presets_dir(root).display().to_string());
+            .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string());
         let state = if *run == test.restarts { Some(&last) } else { earlier[*run].as_ref() };
         let checked = match state {
             Some(state) => check(&expect, state),
             None => Err(format!("run {} wrote no state to check `{expect}` against", run + 1)),
         };
-        if let Err(e) = checked {
-            failures.push(if test.restarts == 0 { e } else { format!("run {}: {e}", run + 1) });
+        match checked {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                failures.push(if test.restarts == 0 { e } else { format!("run {}: {e}", run + 1) })
+            }
         }
     }
 
@@ -457,7 +540,8 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
         let path = platform_path(
             &path
                 .replace("%CACHE%", &work.display().to_string())
-                .replace("%PRESETS%", &presets_dir(root).display().to_string()),
+                .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string()),
         );
         // A trailing `*` takes everything that starts the same way, for a test
         // that made more files than it is worth naming one by one. Only that
@@ -487,18 +571,14 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
             }
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{}\n      screenshot: {}",
-            failures.join("\n      "),
-            shot.display()
-        ))
-    }
+    let error = (!failures.is_empty()).then(|| {
+        format!("{}\n      screenshot: {}", failures.join("\n      "), shot.display())
+    });
+    Ok(Outcome { passed, failed: failures.len(), error })
 }
 
-/// Hand the steps to the platform's window driver.
+/// Hand the steps to the platform's window driver, which leaves the number of
+/// checks that passed in `tally`.
 #[cfg(target_os = "windows")]
 fn drive(
     root: &Path,
@@ -507,6 +587,7 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
     let script = tools_dir(root).join("capture-window.ps1");
     let status = Command::new("powershell")
@@ -521,6 +602,8 @@ fn drive(
         .arg(steps)
         .arg("-Out")
         .arg(shot)
+        .arg("-Tally")
+        .arg(tally)
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;
@@ -538,8 +621,9 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
-    crate::macos::drive(root, host, plugin, steps, state, shot)
+    crate::macos::drive(root, host, plugin, steps, state, shot, tally)
 }
 
 #[cfg(target_os = "linux")]
@@ -550,8 +634,9 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
-    crate::linux::drive(root, host, plugin, steps, state, shot)
+    crate::linux::drive(root, host, plugin, steps, state, shot, tally)
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -562,6 +647,7 @@ fn drive(
     _steps: &Path,
     _state: &Path,
     _shot: &Path,
+    _tally: &Path,
 ) -> Result<(), String> {
     Err("the UI tests need a window driver for this platform".to_string())
 }
@@ -573,7 +659,9 @@ fn drive(
 /// test.
 pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Result<(), String> {
     let mut ran = 0;
-    let mut failed = Vec::new();
+    let mut passed = 0;
+    let mut failed = 0;
+    let began = Instant::now();
     let suites = suites(root);
 
     // A fresh working directory for this run: a stale file from an old run
@@ -605,15 +693,17 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
             }
             ran += 1;
             note(root, &format!("running: {}", test.name));
-            match run_one(root, &test, host, plugin) {
-                Ok(()) => {
+            let outcome = run_one(root, &test, host, plugin)?;
+            passed += outcome.passed;
+            failed += outcome.failed;
+            match outcome.error {
+                None => {
                     println!("  ok    {}", test.name);
                     note(root, &format!("ok:      {}", test.name));
                 }
-                Err(e) => {
+                Some(e) => {
                     println!("  FAIL  {}\n      {e}", test.name);
                     note(root, &format!("fail:    {}", test.name));
-                    failed.push(test.name.clone());
                     if test.baseline {
                         return Err(format!(
                             "{} is a baseline test: it proves something every \
@@ -634,11 +724,12 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
         });
     }
     println!();
-    if failed.is_empty() {
-        println!("{ran} UI tests, all passed");
+    let spent = took(began.elapsed());
+    if failed == 0 {
+        println!("{passed} UI tests, all passed in {spent}");
         Ok(())
     } else {
-        Err(format!("{} of {ran} UI tests failed", failed.len()))
+        Err(format!("{failed} UI tests failed, {passed} passed, in {spent}"))
     }
 }
 

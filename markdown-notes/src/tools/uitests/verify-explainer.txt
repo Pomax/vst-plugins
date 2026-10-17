@@ -1,0 +1,73 @@
+# The explainer that ships inside the plugin, loaded from the menu and read
+# back one tab at a time: each tab is clicked, the section's text is selected
+# with Ctrl+A and copied with Ctrl+C, the clipboard is written to a file, and
+# the expectations compare each file with the matching section of
+# src/default-content.md, the document the explainer is built from.
+#
+# A note nobody has named opens with the keyboard in its name. Enter sends it
+# to the document.
+type:{ENTER}
+
+# Load explainer is in the menu behind the toolbar's three-dot button. The
+# button carries no word, so it is clicked where the code puts it, and the
+# option is then found by what it says. The explainer replaces the document
+# and its frontmatter names the note.
+plugin:585,50
+press:Load explainer|615,190
+showing:How to use this plugin|60
+
+# Each tab in turn: click it, wait 200ms, select the section's text and copy
+# it, and write the clipboard to a file for the expectations. A section's
+# heading says the same words as its tab, in bigger letters, so the tab is
+# the smallest of the places its words are.
+press:Intro|60,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-0.txt
+
+press:Instruments|170,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-1.txt
+
+press:Beat|280,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-2.txt
+
+press:Lead|390,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-3.txt
+
+press:Melody|500,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-4.txt
+
+press:Vocals|610,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-5.txt
+
+press:Timeline|720,113|smallest
+wait:200
+shortcut:ctrl+a
+shortcut:ctrl+c
+copied:%CACHE%\explainer-6.txt
+
+expect:title is How to use this plugin
+expect:sections is 7
+expect:file at %CACHE%\explainer-0.txt is section 0 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-1.txt is section 1 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-2.txt is section 2 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-3.txt is section 3 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-4.txt is section 4 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-5.txt is section 5 of %SRC%\default-content.md
+expect:file at %CACHE%\explainer-6.txt is section 6 of %SRC%\default-content.md

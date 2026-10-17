@@ -8,11 +8,11 @@ metadata:
 Code that builds or tests with a compiler warning in the output is not done.
 A warning is fixed where it comes from, not filtered out of what is read.
 
-**Why:** on 2026-10-01, at the end of the Linux plan, `./test.sh --full`
+**Why:** on 2026-10-01, at the end of the Linux plan, `./test.sh --all`
 printed "function `take` is never used" for `drop.rs` nine times a run. It
 had been there since T3. I read past it in every run, filtered it out of the
 output I looked at as "the one known warning", and called T8 done. The user:
-*"WHY, THE FUCK, DOES RUNNING `./test.sh --full` SHOW FUCKING RUST
+*"WHY, THE FUCK, DOES RUNNING `./test.sh --all` SHOW FUCKING RUST
 WARNINGS?!?!?! DID YOU NOT FUCKING LOOK AT THE GODDAMN OUTPUT!??!? CODE THAT
 HAS WARNINGS IS NOT FUCKING DONE"*.
 

@@ -71,7 +71,7 @@ cargo run -p xtask -- test
 
 That clears this project's result from `binaries/`, since what is there would
 describe older code, then builds the plugin and runs the unit tests, the
-scenario suite and the pixel tests, in that order. `--full` runs the UI tests
+scenario suite and the pixel tests, in that order. `--all` runs the UI tests
 after them. The order is the point: the scenario runner loads the plugin binary at
 runtime rather than linking it, so cargo has no idea the two are related and
 will happily run the suite against a stale `.dll`. (The runner refuses to run
@@ -176,7 +176,7 @@ There are six, and each is one long run that covers a whole area rather than a l
 That is the `markdown-notes` suite. The host has one of its own, `mini-host`,
 in `tools/mini-host/src/tools/uitests/`: `host-preset-across-runs`,
 `host-preset-dialogs` and `host-resize`. The same task runs both, and
-`test.bat --full` runs both after everything else.
+`test.bat --all` runs both after everything else.
 
 No step pauses for a length of time, and there is no `wait:` step. A step that
 needs the window to have caught up says what it is waiting to see, and the

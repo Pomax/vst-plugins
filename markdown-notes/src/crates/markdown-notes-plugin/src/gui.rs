@@ -955,7 +955,7 @@ fn toolbar_buttons(
         } else {
             egui::RichText::new("Save")
         };
-        let mut option = |ui: &mut egui::Ui, label: egui::RichText, command: Command| {
+        let option = |ui: &mut egui::Ui, label: egui::RichText, command: Command| {
             if ui
                 .button(label)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)

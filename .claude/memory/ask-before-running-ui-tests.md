@@ -29,7 +29,7 @@ when it fails, and the user has forbidden it in those words after exactly such
 a probe. A question about how a capture tool behaves goes into the capture
 tool and is answered by the next permitted test run.
 
-This covers `xtask uitest` in any form (one test, a suite, or `test --full`),
+This covers `xtask uitest` in any form (one test, a suite, or `test --all`),
 `tools/capture-window.ps1` and its macOS counterpart, and launching the host or
 the plugin window to look at it.
 

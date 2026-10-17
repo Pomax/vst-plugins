@@ -26,9 +26,11 @@ param(
     # A sequence of actions, run in order before the grab:
     #   click:X,Y     left click at X,Y inside the window
     #   type:TEXT     send TEXT as key presses, one at a time
+    #   wait:MS       pause for MS milliseconds
     #   remove:PATH   delete a file, so a save does not hit "already exists"
     #   picture:PATH|W,H  write a PNG of that size to drop or paste
     #   clipboard:PATH    put that picture on the clipboard
+    #   copied:PATH   write the text on the clipboard to PATH
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
     #   moveto:X,Y    move the pointer there, at the speed a hand moves
@@ -48,6 +50,9 @@ param(
     # The same, one per line, from a file. `powershell -File` cannot bind more
     # than one token to an array parameter, so a sequence comes from here.
     [string]$StepFile = '',
+    # Where to write how many checks passed: a step that confirms something
+    # and fails when it is not so counts as one test, each time it passes.
+    [string]$Tally = '',
     # Close the window by asking it to, rather than killing the process, so
     # the program runs its shutdown. A UI test needs this: the state it
     # asserts on is written on the way out.
@@ -55,6 +60,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# How many checks have passed so far, written to -Tally on the way out.
+$script:checks = 0
 
 Add-Type @'
 using System;
@@ -600,6 +608,7 @@ function Find-TextBelow([Win32Capture+RECT]$area, [string]$text, [int]$below, [s
         $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
         throw "`"$text`" is not on screen for ${step}; below $below the window reads: $saw; see $probe"
     }
+    $script:checks++
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     $found
 }
@@ -647,6 +656,13 @@ $BAR_WIDTH = 16
 
 # How long a look that found nothing is left before looking again.
 $POLL_MS = 25
+
+# A length of time as a person reads it: milliseconds under a second, seconds
+# otherwise.
+function Format-Span([TimeSpan]$span) {
+    if ($span.TotalSeconds -lt 1) { return ('{0}ms' -f [int]$span.TotalMilliseconds) }
+    return ('{0:0.0}s' -f $span.TotalSeconds)
+}
 
 # Look for something until it is there, and hand it back, or hand back nothing
 # once TimeoutMs has gone by without it.
@@ -780,8 +796,16 @@ try {
     if ($Steps.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
         $restarts = 0
+        # When the step before ended, so each line can say how long passed
+        # between that and this step starting, as well as how long this step
+        # took.
+        $lastEnded = [DateTime]::UtcNow
         foreach ($step in $Steps) {
             $kind, $value = $step -split ':', 2
+            # The time goes on the line even when the step throws: the step
+            # that ran out of patience is the one whose time matters most.
+            $started = [DateTime]::UtcNow
+            try {
             switch ($kind) {
                 'click' {
                     $parts = $value -split ','
@@ -841,6 +865,7 @@ try {
                         $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
                         throw "no control labelled `"$label`" is in the window; it reads: $saw; it is in $probe"
                     }
+                    $script:checks++
                     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     [Win32Capture]::MoveTo(
                         $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
@@ -851,6 +876,10 @@ try {
                 }
                 'type' {
                     Send-Typing $value
+                }
+                'wait' {
+                    # `wait:MS` pauses for that many milliseconds.
+                    Start-Sleep -Milliseconds ([int]$value)
                 }
                 { $_ -in 'showing', 'hidden' } {
                     # `showing:TEXT|Y` reads the window below Y and fails
@@ -897,6 +926,7 @@ try {
                     if ($kind -eq 'hidden' -and $found) {
                         throw "the document still shows `"$text`"; below $below the window reads: $saw"
                     }
+                    $script:checks++
                     Write-Host ("{0}: {1}" -f $kind, $text)
                 }
                 { $_ -in 'dialog', 'nodialog' } {
@@ -914,6 +944,7 @@ try {
                             [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd) -eq [IntPtr]::Zero
                         } 3000
                         if (-not $closed) { throw "a $want dialog is still open" }
+                        $script:checks++
                         Write-Host ("nodialog: {0}" -f $want)
                         break
                     }
@@ -941,6 +972,7 @@ try {
                     if (-not $named) {
                         throw "a dialog is open, but nothing on it says ""$want""; see $probe"
                     }
+                    $script:checks++
                     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dialog: {0}" -f $want)
@@ -953,6 +985,7 @@ try {
                         [Win32Capture]::FindWindow([uint32]$proc.Id, $want, $true) -eq [IntPtr]::Zero
                     } 3000
                     if (-not $gone) { throw "the window ""$want"" is still open" }
+                    $script:checks++
                     Write-Host ("nowindow: {0}" -f $want)
                 }
                 'dragtext' {
@@ -1056,6 +1089,7 @@ try {
                         $shown = [Win32Capture]::CursorNow()
                         throw "cursor at $where is $shown, expected $($want.Trim())"
                     }
+                    $script:checks++
                 }
                 'shortcut' {
                     # `shortcut:ctrl+a` is a modifier held down over one key.
@@ -1159,6 +1193,7 @@ try {
                     if ($index -lt 0) {
                         throw "no preset called ""$name"" in $dir; there is: $($names -join ', ')"
                     }
+                    $script:checks++
 
                     $listHeight = ($rect.Bottom - $rect.Top) - 2 * $ROW_TOP
                     $onScreen = [Math]::Floor($listHeight / $ROW_HEIGHT)
@@ -1211,6 +1246,7 @@ try {
                         Save-Shot ([Win32Capture]::VisibleRect($hwnd)) $Out
                         throw "no window titled ""$wanted"" to click in; see $Out"
                     }
+                    $script:checks++
                     if (-not [Win32Capture]::BringToFront($target)) {
                         Write-Warning "$wanted would not come to the front"
                     }
@@ -1305,6 +1341,13 @@ try {
                     $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
                     $bmp.Dispose()
                 }
+                'copied' {
+                    # `copied:PATH` writes the text on the clipboard to PATH,
+                    # for an expectation to read.
+                    $text = [System.Windows.Forms.Clipboard]::GetText()
+                    [System.IO.File]::WriteAllText($value, $text, (New-Object System.Text.UTF8Encoding $false))
+                    Write-Host ("copied: {0} characters to {1}" -f $text.Length, $value)
+                }
                 'clipboard' {
                     # `clipboard:PATH` puts that picture on the clipboard, as
                     # a screenshot tool does, for a paste to find.
@@ -1331,6 +1374,7 @@ try {
                     if (-not $there) {
                         throw "$p holds `"$got`", expected it to contain `"$want`""
                     }
+                    $script:checks++
                 }
                 'shot' {
                     # A picture of whichever window the steps are addressing,
@@ -1436,6 +1480,11 @@ try {
                 }
                 default { throw "unknown step: $step" }
             }
+            } finally {
+                $ended = [DateTime]::UtcNow
+                Write-Host ("({0}) {1} - step took {2}" -f (Format-Span ($started - $lastEnded)), $step, (Format-Span ($ended - $started)))
+                $lastEnded = $ended
+            }
         }
     }
 
@@ -1466,4 +1515,5 @@ finally {
             Stop-Process -Id $proc.Id -Force
         }
     }
+    if ($Tally) { [System.IO.File]::WriteAllText($Tally, "$($script:checks)") }
 }
