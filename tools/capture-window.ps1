@@ -510,6 +510,44 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     $bmp.Dispose()
 }
 
+# The OCR server, tools\ocr-server, started on the first request and kept for
+# the whole run so that its networks are loaded once. It ends with this
+# script: its input closes, and it stops reading.
+$script:Ocr = $null
+
+# Hand the OCR server one request, a picture's path and after a tab what to
+# look for, and return the lines of its answer, up to its `end`.
+function Ask-Ocr([string]$request) {
+    if (-not $script:Ocr) {
+        $tools = Join-Path $PSScriptRoot 'ocr-server'
+        $site = Join-Path $tools '.cache\site'
+        if (-not (Test-Path $site)) {
+            throw "the OCR server is not set up: run tools\ocr-server\setup.bat"
+        }
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = 'python'
+        $start.Arguments = '"' + (Join-Path $tools 'ocr_server.py') + '"'
+        $start.EnvironmentVariables['PYTHONPATH'] = $site
+        $start.UseShellExecute = $false
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $script:Ocr = [System.Diagnostics.Process]::Start($start)
+    }
+    $script:Ocr.StandardInput.WriteLine($request)
+    $script:Ocr.StandardInput.Flush()
+    $answer = @()
+    while ($true) {
+        $line = $script:Ocr.StandardOutput.ReadLine()
+        if ($null -eq $line) { throw "the OCR server stopped" }
+        if ($line.Trim() -eq 'end') { break }
+        $answer += $line
+    }
+    if ($answer.Count -and $answer[0].StartsWith('error ')) {
+        throw "the OCR server could not read: $($answer[0].Substring(6))"
+    }
+    return $answer
+}
+
 # Every piece of text in a picture, with where each one is.
 #
 # The whole picture is read once and the answer searched afterwards. Asking the
@@ -517,12 +555,7 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
 # way, and a small picture cut to one control is read far worse than a whole
 # window.
 function Read-Text([string]$path) {
-    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
-    if (-not (Test-Path $finder)) {
-        throw "the text finder is not built: run tools\find-text\build.bat"
-    }
-    $answer = @(& $finder $path)
-    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+    $answer = @(Ask-Ocr "$path`t")
 
     $lines = @()
     foreach ($row in $answer | Select-Object -Skip 1) {
@@ -546,16 +579,11 @@ function Read-Text([string]$path) {
 # neighbouring buttons come back as one line, and the centre of that line is
 # the gap between them rather than either button.
 #
-# With `$sized` given, `smallest` or `largest`, the finder is asked for the one
-# place with that lettering and that is all that comes back.
+# With `$sized` given, `smallest` or `largest`, the OCR server is asked for the
+# one place with that lettering and that is all that comes back.
 function Find-All([string]$path, [string]$label, [string]$sized = '') {
-    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
-    if (-not (Test-Path $finder)) {
-        throw "the text finder is not built: run tools\find-text\build.bat"
-    }
-    $answer = if ($sized) { @(& $finder $path $label $sized) } else { @(& $finder $path $label) }
-    if ($LASTEXITCODE -eq 1) { return @() }
-    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+    $answer = @(Ask-Ocr "$path`t$label`t$sized")
+    if (-not $answer.Count) { return @() }
 
     $found = @()
     foreach ($row in $answer | Select-Object -Skip 1) {
@@ -656,6 +684,12 @@ $BAR_WIDTH = 16
 
 # How long a look that found nothing is left before looking again.
 $POLL_MS = 25
+
+# The most a step may take. A step that takes longer has stalled: the run
+# stops there, and the script ends with STALLED_EXIT so the caller can tell.
+$STEP_LIMIT_S = 10
+$STALLED_EXIT = 124
+$stalled = $false
 
 # A length of time as a person reads it: milliseconds under a second, seconds
 # otherwise.
@@ -1484,6 +1518,10 @@ try {
                 $ended = [DateTime]::UtcNow
                 Write-Host ("({0}) {1} - step took {2}" -f (Format-Span ($started - $lastEnded)), $step, (Format-Span ($ended - $started)))
                 $lastEnded = $ended
+                if (($ended - $started).TotalSeconds -gt $STEP_LIMIT_S) {
+                    $script:stalled = $true
+                    throw "stalled: $step took $(Format-Span ($ended - $started)), over the ${STEP_LIMIT_S}s a step gets"
+                }
             }
         }
     }
@@ -1516,4 +1554,5 @@ finally {
         }
     }
     if ($Tally) { [System.IO.File]::WriteAllText($Tally, "$($script:checks)") }
+    if ($script:stalled) { exit $STALLED_EXIT }
 }

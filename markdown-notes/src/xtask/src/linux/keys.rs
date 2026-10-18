@@ -68,9 +68,10 @@ pub fn modifier(name: &str) -> Option<u32> {
 /// A `type:` step as the keys it asks for, in order.
 ///
 /// `{ENTER}`, `{ESC}`, `{HOME}`, `{END}`, `{LEFT}`, `{UP}`, `{DOWN}`, `{PGUP}`
-/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. `{(}` and
-/// `{)}` are the brackets themselves. Anything else is a character. This is
-/// the notation the tests are written in, which is Windows `SendKeys`.
+/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. One
+/// character in braces, `{(}`, `{)}`, `{%}` or `{+}`, is that character.
+/// Anything else is a character. This is the notation the tests are written
+/// in, which is Windows `SendKeys`.
 pub fn parse_keys(step: &str) -> Result<Vec<Stroke>, String> {
     let mut strokes = Vec::new();
     let mut rest = step;
@@ -83,9 +84,12 @@ pub fn parse_keys(step: &str) -> Result<Vec<Stroke>, String> {
         let name = &after[..close];
         rest = &after[close + 1..];
 
-        if name == "(" || name == ")" {
-            strokes.extend(name.chars().map(Stroke::Character));
-            continue;
+        let mut characters = name.chars();
+        if let (Some(character), None) = (characters.next(), characters.next()) {
+            if named(name).is_none() {
+                strokes.push(Stroke::Character(character));
+                continue;
+            }
         }
 
         let (name, times) = match name.split_once(' ') {
@@ -139,8 +143,9 @@ mod tests {
     }
 
     #[test]
-    fn bracket_escapes_are_literal_brackets() {
+    fn one_character_in_braces_is_that_character() {
         assert_eq!(parse_keys("def cake{(}self{)}:"), Ok(text("def cake(self):")));
+        assert_eq!(parse_keys("{%}{%} sentinel {+}1"), Ok(text("%% sentinel +1")));
     }
 
     #[test]

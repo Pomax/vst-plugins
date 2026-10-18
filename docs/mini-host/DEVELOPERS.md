@@ -23,7 +23,7 @@ Nothing here is specific to any one plugin.
 | `src/crates/mini-host/src/app/place.rs` | Putting the plugin's window under the strip, sizing it with the host's window and giving it the keyboard, one way per platform. |
 | `src/crates/mini-host/src/app/icon.rs` | The window's icon. |
 | `src/crates/mini-host/src/presets.rs` | A plugin's state saved to and restored from a file. |
-| `src/crates/mini-host/tests/` | Two tests that open the host's window. Linux only. |
+| `src/crates/mini-host/tests/` | Two tests that open the host's window. THIS IS CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE: Linux only. |
 | `src/tools/uitests/` | The host's own UI tests, which the markdown-notes test task runs. |
 
 Loading, the factory, instances, buses, audio, state and the view are not
@@ -80,6 +80,9 @@ test.bat
 ```bash
 ./test.sh
 ```
+
+THIS IS CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE: the two tests
+below run on Linux only.
 
 Two more open the host's window, so they only run when asked for, and only on
 Linux:

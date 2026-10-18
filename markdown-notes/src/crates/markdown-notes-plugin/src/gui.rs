@@ -331,7 +331,18 @@ impl Gui {
 /// `Unspecified` — and any failure to ask — is treated as dark, matching the
 /// editor's default appearance rather than flipping to a jarring white.
 fn system_is_dark() -> bool {
-    !matches!(dark_light::detect(), Ok(dark_light::Mode::Light))
+    forced_dark().unwrap_or_else(|| !matches!(dark_light::detect(), Ok(dark_light::Mode::Light)))
+}
+
+/// The theme the process was started with on its command line: `--dark` or
+/// `--light`. The plugin runs inside its host, so this is the host's command
+/// line. Either one draws every theme setting in that theme.
+fn forced_dark() -> Option<bool> {
+    std::env::args().find_map(|arg| match arg.as_str() {
+        "--dark" => Some(true),
+        "--light" => Some(false),
+        _ => None,
+    })
 }
 
 fn settings(width: i32, height: i32) -> EguiWindowSettings {
@@ -747,7 +758,7 @@ fn apply_theme(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
         gui.refresh_system_theme();
     }
 
-    let dark = theme.is_dark(gui.system_dark);
+    let dark = forced_dark().unwrap_or_else(|| theme.is_dark(gui.system_dark));
     let scheme = *colours.for_mode(dark);
     if gui.applied_dark != Some(dark) || gui.applied_colours != Some(scheme) {
         let mut visuals = if dark {

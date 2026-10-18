@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-for project in tools/find-text tools/mini-host tools/vst3-loader markdown-notes; do
+for project in tools/mini-host tools/vst3-loader markdown-notes; do
     echo "=== $project ==="
     (cd "$project" && ./build.sh "$@")
 done

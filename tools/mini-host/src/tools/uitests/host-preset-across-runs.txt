@@ -16,10 +16,10 @@ type:{ENTER}
 # than typing a `#` of its own.
 type:first
 type:{ENTER}the first paragraph
-# The + button carries no word, and a lone glyph is not something text
-# recognition reads reliably: it is clicked where the code puts it, and that
-# the click landed is said by the two tabs read after the preset comes back.
-plugin:129,87
+# The + is pressed where it is read, nearest to where the code puts it, and
+# that the press landed is said by the two tabs read after the preset comes
+# back.
+press:+|129,113
 type:second
 type:{ENTER}the second paragraph
 

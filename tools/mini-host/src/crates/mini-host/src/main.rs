@@ -49,6 +49,9 @@ fn parse_args() -> Args {
             "--state" => args.state = rest.next().map(PathBuf::from),
             "--geometry" => args.geometry = rest.next().map(PathBuf::from),
             "--preset" => args.preset = rest.next().map(PathBuf::from),
+            // For the plugin, which reads the theme to draw in off this
+            // process's command line.
+            "--light" | "--dark" => {}
             _ => args.plugin = Some(PathBuf::from(arg)),
         }
     }

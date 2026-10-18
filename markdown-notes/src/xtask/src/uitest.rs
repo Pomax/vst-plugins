@@ -16,12 +16,23 @@ use std::time::{Duration, Instant};
 
 use markdown_notes_core::PluginState;
 
-/// What a test came to: how many checks passed, how many failed, and the
-/// account of the failure when there was one.
+/// What a test came to: how many checks passed, and the account of the
+/// failure when there was one.
 struct Outcome {
     passed: usize,
-    failed: usize,
     error: Option<String>,
+}
+
+/// The most a step may take. A step that takes longer has stalled: it fails.
+pub(crate) const STEP_LIMIT: Duration = Duration::from_secs(10);
+
+/// The exit code the Windows driver ends with when a step stalled.
+#[cfg(target_os = "windows")]
+const STALLED_EXIT: i32 = 124;
+
+/// The account of a step that stalled.
+pub(crate) fn stalled(line: &str, spent: Duration) -> String {
+    format!("stalled: {line} took {}, over the {} a step gets", took(spent), took(STEP_LIMIT))
 }
 
 /// A length of time as a person reads it: milliseconds under a second,
@@ -35,6 +46,64 @@ pub(crate) fn took(spent: Duration) -> String {
         let secs = spent.as_secs();
         format!("{}m{:02}s", secs / 60, secs % 60)
     }
+}
+
+/// The wall clock, as the machine's own time zone reads it: `HH:MM:SS`.
+///
+/// The standard library gives the time since 1970 and nothing local, so the
+/// operating system is asked directly.
+#[cfg(unix)]
+fn clock() -> String {
+    #[repr(C)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const u8,
+    }
+    extern "C" {
+        fn localtime_r(seconds: *const i64, out: *mut Tm) -> *mut Tm;
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0);
+    let mut local: Tm = unsafe { std::mem::zeroed() };
+    let read = unsafe { localtime_r(&seconds, &mut local) };
+    if read.is_null() {
+        return "??:??:??".to_string();
+    }
+    format!("{:02}:{:02}:{:02}", local.hour, local.min, local.sec)
+}
+
+/// The wall clock, as the machine's own time zone reads it: `HH:MM:SS`.
+#[cfg(windows)]
+fn clock() -> String {
+    #[repr(C)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLocalTime(out: *mut SystemTime);
+    }
+    let mut local: SystemTime = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut local) };
+    format!("{:02}:{:02}:{:02}", local.hour, local.minute, local.second)
 }
 
 /// How far down the mini host's own strip pushes the plugin's window.
@@ -165,10 +234,6 @@ struct Test {
     /// `remove:` step, because those run before anything is asserted and half
     /// of what these tests assert is that a file is there.
     cleanups: Vec<String>,
-    /// Marked `baseline:` in the file: this test proves something every other
-    /// test assumes, typing or clicking. When it fails, the run stops, because
-    /// nothing after it can mean anything.
-    baseline: bool,
 }
 
 fn read_test(path: &Path) -> Result<Test, String> {
@@ -186,7 +251,6 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
     let mut steps = Vec::new();
     let mut expects = Vec::new();
     let mut cleanups = Vec::new();
-    let mut baseline = false;
     let mut restarts = 0;
     for line in text.lines() {
         let line = line.trim_end();
@@ -197,8 +261,6 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
             cleanups.push(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("expect:") {
             expects.push((restarts, rest.trim().to_string()));
-        } else if line.trim() == "baseline:" {
-            baseline = true;
         } else {
             if line.trim_start().starts_with("restart:") {
                 restarts += 1;
@@ -224,7 +286,7 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
     if expects.is_empty() && !asserts {
         return Err(format!("{name}: a test with nothing to assert is not a test"));
     }
-    Ok(Test { name, steps, expects, restarts, cleanups, baseline })
+    Ok(Test { name, steps, expects, restarts, cleanups })
 }
 
 /// A path as a test file writes it, as this platform spells it.
@@ -482,7 +544,7 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outco
         .and_then(|text| text.trim().parse().ok())
         .unwrap_or(0);
     if let Err(e) = driven {
-        return Ok(Outcome { passed: checks, failed: 1, error: Some(e) });
+        return Ok(Outcome { passed: checks, error: Some(e) });
     }
 
     // A test that ends with `kill:` chose not to have state: a killed program
@@ -494,7 +556,6 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outco
         Err(_) => {
             return Ok(Outcome {
                 passed: checks,
-                failed: 1,
                 error: Some(format!(
                     "the plugin wrote no state: the window did not close cleanly. \
                      The screenshot of what was on screen is at {}",
@@ -574,7 +635,7 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outco
     let error = (!failures.is_empty()).then(|| {
         format!("{}\n      screenshot: {}", failures.join("\n      "), shot.display())
     });
-    Ok(Outcome { passed, failed: failures.len(), error })
+    Ok(Outcome { passed, error })
 }
 
 /// Hand the steps to the platform's window driver, which leaves the number of
@@ -596,7 +657,8 @@ fn drive(
         .arg("-Exe")
         .arg(host)
         .arg("-ExeArgs")
-        .arg(format!("{}|--state|{}", plugin.display(), state.display()))
+        // The UI tests run in the light theme, whatever the desktop's is.
+        .arg(format!("{}|--light|--state|{}", plugin.display(), state.display()))
         .args(["-Title", "Mini VST Host"])
         .arg("-StepFile")
         .arg(steps)
@@ -607,6 +669,9 @@ fn drive(
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;
+    if status.code() == Some(STALLED_EXIT) {
+        return Err(format!("stalled: a step took over the {} a step gets", took(STEP_LIMIT)));
+    }
     status
         .success()
         .then_some(())
@@ -660,7 +725,6 @@ fn drive(
 pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Result<(), String> {
     let mut ran = 0;
     let mut passed = 0;
-    let mut failed = 0;
     let began = Instant::now();
     let suites = suites(root);
 
@@ -692,27 +756,23 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
                 continue;
             }
             ran += 1;
+            println!("\nstarting {} at {}", file.display(), clock());
             note(root, &format!("running: {}", test.name));
             let outcome = run_one(root, &test, host, plugin)?;
             passed += outcome.passed;
-            failed += outcome.failed;
-            match outcome.error {
-                None => {
-                    println!("  ok    {}", test.name);
-                    note(root, &format!("ok:      {}", test.name));
-                }
-                Some(e) => {
-                    println!("  FAIL  {}\n      {e}", test.name);
-                    note(root, &format!("fail:    {}", test.name));
-                    if test.baseline {
-                        return Err(format!(
-                            "{} is a baseline test: it proves something every \
-                             later test assumes, so nothing after it ran",
-                            test.name
-                        ));
-                    }
-                }
+            // A failure ends the run: nothing after it is run.
+            if let Some(e) = outcome.error {
+                println!("  FAIL  {}\n      {e}", test.name);
+                note(root, &format!("fail:    {}", test.name));
+                return Err(format!(
+                    "{} failed after {} checks passed, in {}",
+                    test.name,
+                    passed,
+                    took(began.elapsed())
+                ));
             }
+            println!("  ok    {}", test.name);
+            note(root, &format!("ok:      {}", test.name));
         }
     }
 
@@ -724,13 +784,8 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
         });
     }
     println!();
-    let spent = took(began.elapsed());
-    if failed == 0 {
-        println!("{passed} UI tests, all passed in {spent}");
-        Ok(())
-    } else {
-        Err(format!("{failed} UI tests failed, {passed} passed, in {spent}"))
-    }
+    println!("{passed} UI tests, all passed in {}", took(began.elapsed()));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -764,6 +819,13 @@ mod tests {
                 (2, "title is kept".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_stalled_step_says_which_step_and_how_long() {
+        let account = stalled("showing:ready", Duration::from_secs(12));
+
+        assert!(account.contains("showing:ready took 12.0s"));
     }
 
     #[test]

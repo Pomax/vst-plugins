@@ -146,6 +146,9 @@ window to photograph.
 On macOS the UI tests photograph the window themselves, through the `Window
 Shot` app in `tools/window-shot`.
 
+THIS IS CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE: the Linux
+driver runs on one desktop only.
+
 On Linux the driver is `src/xtask/src/linux.rs`, and it is written for one
 desktop: GNOME on Wayland. The host and the plugin are X11 windows there, so
 where they are and which is in front is asked of the X server. Input and
@@ -156,18 +159,27 @@ pictures go through the desktop portal, in one session:
   pointer and its own keyboard focus, so they arrive as a hand's would.
 - Pictures and films come from the portal's ScreenCast stream of the monitor,
   read with `gst-launch-1.0`, and are cut down to the window.
-- Text in a picture is found by `binaries/find-text`, which on Linux reads it
-  with the `tesseract` program.
+- Text in a picture is read by the OCR server, see below.
 
 The desktop asks before it allows any of that: the first run puts up its
 dialog for sharing the screen and for remote control, and waits for it to be
 allowed. The answer is kept in `markdown-notes/.cache/portal-token`, and runs
 after that are not asked again.
 
-What has to be installed for the UI tests on Linux: `tesseract` with its
-English data (the `tesseract-ocr` package), GStreamer's `gst-launch-1.0` with
-the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux` elements, and `ffmpeg`.
-`./test.sh --ui NAME` runs one test or one suite there.
+What has to be installed for the UI tests on Linux: GStreamer's
+`gst-launch-1.0` with the `pipewiresrc`, `pngenc`, `x264enc` and `mp4mux`
+elements, and `ffmpeg`. `./test.sh --ui NAME` runs one test or one suite
+there.
+
+On every platform, text in a picture is read by the OCR server in
+`tools/ocr-server`: a Python program that reads pictures with OpenCV's text
+detection and text recognition networks. A driver starts it on its first look
+at the screen and keeps it for the whole run, handing it one picture a line.
+It needs `python3` (`python` on Windows), and one run of its setup,
+`tools/ocr-server/setup.sh` or `setup.bat`, which puts pip, OpenCV, numpy and
+the two networks in `tools/ocr-server/.cache`. Its recognition network reads
+the letters a to z and digits, without case, spaces or punctuation, so a step
+looking for words is matched on those alone. A `+` is found by its shape.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.
@@ -220,8 +232,7 @@ The Linux job installs what a runner does not have before it builds:
 which the build asks for; `mesa-vulkan-drivers`, the software Vulkan device
 the pixel tests draw on; `fonts-noto-core` and `fonts-dejavu-mono`, the
 sans-serif and monospace faces they draw in; and `ffmpeg`, which one of
-xtask's tests runs. The Linux jobs of both workflows have not run on GitHub
-yet: what they do has only been run by hand on one Linux machine.
+xtask's tests runs.
 
 `.github/workflows/markdown-notes-build.yml` runs on pushes to `main` that
 change something under `markdown-notes/` or `tools/mini-host/` other than a
@@ -348,10 +359,9 @@ Where a picture comes from:
 - A drop. baseview delivers drops to egui-baseview, which discards them, so
   the plugin registers its own drop target on the window baseview opened:
   `drop.rs`, an `IDropTarget` on Windows, an overlay `NSView` registered for
-  file URLs on macOS. Both queue the files for the next frame. The Windows
-  target is proven by hand: a file dragged from Explorer lands. The macOS one
-  has not been run. Linux has no target: a file dropped on the window there
-  is not taken in.
+  file URLs on macOS. Both queue the files for the next frame. THIS IS
+  CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE: Linux has no
+  target: a file dropped on the window there is not taken in.
 - A paste. On Windows and macOS egui-baseview turns Ctrl+V into a text event
   only when the clipboard holds text, so on that key with no text the plugin
   reads the clipboard's picture with `arboard` and encodes it as PNG. On

@@ -436,10 +436,10 @@ fn code_for(key: char) -> Option<u16> {
 /// Send one `type:` step, which is text with named keys written in braces.
 ///
 /// `{ENTER}`, `{ESC}`, `{HOME}`, `{END}`, `{LEFT}`, `{UP}`, `{DOWN}`, `{PGUP}`
-/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. `{(}` and
-/// `{)}` are the brackets themselves, which would otherwise be read as the
-/// start of a name. This is the notation the tests are already written in,
-/// and it is Windows `SendKeys`.
+/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. One
+/// character in braces, `{(}`, `{)}`, `{%}` or `{+}`, is that character,
+/// which written bare would be read as part of a name. This is the notation
+/// the tests are already written in, and it is Windows `SendKeys`.
 fn send_keys(step: &str) -> Result<(), String> {
     let mut literal = String::new();
     let mut rest = step;
@@ -452,7 +452,7 @@ fn send_keys(step: &str) -> Result<(), String> {
         let name = &after[..close];
         rest = &after[close + 1..];
 
-        if name == "(" || name == ")" {
+        if name.chars().count() == 1 && named(name).is_none() {
             literal.push_str(name);
             continue;
         }
@@ -828,62 +828,30 @@ fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, Str
 /// The box the text occupies on screen inside `area`, found by looking.
 fn find_box_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
     shot(area, probe)?;
-    let out = Command::new(finder()?)
-        .arg(probe)
-        .arg(text)
-        .output()
-        .map_err(|e| format!("running the text finder: {e}"))?;
-    if out.status.code() == Some(1) {
+    let said = crate::ocr::read(probe, Some(text))?;
+    // Nothing said is the text not being there. Otherwise the first line is
+    // the picture's size and the next the best place it was read at.
+    let mut lines = said.lines();
+    let Some(size) = lines.next() else {
         return Ok(None);
-    }
-    if !out.status.success() {
-        return Err(format!(
-            "the text finder failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    let numbers: Vec<f64> = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .filter_map(|part| part.parse().ok())
-        .collect();
-    if numbers.len() != 6 || numbers[4] <= 0.0 {
-        return Err(format!(
-            "the text finder said something unreadable: {}",
-            String::from_utf8_lossy(&out.stdout).trim()
-        ));
+    };
+    let numbers = |line: &str| -> Vec<f64> {
+        line.split_whitespace().filter_map(|part| part.parse().ok()).collect()
+    };
+    let size = numbers(size);
+    let place = lines.next().map(numbers).unwrap_or_default();
+    if size.len() != 2 || size[0] <= 0.0 || place.len() != 4 {
+        return Err(format!("the OCR server said something unreadable: {}", said.trim()));
     }
     // The picture is of `area`, so its pixel count over the area's width is
     // the display's scale.
-    let scale = numbers[4] / area.width as f64;
+    let scale = size[0] / area.width as f64;
     Ok(Some(Rect {
-        x: area.x + (numbers[0] / scale) as i32,
-        y: area.y + (numbers[1] / scale) as i32,
-        width: (numbers[2] / scale) as i32,
-        height: (numbers[3] / scale) as i32,
+        x: area.x + (place[0] / scale) as i32,
+        y: area.y + (place[1] / scale) as i32,
+        width: (place[2] / scale) as i32,
+        height: (place[3] / scale) as i32,
     }))
-}
-
-/// Where the text finder is, built if it is not there yet.
-fn finder() -> Result<PathBuf, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .ok_or("no directory above this project")?
-        .to_path_buf();
-    let tool = root.join("binaries").join("find-text");
-    if tool.exists() {
-        return Ok(tool);
-    }
-    let status = Command::new("sh")
-        .arg(root.join("tools").join("find-text").join("build.sh"))
-        .status()
-        .map_err(|e| format!("building the text finder: {e}"))?;
-    if !status.success() {
-        return Err("building the text finder failed".to_string());
-    }
-    tool.exists()
-        .then_some(tool)
-        .ok_or_else(|| "the text finder did not build".to_string())
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -1001,8 +969,10 @@ fn launch(
     extra: &[String],
     settle: Duration,
 ) -> Result<(Child, u32, Rect), String> {
+    // The UI tests run in the light theme, whatever the desktop's is.
     let child = Command::new(program)
         .arg(plugin)
+        .arg("--light")
         .arg("--state")
         .arg(state)
         .arg("--geometry")
@@ -1254,12 +1224,17 @@ fn play(run: &mut Run, text: &str, shot_to: &Path, tally: &Path) -> Result<(), S
         // ran out of patience is the one whose time matters most.
         let began = Instant::now();
         let done = step(run, kind, value, &mut checks);
+        let spent = began.elapsed();
         println!(
             "({}) {line} - step took {}",
             crate::uitest::took(began - last_ended),
-            crate::uitest::took(began.elapsed())
+            crate::uitest::took(spent)
         );
         last_ended = Instant::now();
+        if spent > crate::uitest::STEP_LIMIT {
+            outcome = Err(crate::uitest::stalled(line, spent));
+            break;
+        }
         if let Err(e) = done {
             outcome = Err(e);
             break;

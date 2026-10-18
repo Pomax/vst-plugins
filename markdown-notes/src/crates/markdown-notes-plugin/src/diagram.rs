@@ -98,6 +98,7 @@ pub fn svg(code: &str, look: Look) -> Option<String> {
     // follows Mermaid 11, whose own default is the older lilac one.
     let config = merman::config::MermaidConfig::from_value(serde_json::json!({
         "theme": if dark { "redux-dark-color" } else { "redux-color" },
+        "fontFamily": "Arial",
         "look": "neo",
         "flowchart": { "curve": "linear", "rankSpacing": STATE_RANK_SPACING },
         "state": { "nodeSpacing": STATE_NODE_SPACING, "rankSpacing": STATE_RANK_SPACING },

@@ -85,11 +85,10 @@ restart:--preset|%PRESETS%\opening-named-section.preset
 showing:Drums|140
 type:!
 
-# A second tab, kept in front when the preset is saved. The + button carries no
-# word, and a lone glyph is not something text recognition reads reliably: it
-# is clicked where the code puts it, and that the click landed is said by the
-# two sections this run wrote.
-plugin:129,87
+# A second tab, kept in front when the preset is saved. The + is pressed where
+# it is read, nearest to where the code puts it, and that the press landed is
+# said by the two sections this run wrote.
+press:+|129,113
 type:Two
 type:{ENTER}second
 

@@ -1,40 +1,16 @@
 //! Finding words on the screen by looking.
 //!
-//! A part of the screen is photographed and `binaries/find-text` reads the
+//! A part of the screen is photographed and `tools/ocr-server` reads the
 //! picture, so a click goes where a label really is and not where a layout
 //! constant says it ought to be.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use super::portal::Portal;
 use super::screen;
 use super::Rect;
 
-/// Where the text finder is, built if it is not there yet.
-pub fn finder() -> Result<PathBuf, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .ok_or("no directory above this project")?
-        .to_path_buf();
-    let tool = root.join("binaries").join("find-text");
-    if tool.exists() {
-        return Ok(tool);
-    }
-    let status = Command::new("sh")
-        .arg(root.join("tools").join("find-text").join("build.sh"))
-        .status()
-        .map_err(|e| format!("building the text finder: {e}"))?;
-    if !status.success() {
-        return Err("building the text finder failed".to_string());
-    }
-    tool.exists()
-        .then_some(tool)
-        .ok_or_else(|| "the text finder did not build".to_string())
-}
-
-/// What the text finder printed: the picture's width from its first line, and
+/// What the OCR server answered: the picture's width from its first line, and
 /// after it one box a line, each with whatever follows the box on its line.
 fn parsed(output: &str) -> Option<(u32, Vec<(Rect, String)>)> {
     let mut lines = output.lines();
@@ -54,26 +30,12 @@ fn parsed(output: &str) -> Option<(u32, Vec<(Rect, String)>)> {
 }
 
 fn run_finder(picture: &Path, text: Option<&str>) -> Result<(u32, Vec<(Rect, String)>), String> {
-    let mut finder = Command::new(finder()?);
-    finder.arg(picture);
-    if let Some(text) = text {
-        finder.arg(text);
-    }
-    let out = finder
-        .output()
-        .map_err(|e| format!("running the text finder: {e}"))?;
+    let said = crate::ocr::read(picture, text)?;
     // Not there is an answer, not a failure.
-    if out.status.code() == Some(1) {
+    if said.trim().is_empty() {
         return Ok((0, Vec::new()));
     }
-    if !out.status.success() {
-        return Err(format!(
-            "the text finder failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    let said = String::from_utf8_lossy(&out.stdout);
-    parsed(&said).ok_or_else(|| format!("the text finder said something unreadable: {}", said.trim()))
+    parsed(&said).ok_or_else(|| format!("the OCR server said something unreadable: {}", said.trim()))
 }
 
 /// Every place `text` is in a picture, best match first, in the picture's
@@ -96,30 +58,6 @@ pub fn nearest(boxes: &[Rect], near: (i32, i32)) -> Option<Rect> {
         let dy = (found.y + found.height / 2 - near.1) as i64;
         dx * dx + dy * dy
     })
-}
-
-/// How far the middle of a `+` may be from where a click was sent, across
-/// and down, and still be what the click is for.
-const REACH: i32 = 24;
-
-/// The `+` a click at `point` is for: the nearest line that is a `+` and
-/// nothing else, of those within reach of the point.
-///
-/// A button with only a `+` on it sits after whatever is before it, and how
-/// wide that is comes from the face the lettering is drawn in. The numbers
-/// in a step do not know the face.
-pub fn plus_near(lines: &[(Rect, String)], point: (i32, i32)) -> Option<Rect> {
-    let within_reach: Vec<Rect> = lines
-        .iter()
-        .filter(|(_, text)| text.trim() == "+")
-        .map(|(found, _)| *found)
-        .filter(|found| {
-            let across = found.x + found.width / 2 - point.0;
-            let down = found.y + found.height / 2 - point.1;
-            across.abs() <= REACH && down.abs() <= REACH
-        })
-        .collect();
-    nearest(&within_reach, point)
 }
 
 /// A box in a picture of `area`, in `area`'s own units from its top left.
@@ -189,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn find_text_output_is_read_as_boxes() {
+    fn the_ocr_servers_answer_is_read_as_boxes() {
         // Asked for one text: the picture's size, then a box a line.
         let (width, found) = parsed("900 683\n501 68 31 12\n560 68 52 12\n").expect("unreadable");
         assert_eq!(width, 900);
@@ -212,35 +150,6 @@ mod tests {
         // A picture with nothing in it to read is its size and no boxes.
         assert_eq!(parsed("900 683\n"), Some((900, Vec::new())));
         assert_eq!(parsed(""), None);
-    }
-
-    #[test]
-    fn a_click_beside_a_plus_is_for_the_plus() {
-        let line = |x: i32, y: i32, width: i32, text: &str| {
-            (Rect { x, y, width, height: 10 }, text.to_string())
-        };
-        // A tab, the `+` after it, and a line of the document that starts
-        // with one.
-        let strip = [
-            line(150, 114, 72, "Drum bus"),
-            line(247, 114, 9, "+"),
-            line(26, 150, 60, "+ a list"),
-        ];
-        let plus = Some(strip[1].0);
-
-        // Sent a little short of it, and a little past it.
-        assert_eq!(plus_near(&strip, (239, 113)), plus);
-        assert_eq!(plus_near(&strip, (262, 125)), plus);
-        // Sent to the tab, and to the line of the document.
-        assert_eq!(plus_near(&strip, (181, 119)), None);
-        assert_eq!(plus_near(&strip, (50, 155)), None);
-        // Out of reach across, and out of reach down.
-        assert_eq!(plus_near(&strip, (226, 119)), None);
-        assert_eq!(plus_near(&strip, (251, 144)), None);
-
-        // Of two, the nearer.
-        let two = [line(247, 114, 9, "+"), line(277, 114, 9, "+")];
-        assert_eq!(plus_near(&two, (268, 119)), Some(two[1].0));
     }
 
     #[test]
