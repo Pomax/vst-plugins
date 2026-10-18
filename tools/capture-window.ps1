@@ -412,6 +412,17 @@ public class Win32Capture {
     public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int count);
+    [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+
+    /// What the button that accepts a file dialog says, without its `&`:
+    /// "Save" or "Open". Empty when `dialog` has no such button.
+    public static string AcceptButton(IntPtr dialog) {
+        IntPtr button = GetDlgItem(dialog, 1);
+        if (button == IntPtr.Zero) return "";
+        var text = new StringBuilder(64);
+        GetWindowTextW(button, text, 64);
+        return text.ToString().Replace("&", "");
+    }
 
 
 
@@ -796,19 +807,6 @@ function Wait-Loaded([IntPtr]$window, [int]$TimeoutMs = $STEP_LIMIT_S * 1000) {
     Start-Sleep -Milliseconds $HAND_MS
 }
 
-# `$area` grown by half its width or height past every edge, as far as
-# `$screen` goes.
-function Get-Widened([Win32Capture+RECT]$area, $screen) {
-    $w = $area.Right - $area.Left
-    $h = $area.Bottom - $area.Top
-    $grown = New-Object Win32Capture+RECT
-    $grown.Left = [Math]::Max($screen.Left, $area.Left - [int]($w / 2))
-    $grown.Top = [Math]::Max($screen.Top, $area.Top - [int]($h / 2))
-    $grown.Right = [Math]::Min($screen.Right, $area.Right + [int]($w / 2))
-    $grown.Bottom = [Math]::Min($screen.Bottom, $area.Bottom + [int]($h / 2))
-    return $grown
-}
-
 # How long a hand takes over one key, and how long it takes to go from the
 # mouse to the next thing. Input sent faster than a person can make it reaches
 # the plugin out of order: the pointer and the keyboard come in by different
@@ -1041,42 +1039,19 @@ try {
                     if (-not $panel) {
                         throw "no $want dialog is open, so the button did nothing"
                     }
-                    $probe = if ($outDir) {
-                        Join-Path $outDir 'capture-window-dialog.png'
-                    } else {
-                        Join-Path $env:TEMP 'capture-window-dialog.png'
-                    }
-                    # Read first in the dialog's window and then, on every look
-                    # that does not find WORD, in a wider area. Outside the
-                    # dialog's window, what is in the host's strip does not
-                    # count.
-                    $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
-                    $hostAt = [Win32Capture]::VisibleRect($hwnd)
-                    $area = [Win32Capture]::VisibleRect($panel)
-                    $inDialog = $true
-                    $deadline = $started.AddSeconds($STEP_LIMIT_S)
-                    $named = $false
-                    while ($true) {
-                        $lookAt = [DateTime]::UtcNow
-                        Save-Shot $area $probe
-                        $below = if ($inDialog) { 0 } else { $hostAt.Top - $area.Top + 40 }
-                        $named = @(Find-All $probe $want | Where-Object {
-                            $_.Top -ge $below
-                        }).Count -gt 0
-                        Write-Host ("look:   {0},{1} {2}x{3} took {4}: {5}" -f
-                            $area.Left, $area.Top,
-                            ($area.Right - $area.Left), ($area.Bottom - $area.Top),
-                            (Format-Span ([DateTime]::UtcNow - $lookAt)),
-                            $(if ($named) { 'found' } else { 'not found' }))
-                        if ($named -or [DateTime]::UtcNow -ge $deadline) { break }
-                        $area = Get-Widened $area $screen
-                        $inDialog = $false
-                    }
+                    # What is written inside is what its accept button says.
+                    $left = ($started.AddSeconds($STEP_LIMIT_S) - [DateTime]::UtcNow).TotalMilliseconds
+                    $named = Wait-Until {
+                        $seen = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
+                        ($seen -ne [IntPtr]::Zero) -and
+                            ([Win32Capture]::AcceptButton($seen) -eq $want)
+                    } ([Math]::Max(0, [int]$left))
                     if (-not $named) {
-                        throw "a dialog is open, but nothing on it says ""$want""; see $probe"
+                        $says = [Win32Capture]::AcceptButton(
+                            [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd))
+                        throw "a dialog is open, but its button says ""$says"", not ""$want"""
                     }
                     $script:checks++
-                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dialog: {0}" -f $want)
                 }
