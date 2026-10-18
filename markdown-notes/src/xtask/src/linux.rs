@@ -227,10 +227,12 @@ struct Run {
     clipboard: Option<arboard::Clipboard>,
     /// The cursor theme's pictures of the cursors a `cursor:` step can name.
     stock: Vec<(&'static str, Picture)>,
-    /// What the last look for a file dialog's button read on the host's
-    /// window: every line, with where it is. The steps that address the
-    /// dialog afterwards find their way by it rather than looking again.
+    /// What the last look for a file dialog's button read: every line, with
+    /// where it is in `dialog_at`. The steps that address the dialog
+    /// afterwards find their way by it rather than looking again.
     dialog: Vec<(Rect, String)>,
+    /// The area of the desktop that look photographed.
+    dialog_at: Rect,
 }
 
 impl Run {
@@ -266,6 +268,7 @@ impl Run {
             film: None,
             clipboard: None,
             dialog: Vec::new(),
+            dialog_at: Rect { x: 0, y: 0, width: 0, height: 0 },
         })
     }
 
@@ -350,32 +353,76 @@ impl Run {
         ))
     }
 
-    /// Where a file dialog of the host's is looked for: the whole monitor.
-    /// The dialog is the desktop's own, centred over the host's window and
-    /// larger than that window can be made.
-    fn dialog_area(&self) -> Rect {
+    /// The monitor, as a place on the desktop.
+    fn monitor(&self) -> Rect {
         let (x, y, width, height) = self.portal.monitor();
         Rect { x, y, width, height }
     }
 
-    /// The row of the dialog area below which the host's own strip has
-    /// ended, so the strip's words are not taken for the dialog's.
-    fn below_strip(&self) -> Result<i32, String> {
-        let frame = self.desktop.frame_rect(self.host)?;
-        Ok(frame.y - self.dialog_area().y + self.desktop.frame_extents(self.host)[2] + STRIP)
+    /// `area` grown, as far as the monitor goes, past every edge that
+    /// something read in it runs into: what is cut off by the picture's
+    /// edge goes on beyond it. Past every edge when nothing runs into one.
+    /// It grows by half its width or height. `lines` are what was read, in
+    /// `area`'s own units.
+    fn widened(&self, area: Rect, lines: &[(Rect, String)]) -> Rect {
+        const TOUCHING: i32 = 4;
+        let monitor = self.monitor();
+        let cut = |at: fn(&Rect, Rect) -> bool| lines.iter().any(|(line, _)| at(line, area));
+        let mut sides = [
+            cut(|line, _| line.x <= TOUCHING),
+            cut(|line, _| line.y <= TOUCHING),
+            cut(|line, area| line.right() >= area.width - TOUCHING),
+            cut(|line, area| line.bottom() >= area.height - TOUCHING),
+        ];
+        if !sides.contains(&true) {
+            sides = [true; 4];
+        }
+        let [left, top, right, bottom] = sides;
+        let (across, down) = (area.width / 2, area.height / 2);
+        let x = if left { (area.x - across).max(monitor.x) } else { area.x };
+        let y = if top { (area.y - down).max(monitor.y) } else { area.y };
+        let r = if right { (area.right() + across).min(monitor.right()) } else { area.right() };
+        let b = if bottom { (area.bottom() + down).min(monitor.bottom()) } else { area.bottom() };
+        Rect { x, y, width: r - x, height: b - y }
     }
 
-    /// The button that accepts the host's file dialog, from one look at the
-    /// monitor: a line under the host's strip that says one of `says`. What
-    /// the look read is kept in `dialog`, and the picture is left in
-    /// `dialog.png`. The look is written to the log: the area photographed,
-    /// the row searched below, how long it took, every line read below that
-    /// row with where it is, and the button found.
-    fn accept_button(&mut self, says: &[&str]) -> Result<Option<Rect>, String> {
+    /// The row of `area` below which the host's own strip has ended, so the
+    /// strip's words are not taken for a dialog's.
+    fn below_strip(&self, area: Rect) -> Result<i32, String> {
+        let frame = self.desktop.frame_rect(self.host)?;
+        Ok(frame.y - area.y + self.desktop.frame_extents(self.host)[2] + STRIP)
+    }
+
+    /// The button that accepts the host's file dialog, looked for first in
+    /// the host's window and then, on every look that does not find it, in
+    /// an area widened past the edges that what was read runs into, until it
+    /// is found or `deadline` has gone by. The dialog is the desktop's own,
+    /// and can be larger than the host's window and reach past it.
+    fn find_accept_button(&mut self, says: &[&str], deadline: Instant) -> Result<Option<Rect>, String> {
+        let mut area = self.desktop.frame_rect(self.host)?;
+        loop {
+            if let Some(button) = self.accept_button(area, says)? {
+                return Ok(Some(button));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            area = self.widened(area, &self.dialog);
+        }
+    }
+
+    /// The button that accepts the host's file dialog, from one look at
+    /// `area`: a line under the host's strip that says one of `says`. What
+    /// the look read is kept in `dialog` and where it looked in `dialog_at`,
+    /// and the picture is left in `dialog.png`. The look is written to the
+    /// log: the area photographed, the row searched below, how long it took,
+    /// every line read below that row with where it is, and the button found.
+    fn accept_button(&mut self, area: Rect, says: &[&str]) -> Result<Option<Rect>, String> {
         let began = Instant::now();
-        let frame = self.dialog_area();
-        let below = self.below_strip()?;
+        let frame = area;
+        let below = self.below_strip(area)?;
         self.dialog = look::read_in(self.portal, frame, &self.work.join("dialog.png"))?;
+        self.dialog_at = area;
         let button = dialog::accept_button(&self.dialog, says, below);
         let read: Vec<String> = self
             .dialog
@@ -618,13 +665,14 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     let _ = screen::frame(run.portal, &picture("opened"));
     run.report_dialog("opened", began);
 
-    let frame = run.dialog_area();
     // The `dialog:` step before this one has read the dialog already. Only
     // a path typed without one looks for itself.
+    let says = dialog::says("Save");
     if run.dialog.is_empty() {
-        run.accept_button(&dialog::says("Save"))?;
+        run.find_accept_button(&says, Instant::now() + Duration::from_secs(5))?;
     }
-    let save = dialog::accept_button(&run.dialog, &dialog::says("Save"), run.below_strip()?);
+    let frame = run.dialog_at;
+    let save = dialog::accept_button(&run.dialog, &says, run.below_strip(frame)?);
     let (place, name) = match (save, path.rsplit_once('/')) {
         (Some(_), Some((folder, name))) => (folder, Some(name)),
         _ => (path, None),
@@ -959,21 +1007,15 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 active_frame
             );
             // Which dialog it is, is read off the screen, below the host's
-            // strip: the dialog is centred over the host's window and can be
-            // larger than it, so the whole monitor is looked at.
+            // strip.
             let probe = run.work.join("dialog.png");
             let says = dialog::says(want);
             let deadline = Instant::now() + Duration::from_secs(20);
-            loop {
-                if run.accept_button(&says)?.is_some() {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "a dialog is open, but nothing on it says {want:?}; see {}",
-                        probe.display()
-                    ));
-                }
+            if run.find_accept_button(&says, deadline)?.is_none() {
+                return Err(format!(
+                    "a dialog is open, but nothing on it says {want:?}; see {}",
+                    probe.display()
+                ));
             }
             let _ = std::fs::remove_file(&probe);
             *checks += 1;
