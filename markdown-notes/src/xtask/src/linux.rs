@@ -131,6 +131,8 @@ fn launch(
     extra: &[String],
     work: &Path,
 ) -> Result<(Child, Window), String> {
+    // Starting the host gets the same time a step does.
+    let began = Instant::now();
     // The UI tests run in the light theme, whatever the desktop's is.
     let mut child = Command::new(program)
         .arg(plugin)
@@ -145,10 +147,10 @@ fn launch(
 
     let ready = (|| {
         let pid = child.id();
-        let host = wait_until(Duration::from_secs(30), || desktop.window_of(pid, TITLE))
-            .ok_or("the host's window never appeared")?;
+        let host = wait_until(crate::uitest::STEP_LIMIT, || desktop.window_of(pid, TITLE))
+            .ok_or_else(|| crate::uitest::stalled("starting the host", began.elapsed()))?;
         desktop.activate(host)?;
-        wait_loaded(desktop, portal, host, work)?;
+        wait_loaded(desktop, portal, host, work, began)?;
         let rect = desktop.frame_rect(host)?;
         println!("window: {},{} {}x{}", rect.x, rect.y, rect.width, rect.height);
         Ok(host)
@@ -167,10 +169,17 @@ fn launch(
 /// Wait for the plugin inside the host's window to be up, the way a person
 /// does before touching it: until there is something to read below the
 /// host's own strip. The host draws its strip long before the plugin has
-/// loaded and drawn its first frame.
-fn wait_loaded(desktop: &Desktop, portal: &Portal, host: Window, work: &Path) -> Result<(), String> {
+/// loaded and drawn its first frame. The host was started at `began`, and all
+/// of starting it gets the time a step does.
+fn wait_loaded(
+    desktop: &Desktop,
+    portal: &Portal,
+    host: Window,
+    work: &Path,
+    began: Instant,
+) -> Result<(), String> {
     let probe = work.join("loaded.png");
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = began + crate::uitest::STEP_LIMIT;
     loop {
         let frame = desktop.frame_rect(host)?;
         let below = desktop.frame_extents(host)[2] + STRIP;
@@ -182,7 +191,8 @@ fn wait_loaded(desktop: &Desktop, portal: &Portal, host: Window, work: &Path) ->
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "the plugin never drew anything to read in the host's window; see {}",
+                "{}: the plugin never drew anything to read in the host's window; see {}",
+                crate::uitest::stalled("starting the host", began.elapsed()),
                 probe.display()
             ));
         }
@@ -561,7 +571,9 @@ fn play(run: &mut Run, text: &str, shot_to: &Path, tally: &Path) -> Result<(), S
         }
     }
     let _ = std::fs::write(tally, checks.to_string());
+    let tallied = crate::uitest::confirm_written(tally);
     outcome?;
+    tallied?;
 
     // Always the window under test, whichever window the steps were last
     // addressing.
@@ -1234,7 +1246,8 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 .map_err(|e| format!("the host wrote nothing about its geometry: {e}"))?;
             let to = path_of(value);
             std::fs::write(&to, &text).map_err(|e| format!("writing {}: {e}", to.display()))?;
-            println!("geometry: {}", text.replace('\n', " ").trim_end());
+            crate::uitest::confirm_written(&to)?;
+            println!("geometry:{}", text.replace('\n', " ").trim_end());
             // A report that does not have the editor filling the window is
             // either true or old: the host writes it when it draws. What
             // the X server has says which.
@@ -1274,7 +1287,8 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                     .map_err(|e| format!("creating {}: {e}", parent.display()))?;
             }
             std::fs::write(&path, crate::png::solid(width as u32, height as u32, PICTURE_COLOUR))
-                .map_err(|e| format!("writing {}: {e}", path.display()))
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            crate::uitest::confirm_written(&path)
         }
         "copied" => {
             // `copied:PATH` writes the text on the clipboard to PATH, for an
@@ -1286,7 +1300,8 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 .map_err(|e| format!("there is no text on the clipboard: {e}"))?;
             std::fs::write(&path, &text)
                 .map_err(|e| format!("writing {}: {e}", path.display()))?;
-            println!("copied: {} characters to {}", text.chars().count(), path.display());
+            crate::uitest::confirm_written(&path)?;
+            println!("copied:{} characters to {}", text.chars().count(), path.display());
             Ok(())
         }
         "clipboard" => {
@@ -1318,8 +1333,9 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             let path = path_of(path);
             let want = want.trim().replace("\\n", "\n");
             // The save runs off the plugin's drawing thread, so the file is
-            // looked for until it is there and holds what it should.
-            wait_until(Duration::from_secs(5), || {
+            // looked for until it is there and holds what it should, for as
+            // long as a step has.
+            wait_until(crate::uitest::STEP_LIMIT, || {
                 std::fs::read_to_string(&path)
                     .is_ok_and(|got| got.contains(&want))
                     .then_some(())
@@ -1411,6 +1427,7 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             let report = PathBuf::from(format!("{}.txt", to.display()));
             std::fs::write(&report, format!("frames={total}\ndistinct_frames={distinct}\n"))
                 .map_err(|e| format!("writing {}: {e}", report.display()))?;
+            crate::uitest::confirm_written(&report)?;
             println!(
                 "film:   {distinct} distinct of {total} frames; {}",
                 video.display()

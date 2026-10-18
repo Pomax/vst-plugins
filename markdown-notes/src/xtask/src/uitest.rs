@@ -35,6 +35,20 @@ pub(crate) fn stalled(line: &str, spent: Duration) -> String {
     format!("stalled: {line} took {}, over the {} a step gets", took(spent), took(STEP_LIMIT))
 }
 
+/// Wait for a file just written to be there: a step that writes a file is not
+/// done until that file can be found. It is looked for until it is, or until
+/// a step's time has run out.
+pub(crate) fn confirm_written(path: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + STEP_LIMIT;
+    while !path.exists() {
+        if Instant::now() >= deadline {
+            return Err(format!("{} was not written", path.display()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
+}
+
 /// A length of time as a person reads it: milliseconds under a second,
 /// seconds under a minute, minutes and seconds past that.
 pub(crate) fn took(spent: Duration) -> String {
@@ -533,6 +547,7 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outco
         .replace("%SRC%", &root.join("src").display().to_string());
     std::fs::write(&step_file, steps)
         .map_err(|e| format!("writing {}: {e}", step_file.display()))?;
+    confirm_written(&step_file)?;
 
     // The driver counts the checks that pass as it goes and leaves the count
     // here, so a run that stops partway still says how many there were.
@@ -651,6 +666,7 @@ fn drive(
     tally: &Path,
 ) -> Result<(), String> {
     let script = tools_dir(root).join("capture-window.ps1");
+    let stall_file = tally.with_extension("stalled");
     let status = Command::new("powershell")
         .args(["-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script)
@@ -666,11 +682,23 @@ fn drive(
         .arg(shot)
         .arg("-Tally")
         .arg(tally)
+        .arg("-StallFile")
+        .arg(&stall_file)
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;
     if status.code() == Some(STALLED_EXIT) {
-        return Err(format!("stalled: a step took over the {} a step gets", took(STEP_LIMIT)));
+        let unreadable = |e: String| format!("reading {}: {e}", stall_file.display());
+        let account = std::fs::read_to_string(&stall_file)
+            .map_err(|e| unreadable(e.to_string()))?;
+        let (ms, line) = account
+            .split_once('\n')
+            .ok_or_else(|| unreadable("no step in it".to_string()))?;
+        let ms: u64 = ms
+            .trim()
+            .parse()
+            .map_err(|e: std::num::ParseIntError| unreadable(e.to_string()))?;
+        return Err(stalled(line, Duration::from_millis(ms)));
     }
     status
         .success()

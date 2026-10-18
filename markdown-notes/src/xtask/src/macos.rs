@@ -679,7 +679,8 @@ fn shot(area: Rect, to: &Path) -> Result<(), String> {
         ],
         to,
         to,
-    )
+    )?;
+    crate::uitest::confirm_written(to)
 }
 
 /// Where the window photographer is, built if it is not there yet.
@@ -718,7 +719,8 @@ fn write_picture(path: &Path, width: u32, height: u32) -> Result<(), String> {
             .map_err(|e| format!("creating {}: {e}", parent.display()))?;
     }
     std::fs::write(path, crate::png::solid(width, height, PICTURE_COLOUR))
-        .map_err(|e| format!("writing {}: {e}", path.display()))
+        .map_err(|e| format!("writing {}: {e}", path.display()))?;
+    crate::uitest::confirm_written(path)
 }
 
 /// Put a picture on the clipboard, as a screenshot tool leaves one.
@@ -969,6 +971,9 @@ fn launch(
     extra: &[String],
     settle: Duration,
 ) -> Result<(Child, u32, Rect), String> {
+    // Starting the host, settling included, gets the same time a step does.
+    let began = Instant::now();
+    let patience = crate::uitest::STEP_LIMIT.saturating_sub(settle);
     // The UI tests run in the light theme, whatever the desktop's is.
     let child = Command::new(program)
         .arg(plugin)
@@ -981,7 +986,12 @@ fn launch(
         .spawn()
         .map_err(|e| format!("running {}: {e}", program.display()))?;
     let pid = child.id();
-    wait_for_window(pid, "", Duration::from_secs(30)).map_err(|e| {
+    wait_for_window(pid, "", patience).map_err(|e| {
+        let e = if began.elapsed() >= patience {
+            crate::uitest::stalled("starting the host", began.elapsed())
+        } else {
+            e
+        };
         format!("{e}\n      (System Events needs Accessibility permission for this terminal)")
     })?;
     front(pid)?;
@@ -1241,7 +1251,9 @@ fn play(run: &mut Run, text: &str, shot_to: &Path, tally: &Path) -> Result<(), S
         }
     }
     let _ = std::fs::write(tally, checks.to_string());
+    let tallied = crate::uitest::confirm_written(tally);
     outcome?;
+    tallied?;
 
     // Always the window under test, whichever window the steps were last
     // addressing. A killed host has no window left to photograph.
@@ -1738,6 +1750,7 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             let text = clipboard_text()?;
             std::fs::write(&path, &text)
                 .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            crate::uitest::confirm_written(&path)?;
             println!("copied: {} characters to {}", text.chars().count(), path.display());
             Ok(())
         }
@@ -1751,8 +1764,9 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             let path = path_of(path);
             let want = want.trim().replace("\\n", "\n");
             // The save runs off the plugin's drawing thread, so the file is
-            // looked for until it is there and holds what it should.
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // looked for until it is there and holds what it should, for as
+            // long as a step has.
+            let deadline = Instant::now() + crate::uitest::STEP_LIMIT;
             while Instant::now() < deadline
                 && !std::fs::read_to_string(&path).is_ok_and(|got| got.contains(&want))
             {
@@ -1874,7 +1888,8 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             })?;
             std::fs::write(&to, &text)
                 .map_err(|e| format!("writing {}: {e}", to.display()))?;
-            println!("geometry: {}", text.replace('\n', " ").trim_end());
+            crate::uitest::confirm_written(&to)?;
+            println!("geometry:{}", text.replace('\n', " ").trim_end());
             Ok(())
         }
         "cursor" => {
@@ -1950,7 +1965,8 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             // done file says it is on disk.
             std::fs::write(&film.stop, "")
                 .map_err(|e| format!("writing {}: {e}", film.stop.display()))?;
-            let deadline = Instant::now() + Duration::from_secs(30);
+            crate::uitest::confirm_written(&film.stop)?;
+            let deadline = Instant::now() + crate::uitest::STEP_LIMIT;
             while !film.done.exists() {
                 if Instant::now() > deadline {
                     let said = std::fs::read_to_string(film.video.with_extension("error"))
@@ -1972,8 +1988,9 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 format!("frames={total}\ndistinct_frames={distinct}\n"),
             )
             .map_err(|e| format!("writing {}: {e}", report.display()))?;
+            crate::uitest::confirm_written(&report)?;
             println!(
-                "film:   {distinct} distinct of {total} frames; {}",
+                "film:{distinct} distinct of {total} frames; {}",
                 video.display()
             );
             Ok(())

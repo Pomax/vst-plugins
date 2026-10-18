@@ -22,8 +22,13 @@ reads digits and the letters a to z, and no spaces, so both what is read and
 what is looked for are compared lower case with everything else left out.
 """
 
+import os
 import sys
 from pathlib import Path
+
+# A picture that cannot be read is answered with an error line. OpenCV would
+# also print its own warning about it to stderr, which is the caller's console.
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 
 import cv2 as cv
 import numpy as np

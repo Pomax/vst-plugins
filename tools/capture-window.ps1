@@ -53,6 +53,9 @@ param(
     # Where to write how many checks passed: a step that confirms something
     # and fails when it is not so counts as one test, each time it passes.
     [string]$Tally = '',
+    # Where to write the step that stalled, when one does: the milliseconds it
+    # took on the first line, the step on the second.
+    [string]$StallFile = '',
     # Close the window by asking it to, rather than killing the process, so
     # the program runs its shutdown. A UI test needs this: the state it
     # asserts on is written on the way out.
@@ -495,6 +498,17 @@ if ($ExeArgs) {
 # of it.
 $launchLine = ($launchArgs | ForEach-Object { '"{0}"' -f $_ }) -join ' '
 
+# Wait for a file just written to be there: a step that writes a file is not
+# done until that file can be found. It is looked for until it is, or until
+# the step it was written in, begun at `$since`, has run out of time.
+function Confirm-Written([string]$path, [DateTime]$since = $script:stepStarted) {
+    $deadline = $since.AddSeconds($STEP_LIMIT_S)
+    while (-not (Test-Path -LiteralPath $path)) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw "$path was not written" }
+        Start-Sleep -Milliseconds $POLL_MS
+    }
+}
+
 function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     Add-Type -AssemblyName System.Drawing
     $w = $area.Right - $area.Left
@@ -508,6 +522,7 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     $gfx.Dispose()
     $bmp.Dispose()
+    Confirm-Written $path
 }
 
 # The OCR server, tools\ocr-server, started on the first request and kept for
@@ -683,13 +698,23 @@ $ROW_HEIGHT = 21
 $BAR_WIDTH = 16
 
 # How long a look that found nothing is left before looking again.
-$POLL_MS = 25
+$POLL_MS = 100
 
 # The most a step may take. A step that takes longer has stalled: the run
 # stops there, and the script ends with STALLED_EXIT so the caller can tell.
 $STEP_LIMIT_S = 10
 $STALLED_EXIT = 124
 $stalled = $false
+
+# Mark the run as stalled at what it was doing, and leave in -StallFile how
+# long that took and what it was.
+function Set-Stalled([string]$what, [TimeSpan]$spent) {
+    $script:stalled = $true
+    if ($StallFile) {
+        [System.IO.File]::WriteAllText($StallFile, "$([long]$spent.TotalMilliseconds)`n$what")
+        Confirm-Written $StallFile ([DateTime]::UtcNow)
+    }
+}
 
 # A length of time as a person reads it: milliseconds under a second, seconds
 # otherwise.
@@ -753,7 +778,7 @@ function Wait-Drawn([Win32Capture+RECT]$area) {
 # own strip, which is the plugin's toolbar. The host draws its strip and its
 # background long before the plugin has loaded and drawn its first frame, so
 # the window having colour in it says nothing about the plugin.
-function Wait-Loaded([Win32Capture+RECT]$area) {
+function Wait-Loaded([Win32Capture+RECT]$area, [int]$TimeoutMs = $STEP_LIMIT_S * 1000) {
     $probe = if ($outDir) {
         Join-Path $outDir 'capture-window-loaded.png'
     } else {
@@ -764,7 +789,7 @@ function Wait-Loaded([Win32Capture+RECT]$area) {
         try {
             @(Read-Text $probe | Where-Object { $_.Top -ge 40 }).Count -gt 0
         } catch { $false }
-    } 30000
+    } $TimeoutMs
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     if (-not $loaded) { throw 'the plugin never drew anything to read in the host window' }
     Start-Sleep -Milliseconds $HAND_MS
@@ -793,28 +818,40 @@ function Send-Typing([string]$keys) {
     }
 }
 
+$launched = [DateTime]::UtcNow
+$script:stepStarted = $launched
 $proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
 
 try {
-    # Wait for the editor window to exist.
+    # Wait for the editor window to exist. Starting the host gets the same
+    # time a step does.
     $hwnd = Wait-Until {
         $seen = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
         if ($seen -ne [IntPtr]::Zero) { $seen }
-    } 30000
+    } ($STEP_LIMIT_S * 1000)
     if (-not $hwnd) { $hwnd = [IntPtr]::Zero }
     if ($hwnd -eq [IntPtr]::Zero) {
         # No window with that title turned up; take the largest one and say so.
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $false)
         Write-Warning "no window titled ""$Title"" found; falling back to the largest one"
     }
-    if ($hwnd -eq [IntPtr]::Zero) { throw 'the window never appeared' }
+    if ($hwnd -eq [IntPtr]::Zero) {
+        Set-Stalled 'starting the host' ([DateTime]::UtcNow - $launched)
+        throw 'the window never appeared'
+    }
     [Win32Capture]::ShowWindow($hwnd, 5) | Out-Null   # SW_SHOW
     if (-not [Win32Capture]::BringToFront($hwnd)) {
         Write-Warning 'the window would not come to the front'
     }
 
     $rect = [Win32Capture]::VisibleRect($hwnd)
-    Wait-Loaded $rect
+    $left = $STEP_LIMIT_S * 1000 - [int]([DateTime]::UtcNow - $launched).TotalMilliseconds
+    try {
+        Wait-Loaded $rect ([Math]::Max(0, $left))
+    } catch {
+        Set-Stalled 'starting the host' ([DateTime]::UtcNow - $launched)
+        throw
+    }
     # The screenshot is always of the window under test, whichever window the
     # steps were last clicking in.
     $hostRect = $rect
@@ -839,6 +876,7 @@ try {
             # The time goes on the line even when the step throws: the step
             # that ran out of patience is the one whose time matters most.
             $started = [DateTime]::UtcNow
+            $script:stepStarted = $started
             try {
             switch ($kind) {
                 'click' {
@@ -1355,7 +1393,8 @@ try {
                         ($editor.Right - $editor.Left), ($editor.Bottom - $editor.Top),
                         ($w - $editor.Right), ($h - $editor.Bottom))
                     [System.IO.File]::WriteAllText($value, $text)
-                    Write-Host "geometry: $($text -replace "`n", ' ')"
+                    Confirm-Written $value
+                    Write-Host "geometry:$($text -replace "`n", ' ')"
                 }
                 'remove' {
                     if (Test-Path -LiteralPath $value) {
@@ -1374,12 +1413,14 @@ try {
                     $gfx.Dispose()
                     $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
                     $bmp.Dispose()
+                    Confirm-Written $p
                 }
                 'copied' {
                     # `copied:PATH` writes the text on the clipboard to PATH,
                     # for an expectation to read.
                     $text = [System.Windows.Forms.Clipboard]::GetText()
                     [System.IO.File]::WriteAllText($value, $text, (New-Object System.Text.UTF8Encoding $false))
+                    Confirm-Written $value
                     Write-Host ("copied: {0} characters to {1}" -f $text.Length, $value)
                 }
                 'clipboard' {
@@ -1396,14 +1437,13 @@ try {
                     $p, $want = $value -split '\|', 2
                     $want = $want.Trim().Replace('\n', "`n")
                     # The save runs off the plugin's drawing thread, so the file
-                    # is looked for until it is there and holds what it should.
+                    # is looked for until it is there and holds what it should,
+                    # for as long as the step has.
+                    Confirm-Written $p
+                    $left = ($started.AddSeconds($STEP_LIMIT_S) - [DateTime]::UtcNow).TotalMilliseconds
                     $there = Wait-Until {
-                        (Test-Path -LiteralPath $p) -and
-                            [System.IO.File]::ReadAllText($p).Contains($want)
-                    }
-                    if (-not (Test-Path -LiteralPath $p)) {
-                        throw "$p was not written"
-                    }
+                        [System.IO.File]::ReadAllText($p).Contains($want)
+                    } ([Math]::Max(0, [int]$left))
                     $got = [System.IO.File]::ReadAllText($p)
                     if (-not $there) {
                         throw "$p holds `"$got`", expected it to contain `"$want`""
@@ -1510,6 +1550,7 @@ try {
                         'mpdecimate' $filmVideo
                     [System.IO.File]::WriteAllText(
                         "$filmTo.txt", "frames=$total`ndistinct_frames=$distinct`n")
+                    Confirm-Written "$filmTo.txt"
                     Write-Host "film:   $distinct distinct of $total frames; $filmVideo"
                 }
                 default { throw "unknown step: $step" }
@@ -1519,7 +1560,7 @@ try {
                 Write-Host ("({0}) {1} - step took {2}" -f (Format-Span ($started - $lastEnded)), $step, (Format-Span ($ended - $started)))
                 $lastEnded = $ended
                 if (($ended - $started).TotalSeconds -gt $STEP_LIMIT_S) {
-                    $script:stalled = $true
+                    Set-Stalled $step ($ended - $started)
                     throw "stalled: $step took $(Format-Span ($ended - $started)), over the ${STEP_LIMIT_S}s a step gets"
                 }
             }
@@ -1553,6 +1594,9 @@ finally {
             Stop-Process -Id $proc.Id -Force
         }
     }
-    if ($Tally) { [System.IO.File]::WriteAllText($Tally, "$($script:checks)") }
+    if ($Tally) {
+        [System.IO.File]::WriteAllText($Tally, "$($script:checks)")
+        Confirm-Written $Tally ([DateTime]::UtcNow)
+    }
     if ($script:stalled) { exit $STALLED_EXIT }
 }
