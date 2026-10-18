@@ -39,6 +39,7 @@ pub mod keys;
 pub mod measure;
 pub mod node_widths;
 pub mod pictures;
+pub mod words;
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CString};

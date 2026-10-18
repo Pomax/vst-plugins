@@ -44,6 +44,8 @@ resvg = { version = "0.48.1", default-features = false, features = ["text", "sys
 # The explainer document, deflated at build time and inflated when loaded.
 # flate2 is already in the binary under the PNG decoder, so this adds none.
 flate2 = "1"
+# Hinted glyph outlines for a diagram's words, see words.rs.
+skrifa = { version = "0.44", features = ["std"] }
 # Measuring text for merman's layout, with the fonts the page is drawn in.
 # HarfRust is HarfBuzz's own Rust implementation and is already in the binary
 # under egui, so measuring with it adds nothing and shapes the same way the
