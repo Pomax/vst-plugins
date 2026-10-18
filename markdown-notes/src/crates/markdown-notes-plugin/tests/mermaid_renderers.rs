@@ -513,9 +513,9 @@ fn an_edge_labels_box_has_rounded_corners() {
     );
 }
 
-/// Room between a label's words and the edge of its box, left and right, and
-/// above and below.
-const LABEL_PADDING: (f64, f64) = (5.0, 2.0);
+/// Room between a label's words and the edge of its box: left and right,
+/// above, and below.
+const LABEL_PADDING: (f64, f64, f64) = (5.0, 2.0, 4.0);
 
 /// The box behind an edge label reaches past its words on every side, so
 /// they are not pressed against its edge. The box is rounded to whole pixels
@@ -532,7 +532,7 @@ fn an_edge_labels_box_has_room_around_its_words() {
         close(x, cx - hx - LABEL_PADDING.0)
             && close(y, cy - hy - LABEL_PADDING.1)
             && close(w, 2.0 * hx + 2.0 * LABEL_PADDING.0)
-            && close(h, 2.0 * hy + 2.0 * LABEL_PADDING.1),
+            && close(h, 2.0 * hy + LABEL_PADDING.1 + LABEL_PADDING.2),
         "the box is at {x},{y} and {w} by {h}, for words {} by {} centred at {cx},{cy}",
         2.0 * hx,
         2.0 * hy

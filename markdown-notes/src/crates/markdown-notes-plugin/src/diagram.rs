@@ -269,20 +269,20 @@ fn with_number(tag: &str, name: &str, f: impl Fn(f64) -> f64) -> String {
     }
 }
 
-/// Room between a label's words and the edge of the box behind them, left
-/// and right, and above and below.
-const LABEL_PADDING: (f64, f64) = (5.0, 2.0);
+/// Room between a label's words and the edge of the box behind them: left
+/// and right, above, and below.
+const LABEL_PADDING: (f64, f64, f64) = (5.0, 2.0, 4.0);
 
 /// How far the corners of the box behind a label are rounded.
 const LABEL_CORNER: f64 = 4.0;
 
-/// Widen the box behind every edge label by [`LABEL_PADDING`] on each side,
+/// Grow the box behind every edge label by [`LABEL_PADDING`] on each side,
 /// and round its corners by [`LABEL_CORNER`].
 ///
 /// merman draws the box exactly round the words, with square corners.
 fn with_padded_labels(svg: &str) -> String {
     const BOX: &str = "labelBkg\"><rect ";
-    let (across, down) = LABEL_PADDING;
+    let (across, above, below) = LABEL_PADDING;
     let mut out = String::with_capacity(svg.len());
     let mut rest = svg;
     while let Some(at) = rest.find(BOX) {
@@ -290,7 +290,7 @@ fn with_padded_labels(svg: &str) -> String {
         let Some(len) = rest[start..].find("/>") else {
             break;
         };
-        let padded = [("x", -across), ("y", -down), ("width", 2.0 * across), ("height", 2.0 * down)]
+        let padded = [("x", -across), ("y", -above), ("width", 2.0 * across), ("height", above + below)]
             .into_iter()
             .fold(rest[start..start + len].to_string(), |tag, (name, by)| moved(&tag, name, by));
         out.push_str(&rest[..start]);
