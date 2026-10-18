@@ -829,31 +829,68 @@ fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, Str
 
 /// The box the text occupies on screen inside `area`, found by looking.
 fn find_box_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
+    Ok(find_all_on_screen(area, text, probe)?.first().copied())
+}
+
+/// Every box the text occupies on screen inside `area`, best match first,
+/// found by looking.
+fn find_all_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Vec<Rect>, String> {
     shot(area, probe)?;
     let said = crate::ocr::read(probe, Some(text))?;
-    // Nothing said is the text not being there. Otherwise the first line is
-    // the picture's size and the next the best place it was read at.
+    Ok(boxes_on_screen(area, &said)?
+        .into_iter()
+        .map(|(place, _)| place)
+        .collect())
+}
+
+/// Every line of text that can be read on screen inside `area`.
+fn read_on_screen(area: Rect, probe: &Path) -> Result<Vec<String>, String> {
+    shot(area, probe)?;
+    let said = crate::ocr::read(probe, None)?;
+    Ok(boxes_on_screen(area, &said)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect())
+}
+
+/// The OCR server's answer about a picture of `area`, as boxes in screen
+/// points, each with whatever was read in it.
+///
+/// Nothing said is nothing found. Otherwise the first line is the picture's
+/// size and each line after it a box, `x y width height`, then the text read
+/// there when everything was asked for.
+fn boxes_on_screen(area: Rect, said: &str) -> Result<Vec<(Rect, String)>, String> {
+    let unreadable = || format!("the OCR server said something unreadable: {}", said.trim());
     let mut lines = said.lines();
     let Some(size) = lines.next() else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    let numbers = |line: &str| -> Vec<f64> {
-        line.split_whitespace().filter_map(|part| part.parse().ok()).collect()
-    };
-    let size = numbers(size);
-    let place = lines.next().map(numbers).unwrap_or_default();
-    if size.len() != 2 || size[0] <= 0.0 || place.len() != 4 {
-        return Err(format!("the OCR server said something unreadable: {}", said.trim()));
-    }
+    let width: f64 = size
+        .split_whitespace()
+        .next()
+        .and_then(|width| width.parse().ok())
+        .filter(|width| *width > 0.0)
+        .ok_or_else(unreadable)?;
     // The picture is of `area`, so its pixel count over the area's width is
     // the display's scale.
-    let scale = size[0] / area.width as f64;
-    Ok(Some(Rect {
-        x: area.x + (place[0] / scale) as i32,
-        y: area.y + (place[1] / scale) as i32,
-        width: (place[2] / scale) as i32,
-        height: (place[3] / scale) as i32,
-    }))
+    let scale = width / area.width as f64;
+    let mut found = Vec::new();
+    for line in lines {
+        let mut parts = line.splitn(5, ' ');
+        let mut number = || parts.next()?.parse::<f64>().ok();
+        let (Some(x), Some(y), Some(w), Some(h)) = (number(), number(), number(), number())
+        else {
+            return Err(unreadable());
+        };
+        let place = Rect {
+            x: area.x + (x / scale) as i32,
+            y: area.y + (y / scale) as i32,
+            width: (w / scale) as i32,
+            height: (h / scale) as i32,
+        };
+        found.push((place, parts.next().unwrap_or_default().to_string()));
+    }
+    Ok(found)
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -870,14 +907,9 @@ unsafe extern "C" {
     fn CGRequestPostEventAccess() -> u8;
 }
 
-/// Whether this process may post clicks and keystrokes, asking macOS for the
-/// permission when it may not.
-///
-/// An event posted without it is dropped without a word: the window opens,
-/// nothing is typed, and the test fails a few seconds later on what it could
-/// not find. Asking first puts the system's own prompt on screen instead,
-/// naming the application the tests were run from, and the run stops here
-/// until that has been allowed.
+/// Whether this process may post clicks and keystrokes. When it may not, this
+/// opens the Accessibility list in System Settings and names the application
+/// to switch on there.
 fn may_post_input() -> Result<(), String> {
     if unsafe { CGPreflightPostEventAccess() } != 0 {
         return Ok(());
@@ -885,13 +917,44 @@ fn may_post_input() -> Result<(), String> {
     if unsafe { CGRequestPostEventAccess() } != 0 {
         return Ok(());
     }
-    Err("this application may not post keystrokes or clicks, so no test can \
-         run. macOS has just been asked to allow it. If a prompt came up, \
-         allow it and run the tests again. If none did, macOS already holds \
-         an entry for this application and never asks twice: remove it with \
-         `tccutil reset Accessibility <the terminal's bundle id>`, and the \
-         next run will ask"
-        .to_string())
+    let _ = Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .status();
+    let app = launched_from()
+        .map(|name| format!("\"{name}\""))
+        .unwrap_or_else(|| "the application the tests were started from".to_string());
+    Err(format!(
+        "{app} may not post keystrokes or clicks, so no test can run. System \
+         Settings is open at Privacy & Security > Accessibility: switch {app} \
+         on there, adding it with + if it is not in the list, and run the \
+         tests again"
+    ))
+}
+
+/// The name of the application this process was started from: the nearest
+/// ancestor whose program lies inside an application bundle.
+fn launched_from() -> Option<String> {
+    let mut pid = std::process::id();
+    while pid > 1 {
+        let out = Command::new("ps")
+            .args(["-o", "ppid=", "-o", "comm=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        let line = String::from_utf8_lossy(&out.stdout);
+        let (parent, program) = line.trim().split_once(' ')?;
+        if let Some(name) = app_name(program.trim()) {
+            return Some(name);
+        }
+        pid = parent.trim().parse().ok()?;
+    }
+    None
+}
+
+/// The name of the outermost application bundle a program's path lies in.
+fn app_name(program: &str) -> Option<String> {
+    let end = program.find(".app/")?;
+    let start = program[..end].rfind('/').map_or(0, |at| at + 1);
+    Some(program[start..end].to_string())
 }
 
 /// Scroll the list under the pointer by a few lines, the way a wheel does.
@@ -1450,15 +1513,14 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
         }
         "press" => {
             // `press:LABEL|X,Y` looks first and clicks second. X,Y is where
-            // the code puts the control, in window coordinates; the region
-            // around that spot is photographed, the label is found in the
-            // picture to confirm or correct the position, the picture is
-            // deleted, and the click goes where the label really is. A label
-            // that is not in its region is a failure, not a blind click.
+            // the code puts the control, in window coordinates; the window
+            // is photographed, the label nearest that spot is found in the
+            // picture, and the click goes where the label really is. A label
+            // the window does not show is a failure, not a blind click.
             //
-            // `press:LABEL|X,Y|smallest` and `|largest` say which of two sizes
-            // of the same label is meant. Here only the region round X,Y is
-            // looked at, which holds one of them, so the word is read past.
+            // `press:LABEL|X,Y|smallest` and `|largest` are for a label the
+            // window shows at two sizes, a tab and the heading under it: the
+            // one with that lettering is pressed, wherever it is.
             let (label, at) = value
                 .split_once('|')
                 .ok_or_else(|| format!("cannot read press: {value}"))?;
@@ -1466,28 +1528,60 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
             if label.is_empty() {
                 return Err("press: needs a label".to_string());
             }
-            let at = at.split_once('|').map_or(at, |(at, _)| at);
+            let (at, sized) = match at.split_once('|') {
+                Some((at, sized)) => (at, Some(sized.trim())),
+                None => (at, None),
+            };
+            if !matches!(sized, None | Some("smallest" | "largest")) {
+                return Err(format!("cannot read press: {value}"));
+            }
             let (x, y) = pair(at, "press")?;
             let window = window_rect(run.pid, &run.title)?;
-            let region = Rect {
-                x: window.x + (x - 110).max(0),
-                y: window.y + (y - 30).max(0),
-                width: 220.min(window.width),
-                height: 60.min(window.height),
-            };
+            let near = (window.x + x, window.y + y);
+            // A pointer left on the control by the step before draws it
+            // highlighted, so it is put on the title bar first.
+            if run.title.is_empty() {
+                mouse(
+                    CGEventType::MouseMoved,
+                    point(window.x + window.width / 2, window.y + 12),
+                )?;
+            }
             let probe = run
                 .state
                 .parent()
                 .map(|work| work.join("press.png"))
                 .ok_or("nowhere to put the look")?;
-            let found = find_on_screen(region, label, &probe);
-            let _ = std::fs::remove_file(&probe);
-            let Some((found_x, found_y)) = found? else {
+            // Looked for until it is there: the control may be one the step
+            // before has only just caused to be drawn.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let found = loop {
+                let found = find_all_on_screen(window, label, &probe)?;
+                let picked = match sized {
+                    Some("smallest") => found.iter().copied().min_by_key(|place| place.height),
+                    Some("largest") => found.iter().copied().max_by_key(|place| place.height),
+                    _ => found.iter().copied().min_by_key(|place| {
+                        let dx = (place.x + place.width / 2 - near.0) as i64;
+                        let dy = (place.y + place.height / 2 - near.1) as i64;
+                        dx * dx + dy * dy
+                    }),
+                };
+                if picked.is_some() || Instant::now() >= deadline {
+                    break picked;
+                }
+            };
+            let Some(found) = found else {
+                // The picture stays when the label is not in it, and what
+                // was read in it is said.
+                let saw = read_on_screen(window, &probe)?;
                 return Err(format!(
-                    "no control labelled {label:?} is near {x},{y}"
+                    "no control labelled {label:?} is in the window; it reads: {}; it is in {}",
+                    saw.join(" | "),
+                    probe.display()
                 ));
             };
+            let _ = std::fs::remove_file(&probe);
             *checks += 1;
+            let (found_x, found_y) = (found.x + found.width / 2, found.y + found.height / 2);
             click(found_x, found_y)?;
             sleep(Duration::from_millis(500));
             println!(
