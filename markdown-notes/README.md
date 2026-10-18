@@ -1,4 +1,4 @@
-# A vibe-coded VST3 Markdown Notes effect
+# A Proof-of-Concept VST3 Markdown Notes effect
 
 ![light themed](../docs/markdown-notes/images/markdown-notes-light.png)
 

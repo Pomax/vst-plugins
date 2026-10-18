@@ -1874,6 +1874,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                     texture: shown.texture.id(),
                     size: shown.size,
                     failed: shown.failed,
+                    diagram: true,
                 });
             }
         }
@@ -1900,6 +1901,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
                     texture: shown.texture.id(),
                     size: shown.size / ui.ctx().pixels_per_point(),
                     failed: false,
+                    diagram: false,
                 });
             }
         }
@@ -1909,6 +1911,7 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
     let picture_at = |line: usize| pictured.iter().find(|p| p.lines.start == line);
     let in_a_picture = |line: usize| pictured.iter().any(|p| p.lines.contains(&line));
     let mut picture_rects: Vec<DrawnPicture> = Vec::new();
+    let mut diagram_rects: Vec<egui::Rect> = Vec::new();
 
     // The fence lines are the block's edges, not lines of it. They take no row
     // of their own unless the caret is on one, where the backticks and the
@@ -1954,7 +1957,10 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         previous = Some(block);
 
         if let Some(placed) = picture_at(block.line) {
-            let line = picture_row(ui, placed, &selection, &palette);
+            let (line, painted) = picture_row(ui, placed, &selection, &palette);
+            if placed.diagram {
+                diagram_rects.push(painted);
+            }
             picture_rects.push(DrawnPicture { rect: line.rect, failed: placed.failed });
             drawn.push(line);
             continue;
@@ -2061,7 +2067,9 @@ fn document(ui: &mut egui::Ui, gui: &mut Gui) {
         // the pointing hand.
         if surface.hovered() && !over_a_checkbox {
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if let Some(line) = line_at(pos) {
+                if diagram_rects.iter().any(|rect| rect.contains(pos)) {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                } else if let Some(line) = line_at(pos) {
                     let would_open = ui.input(|i| i.modifiers.command)
                         && offset_on(line, pos)
                             .is_some_and(|at| link_at(&doc.blocks, at).is_some());
@@ -2362,7 +2370,7 @@ fn picture_row(
     placed: &Placed,
     selection: &std::ops::Range<usize>,
     palette: &Palette,
-) -> DrawnLine {
+) -> (DrawnLine, egui::Rect) {
     let across = ui.available_width();
     let fit = (across / placed.size.x).min(1.0);
     let size = placed.size * fit;
@@ -2396,7 +2404,7 @@ fn picture_row(
     map.push(placed.caret_to);
     let galley = ui.painter().layout_job(job);
 
-    DrawnLine { rect, origin: rect.min, galley, map, caret: None }
+    (DrawnLine { rect, origin: rect.min, galley, map, caret: None }, picture)
 }
 
 /// A picture standing in for lines of the document: a mermaid block, or a
@@ -2414,6 +2422,7 @@ struct Placed {
     size: egui::Vec2,
     /// Whether what is drawn is the error picture rather than the thing.
     failed: bool,
+    diagram: bool,
 }
 
 fn line_body(
