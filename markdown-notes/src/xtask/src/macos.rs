@@ -1294,7 +1294,19 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 .parent()
                 .map(Path::to_path_buf)
                 .ok_or("nowhere to put the dialog pictures")?;
-            dialog_path(run.rect, &work, &value.replace('\\', "/"))
+            // The panel is a window of its own, the frontmost of the host's
+            // process other than the window under test, and is looked at
+            // there: it can be larger than the window under test is made.
+            // Until it is up, the window under test is looked at.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let panel = loop {
+                let panel = window_rect(run.pid, "").ok().filter(|rect| *rect != run.host);
+                if panel.is_some() || Instant::now() > deadline {
+                    break panel.unwrap_or(run.rect);
+                }
+                sleep(Duration::from_millis(200));
+            };
+            dialog_path(panel, &work, &value.replace('\\', "/"))
         }
         "type" => send_keys(value),
         "wait" => {
