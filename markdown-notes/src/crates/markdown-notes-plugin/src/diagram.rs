@@ -47,10 +47,27 @@ pub struct Picture {
     pub points: [f32; 2],
 }
 
-/// The fonts the text in a diagram is drawn with: whatever the machine has.
+/// The family every diagram is lettered in.
+pub const FONT_FAMILY: &str = "Arial";
+
+/// The fonts the text in a diagram is drawn with: the machine's Arial faces
+/// and nothing else, standing in for every generic family too.
 pub fn system_fonts() -> Arc<fontdb::Database> {
     let mut fonts = fontdb::Database::new();
     fonts.load_system_fonts();
+    let others: Vec<fontdb::ID> = fonts
+        .faces()
+        .filter(|face| !face.families.iter().any(|(name, _)| name == FONT_FAMILY))
+        .map(|face| face.id)
+        .collect();
+    for id in others {
+        fonts.remove_face(id);
+    }
+    fonts.set_serif_family(FONT_FAMILY);
+    fonts.set_sans_serif_family(FONT_FAMILY);
+    fonts.set_monospace_family(FONT_FAMILY);
+    fonts.set_cursive_family(FONT_FAMILY);
+    fonts.set_fantasy_family(FONT_FAMILY);
     Arc::new(fonts)
 }
 
@@ -101,7 +118,7 @@ pub fn svg(code: &str, look: Look) -> Option<String> {
     // follows Mermaid 11, whose own default is the older lilac one.
     let config = merman::config::MermaidConfig::from_value(serde_json::json!({
         "theme": if dark { "redux-dark-color" } else { "redux-color" },
-        "fontFamily": "Arial",
+        "fontFamily": FONT_FAMILY,
         "look": "neo",
         "flowchart": { "curve": "linear", "rankSpacing": STATE_RANK_SPACING },
         "state": { "nodeSpacing": STATE_NODE_SPACING, "rankSpacing": STATE_RANK_SPACING },

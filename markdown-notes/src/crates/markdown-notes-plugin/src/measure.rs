@@ -19,9 +19,6 @@ use resvg::usvg::fontdb;
 /// height, which its layout assumes.
 const LINE_HEIGHT: f64 = 1.1;
 
-/// The families merman asks for, in the order upstream Mermaid lists them.
-const DEFAULT_FAMILIES: &str = "trebuchet ms, verdana, arial, sans-serif";
-
 pub struct SystemFontMeasurer {
     fonts: Arc<fontdb::Database>,
     /// Shaping the same string twice is common during wrapping, and shaping is
@@ -53,8 +50,8 @@ impl SystemFontMeasurer {
     }
 
     /// The advance width of one line, shaped, in pixels.
-    fn shaped_width_px(&self, line: &str, families: &str, size: f64, bold: bool) -> Option<f64> {
-        let id = face_for(&self.fonts, families, bold)?;
+    fn shaped_width_px(&self, line: &str, size: f64, bold: bool) -> Option<f64> {
+        let id = face_for(&self.fonts, bold)?;
         self.fonts.with_face_data(id, |data, index| {
             let font = harfrust::FontRef::from_index(data, index).ok()?;
             let shaping = harfrust::ShaperData::new(&font);
@@ -86,7 +83,7 @@ impl SystemFontMeasurer {
             }
         }
         let width = self
-            .shaped_width_px(line, &style.families, style.size, style.bold)
+            .shaped_width_px(line, style.size, style.bold)
             // No font on the machine answered, so fall back to the rough
             // half-em-per-character rule rather than reporting nothing.
             .unwrap_or_else(|| line.chars().count() as f64 * style.size * 0.5);
@@ -97,30 +94,10 @@ impl SystemFontMeasurer {
     }
 }
 
-/// Pick a face for the families asked for, a CSS list, falling back through
-/// it and then to anything sans-serif the machine has.
-pub fn face_for(fonts: &fontdb::Database, families: &str, bold: bool) -> Option<fontdb::ID> {
-    let wanted: Vec<fontdb::Family> = families
-        .split(',')
-        .map(|name| name.trim().trim_matches(['"', '\'']))
-        .filter(|name| !name.is_empty())
-        .map(|name| match name.to_ascii_lowercase().as_str() {
-            "sans-serif" => fontdb::Family::SansSerif,
-            "serif" => fontdb::Family::Serif,
-            "monospace" => fontdb::Family::Monospace,
-            "cursive" => fontdb::Family::Cursive,
-            "fantasy" => fontdb::Family::Fantasy,
-            _ => fontdb::Family::Name(name),
-        })
-        .collect();
-    let wanted = if wanted.is_empty() {
-        vec![fontdb::Family::SansSerif]
-    } else {
-        wanted
-    };
-
+/// The Arial face for regular or bold text.
+pub fn face_for(fonts: &fontdb::Database, bold: bool) -> Option<fontdb::ID> {
     fonts.query(&fontdb::Query {
-        families: &wanted,
+        families: &[fontdb::Family::Name(crate::diagram::FONT_FAMILY)],
         weight: if bold {
             fontdb::Weight::BOLD
         } else {
@@ -134,7 +111,6 @@ pub fn face_for(fonts: &fontdb::Database, families: &str, bold: bool) -> Option<
 /// What merman's `TextStyle` says, in the terms this module needs.
 mod merman_style {
     pub struct Style {
-        pub families: String,
         pub size: f64,
         pub bold: bool,
     }
@@ -142,10 +118,6 @@ mod merman_style {
 
 fn style_of(style: &merman::render::TextStyle) -> merman_style::Style {
     merman_style::Style {
-        families: style
-            .font_family
-            .clone()
-            .unwrap_or_else(|| DEFAULT_FAMILIES.to_string()),
         size: style.font_size.max(1.0),
         bold: style
             .font_weight
@@ -193,5 +165,30 @@ impl TextMeasurer for SystemFontMeasurer {
             height: lines.len() as f64 * style.size * LINE_HEIGHT,
             line_count: lines.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_arial_is_loaded() {
+        let fonts = crate::diagram::system_fonts();
+        assert!(fonts.len() > 0, "this machine has no Arial");
+        for face in fonts.faces() {
+            assert!(
+                face.families.iter().any(|(name, _)| name == crate::diagram::FONT_FAMILY),
+                "{:?} was loaded",
+                face.families
+            );
+        }
+    }
+
+    #[test]
+    fn arial_is_found_for_regular_and_bold_text() {
+        let fonts = crate::diagram::system_fonts();
+        assert!(face_for(&fonts, false).is_some(), "no regular Arial");
+        assert!(face_for(&fonts, true).is_some(), "no bold Arial");
     }
 }

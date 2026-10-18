@@ -71,7 +71,6 @@ struct Words {
     /// The baseline, or the middle of the line when `central`.
     y: f32,
     size: f32,
-    families: String,
     bold: bool,
     /// Anchored at their middle rather than their start.
     centred: bool,
@@ -134,10 +133,6 @@ fn words_of(element: &str, rules: &[(String, String)]) -> Option<Words> {
     let size = property("font-size")
         .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
         .or_else(|| number("font-size"))?;
-    let families = property("font-family")
-        .map(str::to_string)
-        .or_else(|| attr("font-family").map(unescaped))
-        .unwrap_or_else(|| "sans-serif".to_string());
     let weight = property("font-weight").or_else(|| attr("font-weight"));
     let bold = weight.is_some_and(|w| w == "bold" || w.parse::<u16>().is_ok_and(|w| w >= 600));
     let anchor = property("text-anchor").or_else(|| attr("text-anchor"));
@@ -157,7 +152,6 @@ fn words_of(element: &str, rules: &[(String, String)]) -> Option<Words> {
         x: number("x").unwrap_or(0.0),
         y: number("y").unwrap_or(0.0) + dy,
         size,
-        families,
         bold,
         centred: anchor == Some("middle"),
         central: baseline == Some("central") || baseline == Some("middle"),
@@ -176,7 +170,7 @@ fn path_for(
     if words.text.trim().is_empty() {
         return None;
     }
-    let id = crate::measure::face_for(fonts, &words.families, words.bold)?;
+    let id = crate::measure::face_for(fonts, words.bold)?;
     fonts.with_face_data(id, |data, index| outline(&words, data, index, scale))?
 }
 
@@ -326,7 +320,6 @@ mod tests {
         let words = words_of(title, &rules).expect("the title was not read");
         assert_eq!(words.text, "A Gantt Diagram");
         assert_eq!((words.x, words.y, words.size), (592.0, 25.0, 18.0));
-        assert_eq!(words.families, "\"ibm plex sans\",arial,sans-serif");
         assert_eq!(words.fill, "#505050");
         assert!(words.centred);
     }
@@ -336,7 +329,6 @@ mod tests {
         let words = words_of(LABEL, &[]).expect("the label was not read");
         assert_eq!(words.text, "sidechain");
         assert_eq!((words.x, words.y, words.size), (218.0, 165.0, 14.0));
-        assert_eq!(words.families, "\"Recursive Variable\",arial,sans-serif");
         assert!(words.centred);
         assert!(!words.bold);
         assert_eq!(words.fill, "#28253D");
@@ -383,21 +375,10 @@ mod tests {
     }
 
     #[test]
-    fn a_face_is_found_for_the_labels_families() {
-        let fonts = crate::diagram::system_fonts();
-        let words = words_of(LABEL, &[]).unwrap();
-        assert!(
-            crate::measure::face_for(&fonts, &words.families, false).is_some(),
-            "no face on this machine answers for {}",
-            words.families
-        );
-    }
-
-    #[test]
     fn a_label_becomes_a_path() {
         let fonts = crate::diagram::system_fonts();
         let words = words_of(LABEL, &[]).unwrap();
-        let id = crate::measure::face_for(&fonts, &words.families, false).expect("no face");
+        let id = crate::measure::face_for(&fonts, false).expect("no Arial");
         let drawn = fonts
             .with_face_data(id, |data, index| outline(&words, data, index, 1.0))
             .expect("the face has no data");
