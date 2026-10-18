@@ -63,10 +63,9 @@ remove:%CACHE%\round-trip.md
 # dragged to at the end.
 press:project title|204,76
 type:{END}{BS 40}funky cake with a cherry on top and sprinkles
-# The + button carries no word, and a lone glyph is not something text
-# recognition reads reliably: it is clicked where the code puts it, and that
-# the click landed is said by the tabs read at the end.
-plugin:129,87
+# The + is pressed where it is read, nearest to where the code puts it, and
+# that the press landed is said by the tabs read at the end.
+press:+|129,113
 showing:Section Title|140
 type:Drum bus
 showing:Drum bus|140
@@ -83,7 +82,7 @@ type:{ENTER}
 nodialog:Save
 written:%CACHE%\round-trip.md|# Mix notes\n\nlevels are close\n\n# Drum bus
 
-plugin:239,87
+press:+|239,113
 showing:Section Title|140
 type:Vocal chain
 showing:Vocal chain|140
@@ -193,7 +192,7 @@ hidden:sprinkles|60
 # the file written here carries it in its frontmatter, and what it holds is
 # the two sections the open brought in, in order. The window is at the small
 # size the drag above left it, where the menu button sits further left.
-plugin:320,50
+plugin:302,50
 press:Save As|350,153
 dialog:Save
 type:%CACHE%\opened.md
@@ -201,16 +200,3 @@ type:{ENTER}
 nodialog:Save
 written:%CACHE%\opened.md|title: funky cake with a cherry on top and sprinkles\n---\n\n# Mix notes\n\nlevels are close\n\n# Drum bus
 cleanup:%CACHE%\opened.md
-
-# The menu's last option loads the explainer that ships inside the plugin:
-# it replaces the document, and its frontmatter names it. The document needs no file, so nothing is asked for.
-plugin:320,50
-press:Load explainer|350,190
-showing:How to use this plugin|60
-showing:stake holders|140
-hidden:levels are close|140
-shot:%CACHE%\explainer-loaded.png
-
-expect:title is How to use this plugin
-expect:sections is 7
-expect:section 0 is # Intro\n\nSome kind of text outlining the project brief, maybe some stake holders like this:\n\n- Alice\n- Bob\n- Carol\n\nWith [links](https://example.com) because obviously those should work.\n\nAlso, tabs, because you want to be able to organize your work well enough that you can use this VSTi as part of a template, where it's simply part of your master out and has everything already set up for you to "fill in the blanks".

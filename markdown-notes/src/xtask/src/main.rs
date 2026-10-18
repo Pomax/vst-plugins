@@ -25,6 +25,8 @@
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod ocr;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod png;
 mod uitest;
@@ -87,9 +89,10 @@ fn main() -> ExitCode {
             println!(
                 "tasks:\n  \
                  bundle [--release] [--target <triple>]   assemble the VST3 bundle\n  \
-                 test [--release] [--full]                every test but the UI tests\n  \
+                 test [--release] [--all]                every test but the UI tests\n  \
                  test --only <name>                       one test and nothing else\n  \
                  test --ui <name>                         one UI test, or one suite\n  \
+                 test --start-at <name>                   that UI test and every one after it\n  \
                  uitest [name]                            drive the real window\n  \
                  frames <film> <dir>                      two frames a second of a film, as PNGs\n  \
                  clean                                    empty the build cache\n  \
@@ -97,7 +100,7 @@ fn main() -> ExitCode {
                  Build output goes to .cache/ and stays there, so a run only\n  \
                  recompiles what changed. `clean` empties it.\n  \
                  test runs the unit tests, the scenarios and the headless pixel\n  \
-                 tests. --full also runs the UI tests, which drive a real\n  \
+                 tests. --all also runs the UI tests, which drive a real\n  \
                  window and so need a desktop to run on.\n  \
                  --only takes the name of a pixel test file, optionally with\n  \
                  ::<test> after it, or a filter on the unit tests. It builds\n  \
@@ -373,7 +376,19 @@ fn frames(args: &[String]) -> Result<Vec<PathBuf>, String> {
 /// `uitest [name]` runs one test; with no name it runs all of them.
 fn uitest(args: &[String]) -> Result<(), String> {
     let root = workspace_root();
-    let only = args.iter().find(|a| !a.starts_with("--")).map(String::as_str);
+    let start_at = match args.iter().position(|a| a == "--start-at") {
+        Some(at) => Some(
+            args.get(at + 1)
+                .ok_or("--start-at needs the name of a UI test")?
+                .as_str(),
+        ),
+        None => None,
+    };
+    let only = args
+        .iter()
+        .enumerate()
+        .find(|&(i, a)| !a.starts_with("--") && (i == 0 || args[i - 1] != "--start-at"))
+        .map(|(_, a)| a.as_str());
 
     // Both halves have to exist: this plugin, and the host that opens it.
     let bundle = bundle(&["--release".to_string()])?;
@@ -384,7 +399,7 @@ fn uitest(args: &[String]) -> Result<(), String> {
     println!("host:   {}", host.display());
     println!("plugin: {}\n", plugin.display());
 
-    uitest::run(&root, only, &host, &plugin)
+    uitest::run(&root, only, start_at, &host, &plugin)
 }
 
 /// The mini host's executable, built from its current source.
@@ -398,15 +413,15 @@ fn mini_host(root: &Path) -> Result<PathBuf, String> {
     let parent = root.parent().ok_or("no directory above this project")?;
     let project = parent.join("tools").join("mini-host");
     let name = if cfg!(windows) { "mini-host.exe" } else { "mini-host" };
-    let script = if cfg!(windows) { "build.bat" } else { "build.sh" };
+    let script = project.join(if cfg!(windows) { "build.bat" } else { "build.sh" });
 
     let mut build = if cfg!(windows) {
         let mut cmd = Command::new("cmd");
-        cmd.args(["/C", script]);
+        cmd.arg("/C").arg(&script);
         cmd
     } else {
         let mut cmd = Command::new("sh");
-        cmd.arg(script);
+        cmd.arg(&script);
         cmd
     };
     let status = build
@@ -715,12 +730,17 @@ fn test(args: &[String]) -> Result<(), String> {
         }
     };
 
-    // One real-window test, or one suite of them, and nothing else.
+    if let Some(at) = args.iter().position(|a| a == "--start-at") {
+        return uitest(&args[at..]);
+    }
+
+    // The real-window tests and nothing else: all of them, or the one test or
+    // suite named after the flag.
     if let Some(at) = args.iter().position(|a| a == "--ui") {
-        let name = args
-            .get(at + 1)
-            .ok_or("--ui needs the name of a UI test or of a suite")?;
-        return uitest(std::slice::from_ref(name));
+        return match args.get(at + 1).filter(|a| !a.starts_with("--")) {
+            Some(name) => uitest(std::slice::from_ref(name)),
+            None => uitest(&[]),
+        };
     }
 
     if let Some(at) = args.iter().position(|a| a == "--only") {
@@ -739,7 +759,7 @@ fn test(args: &[String]) -> Result<(), String> {
     run("unit tests", &["test", "--workspace"])?;
     run("scenarios", &["run", "-q", "-p", "markdown-notes-testrunner"])?;
 
-    let full = args.iter().any(|a| a == "--full");
+    let full = args.iter().any(|a| a == "--all");
 
     // The pixel tests are behind a feature because they need the wgpu stack,
     // which the plugin itself does not.

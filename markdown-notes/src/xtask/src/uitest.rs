@@ -12,8 +12,112 @@
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use markdown_notes_core::PluginState;
+
+/// What a test came to: how many checks passed, and the account of the
+/// failure when there was one.
+struct Outcome {
+    passed: usize,
+    error: Option<String>,
+}
+
+/// The most a step may take. A step that takes longer has stalled: it fails.
+pub(crate) const STEP_LIMIT: Duration = Duration::from_secs(10);
+
+/// The exit code the Windows driver ends with when a step stalled.
+#[cfg(target_os = "windows")]
+const STALLED_EXIT: i32 = 124;
+
+/// The account of a step that stalled.
+pub(crate) fn stalled(line: &str, spent: Duration) -> String {
+    format!("stalled: {line} took {}, over the {} a step gets", took(spent), took(STEP_LIMIT))
+}
+
+/// Wait until a file just written is there, or until a step's time has run
+/// out.
+pub(crate) fn confirm_written(path: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + STEP_LIMIT;
+    while !path.exists() {
+        if Instant::now() >= deadline {
+            return Err(format!("{} was not written", path.display()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
+}
+
+/// A length of time as a person reads it: milliseconds under a second,
+/// seconds under a minute, minutes and seconds past that.
+pub(crate) fn took(spent: Duration) -> String {
+    if spent < Duration::from_secs(1) {
+        format!("{}ms", spent.as_millis())
+    } else if spent < Duration::from_secs(60) {
+        format!("{:.1}s", spent.as_secs_f64())
+    } else {
+        let secs = spent.as_secs();
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}
+
+/// The wall clock, as the machine's own time zone reads it: `HH:MM:SS`.
+///
+/// The standard library gives the time since 1970 and nothing local, so the
+/// operating system is asked directly.
+#[cfg(unix)]
+fn clock() -> String {
+    #[repr(C)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const u8,
+    }
+    extern "C" {
+        fn localtime_r(seconds: *const i64, out: *mut Tm) -> *mut Tm;
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0);
+    let mut local: Tm = unsafe { std::mem::zeroed() };
+    let read = unsafe { localtime_r(&seconds, &mut local) };
+    if read.is_null() {
+        return "??:??:??".to_string();
+    }
+    format!("{:02}:{:02}:{:02}", local.hour, local.min, local.sec)
+}
+
+/// The wall clock, as the machine's own time zone reads it: `HH:MM:SS`.
+#[cfg(windows)]
+fn clock() -> String {
+    #[repr(C)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLocalTime(out: *mut SystemTime);
+    }
+    let mut local: SystemTime = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut local) };
+    format!("{:02}:{:02}:{:02}", local.hour, local.minute, local.second)
+}
 
 /// How far down the mini host's own strip pushes the plugin's window.
 ///
@@ -143,10 +247,6 @@ struct Test {
     /// `remove:` step, because those run before anything is asserted and half
     /// of what these tests assert is that a file is there.
     cleanups: Vec<String>,
-    /// Marked `baseline:` in the file: this test proves something every other
-    /// test assumes, typing or clicking. When it fails, the run stops, because
-    /// nothing after it can mean anything.
-    baseline: bool,
 }
 
 fn read_test(path: &Path) -> Result<Test, String> {
@@ -164,7 +264,6 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
     let mut steps = Vec::new();
     let mut expects = Vec::new();
     let mut cleanups = Vec::new();
-    let mut baseline = false;
     let mut restarts = 0;
     for line in text.lines() {
         let line = line.trim_end();
@@ -175,8 +274,6 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
             cleanups.push(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("expect:") {
             expects.push((restarts, rest.trim().to_string()));
-        } else if line.trim() == "baseline:" {
-            baseline = true;
         } else {
             if line.trim_start().starts_with("restart:") {
                 restarts += 1;
@@ -202,7 +299,7 @@ fn parse_test(name: String, text: &str) -> Result<Test, String> {
     if expects.is_empty() && !asserts {
         return Err(format!("{name}: a test with nothing to assert is not a test"));
     }
-    Ok(Test { name, steps, expects, restarts, cleanups, baseline })
+    Ok(Test { name, steps, expects, restarts, cleanups })
 }
 
 /// A path as a test file writes it, as this platform spells it.
@@ -333,6 +430,46 @@ fn check(expect: &str, state: &PluginState) -> Result<(), String> {
                 .ok_or_else(|| format!("{key} is {got}, expected at most {limit}"));
         }
 
+        // `file at PATH is section N of FILE`: what a step copied off the
+        // clipboard into PATH, against section N of the document FILE, cut
+        // into sections the way the plugin cuts a document it opens: after
+        // its frontmatter and before its images. Line endings and trailing
+        // blank lines are not part of the comparison: the clipboard has its
+        // own ideas about both.
+        if let Some((path, rest)) = rest.split_once(" is section ") {
+            let (index, source) = rest
+                .split_once(" of ")
+                .ok_or_else(|| format!("cannot read: {expect}"))?;
+            let index: usize = index
+                .trim()
+                .parse()
+                .map_err(|_| format!("not a section number: {expect}"))?;
+            let path = platform_path(path.trim());
+            let source = platform_path(source.trim());
+            let plain = |text: String| {
+                let text = text.replace("\r\n", "\n");
+                text.strip_prefix('\u{feff}').unwrap_or(&text).trim_end().to_string()
+            };
+            let got = plain(
+                std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{path} was not written: {e}"))?,
+            );
+            let document = plain(
+                std::fs::read_to_string(&source)
+                    .map_err(|e| format!("cannot read {source}: {e}"))?,
+            );
+            let (_, body) = markdown_notes_core::frontmatter::split_off(&document);
+            let (body, _) = markdown_notes_core::images::split_off(body);
+            let sections = markdown_notes_core::split_document(&body);
+            let want = sections
+                .get(index)
+                .map(|section| section.trim_end().to_string())
+                .ok_or_else(|| format!("{source} has no section {index}"))?;
+            return (got == want).then_some(()).ok_or_else(|| {
+                format!("{path} holds {got:?}, expected section {index} of {source}: {want:?}")
+            });
+        }
+
         // The file on disk, not the plugin's idea of it: a save that reports
         // success and writes nothing is still a failure.
         let (path, want) = rest
@@ -384,7 +521,7 @@ fn in_the_plugin(step: &str) -> Option<String> {
     })
 }
 
-fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), String> {
+fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<Outcome, String> {
     let work = root.join(".cache").join("uitests");
     std::fs::create_dir_all(&work).map_err(|e| format!("creating {}: {e}", work.display()))?;
     let step_file = work.join(format!("{}.steps", test.name));
@@ -405,11 +542,24 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     let steps = steps
         .join("\n")
         .replace("%CACHE%", &work.display().to_string())
-        .replace("%PRESETS%", &presets_dir(root).display().to_string());
+        .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string());
     std::fs::write(&step_file, steps)
         .map_err(|e| format!("writing {}: {e}", step_file.display()))?;
+    confirm_written(&step_file)?;
 
-    drive(root, host, plugin, &step_file, &state_file, &shot)?;
+    // The driver counts the checks that pass as it goes and leaves the count
+    // here, so a run that stops partway still says how many there were.
+    let tally = work.join(format!("{}.tally", test.name));
+    let _ = std::fs::remove_file(&tally);
+    let driven = drive(root, host, plugin, &step_file, &state_file, &shot, &tally);
+    let checks: usize = std::fs::read_to_string(&tally)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0);
+    if let Err(e) = driven {
+        return Ok(Outcome { passed: checks, error: Some(e) });
+    }
 
     // A test that ends with `kill:` chose not to have state: a killed program
     // writes none, and that test asserts on files instead.
@@ -418,11 +568,14 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
         Ok(bytes) => bytes,
         Err(_) if killed => Vec::new(),
         Err(_) => {
-            return Err(format!(
-                "the plugin wrote no state — the window did not close cleanly. \
-                 The screenshot of what was on screen is at {}",
-                shot.display()
-            ))
+            return Ok(Outcome {
+                passed: checks,
+                error: Some(format!(
+                    "the plugin wrote no state: the window did not close cleanly. \
+                     The screenshot of what was on screen is at {}",
+                    shot.display()
+                )),
+            })
         }
     };
     let last = PluginState::from_bytes(&bytes);
@@ -437,17 +590,22 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
     }
 
     let mut failures = Vec::new();
+    let mut passed = checks;
     for (run, expect) in &test.expects {
         let expect = expect
             .replace("%CACHE%", &work.display().to_string())
-            .replace("%PRESETS%", &presets_dir(root).display().to_string());
+            .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string());
         let state = if *run == test.restarts { Some(&last) } else { earlier[*run].as_ref() };
         let checked = match state {
             Some(state) => check(&expect, state),
             None => Err(format!("run {} wrote no state to check `{expect}` against", run + 1)),
         };
-        if let Err(e) = checked {
-            failures.push(if test.restarts == 0 { e } else { format!("run {}: {e}", run + 1) });
+        match checked {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                failures.push(if test.restarts == 0 { e } else { format!("run {}: {e}", run + 1) })
+            }
         }
     }
 
@@ -457,7 +615,8 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
         let path = platform_path(
             &path
                 .replace("%CACHE%", &work.display().to_string())
-                .replace("%PRESETS%", &presets_dir(root).display().to_string()),
+                .replace("%PRESETS%", &presets_dir(root).display().to_string())
+        .replace("%SRC%", &root.join("src").display().to_string()),
         );
         // A trailing `*` takes everything that starts the same way, for a test
         // that made more files than it is worth naming one by one. Only that
@@ -487,18 +646,14 @@ fn run_one(root: &Path, test: &Test, host: &Path, plugin: &Path) -> Result<(), S
             }
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{}\n      screenshot: {}",
-            failures.join("\n      "),
-            shot.display()
-        ))
-    }
+    let error = (!failures.is_empty()).then(|| {
+        format!("{}\n      screenshot: {}", failures.join("\n      "), shot.display())
+    });
+    Ok(Outcome { passed, error })
 }
 
-/// Hand the steps to the platform's window driver.
+/// Hand the steps to the platform's window driver, which leaves the number of
+/// checks that passed in `tally`.
 #[cfg(target_os = "windows")]
 fn drive(
     root: &Path,
@@ -507,23 +662,43 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
     let script = tools_dir(root).join("capture-window.ps1");
+    let stall_file = tally.with_extension("stalled");
     let status = Command::new("powershell")
         .args(["-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script)
         .arg("-Exe")
         .arg(host)
         .arg("-ExeArgs")
-        .arg(format!("{}|--state|{}", plugin.display(), state.display()))
+        // The UI tests run in the light theme, whatever the desktop's is.
+        .arg(format!("{}|--light|--state|{}", plugin.display(), state.display()))
         .args(["-Title", "Mini VST Host"])
         .arg("-StepFile")
         .arg(steps)
         .arg("-Out")
         .arg(shot)
+        .arg("-Tally")
+        .arg(tally)
+        .arg("-StallFile")
+        .arg(&stall_file)
         .arg("-CloseCleanly")
         .status()
         .map_err(|e| format!("running {}: {e}", script.display()))?;
+    if status.code() == Some(STALLED_EXIT) {
+        let unreadable = |e: String| format!("reading {}: {e}", stall_file.display());
+        let account = std::fs::read_to_string(&stall_file)
+            .map_err(|e| unreadable(e.to_string()))?;
+        let (ms, line) = account
+            .split_once('\n')
+            .ok_or_else(|| unreadable("no step in it".to_string()))?;
+        let ms: u64 = ms
+            .trim()
+            .parse()
+            .map_err(|e: std::num::ParseIntError| unreadable(e.to_string()))?;
+        return Err(stalled(line, Duration::from_millis(ms)));
+    }
     status
         .success()
         .then_some(())
@@ -538,8 +713,9 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
-    crate::macos::drive(root, host, plugin, steps, state, shot)
+    crate::macos::drive(root, host, plugin, steps, state, shot, tally)
 }
 
 #[cfg(target_os = "linux")]
@@ -550,8 +726,9 @@ fn drive(
     steps: &Path,
     state: &Path,
     shot: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
-    crate::linux::drive(root, host, plugin, steps, state, shot)
+    crate::linux::drive(root, host, plugin, steps, state, shot, tally)
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -562,6 +739,7 @@ fn drive(
     _steps: &Path,
     _state: &Path,
     _shot: &Path,
+    _tally: &Path,
 ) -> Result<(), String> {
     Err("the UI tests need a window driver for this platform".to_string())
 }
@@ -569,11 +747,19 @@ fn drive(
 /// Run every UI test, or the one named.
 /// Run the UI tests, or just the named suite or test.
 ///
-/// `only` matches either a suite — `markdown-notes`, `mini-host` — or a single
+/// `only` matches either a suite, `markdown-notes` or `mini-host`, or a single
 /// test.
-pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Result<(), String> {
+pub fn run(
+    root: &Path,
+    only: Option<&str>,
+    start_at: Option<&str>,
+    host: &Path,
+    plugin: &Path,
+) -> Result<(), String> {
+    let mut started = false;
     let mut ran = 0;
-    let mut failed = Vec::new();
+    let mut passed = 0;
+    let began = Instant::now();
     let suites = suites(root);
 
     // A fresh working directory for this run: a stale file from an old run
@@ -603,43 +789,48 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
             if only.is_some_and(|name| name != suite && name != test.name) {
                 continue;
             }
-            ran += 1;
-            note(root, &format!("running: {}", test.name));
-            match run_one(root, &test, host, plugin) {
-                Ok(()) => {
-                    println!("  ok    {}", test.name);
-                    note(root, &format!("ok:      {}", test.name));
-                }
-                Err(e) => {
-                    println!("  FAIL  {}\n      {e}", test.name);
-                    note(root, &format!("fail:    {}", test.name));
-                    failed.push(test.name.clone());
-                    if test.baseline {
-                        return Err(format!(
-                            "{} is a baseline test: it proves something every \
-                             later test assumes, so nothing after it ran",
-                            test.name
-                        ));
-                    }
-                }
+            if !reached(&mut started, start_at, &test.name) {
+                continue;
             }
+            ran += 1;
+            println!("\nstarting {} at {}", file.display(), clock());
+            note(root, &format!("running: {}", test.name));
+            let outcome = run_one(root, &test, host, plugin)?;
+            passed += outcome.passed;
+            // A failure ends the run: nothing after it is run.
+            if let Some(e) = outcome.error {
+                println!("  FAIL  {}\n      {e}", test.name);
+                note(root, &format!("fail:    {}", test.name));
+                return Err(format!(
+                    "{} failed after {} checks passed, in {}",
+                    test.name,
+                    passed,
+                    took(began.elapsed())
+                ));
+            }
+            println!("  ok    {}", test.name);
+            note(root, &format!("ok:      {}", test.name));
         }
     }
 
     if ran == 0 {
         let known: Vec<&str> = suites.iter().map(|(name, _)| name.as_str()).collect();
-        return Err(match only {
-            Some(name) => format!("no UI test or suite called {name}; suites are {known:?}"),
-            None => "no UI tests anywhere".to_string(),
+        return Err(match (only, start_at) {
+            (_, Some(name)) => format!("no UI test called {name} to start at"),
+            (Some(name), None) => format!("no UI test or suite called {name}; suites are {known:?}"),
+            (None, None) => "no UI tests anywhere".to_string(),
         });
     }
     println!();
-    if failed.is_empty() {
-        println!("{ran} UI tests, all passed");
-        Ok(())
-    } else {
-        Err(format!("{} of {ran} UI tests failed", failed.len()))
+    println!("{passed} UI tests, all passed in {}", took(began.elapsed()));
+    Ok(())
+}
+
+fn reached(started: &mut bool, start_at: Option<&str>, name: &str) -> bool {
+    if start_at == Some(name) {
+        *started = true;
     }
+    start_at.is_none() || *started
 }
 
 #[cfg(test)]
@@ -648,6 +839,26 @@ mod tests {
 
     fn parsed(text: &str) -> Test {
         parse_test("a-test".to_string(), text).expect("the test did not parse")
+    }
+
+    #[test]
+    fn a_run_started_at_a_test_runs_that_test_and_every_one_after_it() {
+        let mut started = false;
+        let run: Vec<&str> = ["first", "second", "third"]
+            .into_iter()
+            .filter(|name| reached(&mut started, Some("second"), name))
+            .collect();
+        assert_eq!(run, ["second", "third"]);
+    }
+
+    #[test]
+    fn a_run_with_nowhere_to_start_runs_every_test() {
+        let mut started = false;
+        let run: Vec<&str> = ["first", "second"]
+            .into_iter()
+            .filter(|name| reached(&mut started, None, name))
+            .collect();
+        assert_eq!(run, ["first", "second"]);
     }
 
     #[test]
@@ -673,6 +884,13 @@ mod tests {
                 (2, "title is kept".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_stalled_step_says_which_step_and_how_long() {
+        let account = stalled("showing:ready", Duration::from_secs(12));
+
+        assert!(account.contains("showing:ready took 12.0s"));
     }
 
     #[test]

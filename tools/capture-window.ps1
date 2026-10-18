@@ -26,9 +26,11 @@ param(
     # A sequence of actions, run in order before the grab:
     #   click:X,Y     left click at X,Y inside the window
     #   type:TEXT     send TEXT as key presses, one at a time
+    #   wait:MS       pause for MS milliseconds
     #   remove:PATH   delete a file, so a save does not hit "already exists"
     #   picture:PATH|W,H  write a PNG of that size to drop or paste
     #   clipboard:PATH    put that picture on the clipboard
+    #   copied:PATH   write the text on the clipboard to PATH
     #   geometry:PATH write down what the window and the plugin inside it measure
     #   hold:X,Y      press the button there and keep holding it
     #   moveto:X,Y    move the pointer there, at the speed a hand moves
@@ -48,6 +50,12 @@ param(
     # The same, one per line, from a file. `powershell -File` cannot bind more
     # than one token to an array parameter, so a sequence comes from here.
     [string]$StepFile = '',
+    # Where to write how many checks passed: a step that confirms something
+    # and fails when it is not so counts as one test, each time it passes.
+    [string]$Tally = '',
+    # Where to write the step that stalled, when one does: the milliseconds it
+    # took on the first line, the step on the second.
+    [string]$StallFile = '',
     # Close the window by asking it to, rather than killing the process, so
     # the program runs its shutdown. A UI test needs this: the state it
     # asserts on is written on the way out.
@@ -55,6 +63,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# How many checks have passed so far, written to -Tally on the way out.
+$script:checks = 0
 
 Add-Type @'
 using System;
@@ -401,6 +412,17 @@ public class Win32Capture {
     public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int count);
+    [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+
+    /// What the button that accepts a file dialog says, without its `&`:
+    /// "Save" or "Open". Empty when `dialog` has no such button.
+    public static string AcceptButton(IntPtr dialog) {
+        IntPtr button = GetDlgItem(dialog, 1);
+        if (button == IntPtr.Zero) return "";
+        var text = new StringBuilder(64);
+        GetWindowTextW(button, text, 64);
+        return text.ToString().Replace("&", "");
+    }
 
 
 
@@ -487,6 +509,16 @@ if ($ExeArgs) {
 # of it.
 $launchLine = ($launchArgs | ForEach-Object { '"{0}"' -f $_ }) -join ' '
 
+# Wait until a file just written is there, or until the step it was written
+# in, begun at `$since`, has run out of time.
+function Confirm-Written([string]$path, [DateTime]$since = $script:stepStarted) {
+    $deadline = $since.AddSeconds($STEP_LIMIT_S)
+    while (-not (Test-Path -LiteralPath $path)) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw "$path was not written" }
+        Start-Sleep -Milliseconds $POLL_MS
+    }
+}
+
 function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     Add-Type -AssemblyName System.Drawing
     $w = $area.Right - $area.Left
@@ -500,6 +532,45 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     $gfx.Dispose()
     $bmp.Dispose()
+    Confirm-Written $path
+}
+
+# The OCR server, tools\ocr-server, started on the first request and kept for
+# the whole run so that its networks are loaded once. It ends with this
+# script: its input closes, and it stops reading.
+$script:Ocr = $null
+
+# Hand the OCR server one request, a picture's path and after a tab what to
+# look for, and return the lines of its answer, up to its `end`.
+function Ask-Ocr([string]$request) {
+    if (-not $script:Ocr) {
+        $tools = Join-Path $PSScriptRoot 'ocr-server'
+        $site = Join-Path $tools '.cache\site'
+        if (-not (Test-Path $site)) {
+            throw "the OCR server is not set up: run tools\ocr-server\setup.bat"
+        }
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = 'python'
+        $start.Arguments = '"' + (Join-Path $tools 'ocr_server.py') + '"'
+        $start.EnvironmentVariables['PYTHONPATH'] = $site
+        $start.UseShellExecute = $false
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $script:Ocr = [System.Diagnostics.Process]::Start($start)
+    }
+    $script:Ocr.StandardInput.WriteLine($request)
+    $script:Ocr.StandardInput.Flush()
+    $answer = @()
+    while ($true) {
+        $line = $script:Ocr.StandardOutput.ReadLine()
+        if ($null -eq $line) { throw "the OCR server stopped" }
+        if ($line.Trim() -eq 'end') { break }
+        $answer += $line
+    }
+    if ($answer.Count -and $answer[0].StartsWith('error ')) {
+        throw "the OCR server could not read: $($answer[0].Substring(6))"
+    }
+    return $answer
 }
 
 # Every piece of text in a picture, with where each one is.
@@ -509,12 +580,7 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
 # way, and a small picture cut to one control is read far worse than a whole
 # window.
 function Read-Text([string]$path) {
-    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
-    if (-not (Test-Path $finder)) {
-        throw "the text finder is not built: run tools\find-text\build.bat"
-    }
-    $answer = @(& $finder $path)
-    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+    $answer = @(Ask-Ocr "$path`t")
 
     $lines = @()
     foreach ($row in $answer | Select-Object -Skip 1) {
@@ -538,16 +604,11 @@ function Read-Text([string]$path) {
 # neighbouring buttons come back as one line, and the centre of that line is
 # the gap between them rather than either button.
 #
-# With `$sized` given, `smallest` or `largest`, the finder is asked for the one
-# place with that lettering and that is all that comes back.
+# With `$sized` given, `smallest` or `largest`, the OCR server is asked for the
+# one place with that lettering and that is all that comes back.
 function Find-All([string]$path, [string]$label, [string]$sized = '') {
-    $finder = Join-Path $PSScriptRoot '..\binaries\find-text.exe'
-    if (-not (Test-Path $finder)) {
-        throw "the text finder is not built: run tools\find-text\build.bat"
-    }
-    $answer = if ($sized) { @(& $finder $path $label $sized) } else { @(& $finder $path $label) }
-    if ($LASTEXITCODE -eq 1) { return @() }
-    if ($LASTEXITCODE -ne 0) { throw "the text finder failed on $path" }
+    $answer = @(Ask-Ocr "$path`t$label`t$sized")
+    if (-not $answer.Count) { return @() }
 
     $found = @()
     foreach ($row in $answer | Select-Object -Skip 1) {
@@ -600,6 +661,7 @@ function Find-TextBelow([Win32Capture+RECT]$area, [string]$text, [int]$below, [s
         $saw = ($read | ForEach-Object { $_.Text }) -join ' | '
         throw "`"$text`" is not on screen for ${step}; below $below the window reads: $saw; see $probe"
     }
+    $script:checks++
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     $found
 }
@@ -646,7 +708,30 @@ $ROW_HEIGHT = 21
 $BAR_WIDTH = 16
 
 # How long a look that found nothing is left before looking again.
-$POLL_MS = 25
+$POLL_MS = 100
+
+# The most a step may take. A step that takes longer has stalled: the run
+# stops there, and the script ends with STALLED_EXIT so the caller can tell.
+$STEP_LIMIT_S = 10
+$STALLED_EXIT = 124
+$stalled = $false
+
+# Mark the run as stalled at what it was doing, and leave in -StallFile how
+# long that took and what it was.
+function Set-Stalled([string]$what, [TimeSpan]$spent) {
+    $script:stalled = $true
+    if ($StallFile) {
+        [System.IO.File]::WriteAllText($StallFile, "$([long]$spent.TotalMilliseconds)`n$what")
+        Confirm-Written $StallFile ([DateTime]::UtcNow)
+    }
+}
+
+# A length of time as a person reads it: milliseconds under a second, seconds
+# otherwise.
+function Format-Span([TimeSpan]$span) {
+    if ($span.TotalSeconds -lt 1) { return ('{0}ms' -f [int]$span.TotalMilliseconds) }
+    return ('{0:0.0}s' -f $span.TotalSeconds)
+}
 
 # Look for something until it is there, and hand it back, or hand back nothing
 # once TimeoutMs has gone by without it.
@@ -703,18 +788,20 @@ function Wait-Drawn([Win32Capture+RECT]$area) {
 # own strip, which is the plugin's toolbar. The host draws its strip and its
 # background long before the plugin has loaded and drawn its first frame, so
 # the window having colour in it says nothing about the plugin.
-function Wait-Loaded([Win32Capture+RECT]$area) {
+#
+# Where the window is is read again on every look.
+function Wait-Loaded([IntPtr]$window, [int]$TimeoutMs = $STEP_LIMIT_S * 1000) {
     $probe = if ($outDir) {
         Join-Path $outDir 'capture-window-loaded.png'
     } else {
         Join-Path $env:TEMP 'capture-window-loaded.png'
     }
     $loaded = Wait-Until {
-        Save-Shot $area $probe
+        Save-Shot ([Win32Capture]::VisibleRect($window)) $probe
         try {
             @(Read-Text $probe | Where-Object { $_.Top -ge 40 }).Count -gt 0
         } catch { $false }
-    } 30000
+    } $TimeoutMs
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     if (-not $loaded) { throw 'the plugin never drew anything to read in the host window' }
     Start-Sleep -Milliseconds $HAND_MS
@@ -743,28 +830,40 @@ function Send-Typing([string]$keys) {
     }
 }
 
+$launched = [DateTime]::UtcNow
+$script:stepStarted = $launched
 $proc = Start-Process -FilePath $Exe -ArgumentList $launchLine -PassThru
 
 try {
-    # Wait for the editor window to exist.
+    # Wait for the editor window to exist. Starting the host gets the same
+    # time a step does.
     $hwnd = Wait-Until {
         $seen = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $true)
         if ($seen -ne [IntPtr]::Zero) { $seen }
-    } 30000
+    } ($STEP_LIMIT_S * 1000)
     if (-not $hwnd) { $hwnd = [IntPtr]::Zero }
     if ($hwnd -eq [IntPtr]::Zero) {
         # No window with that title turned up; take the largest one and say so.
         $hwnd = [Win32Capture]::FindWindow([uint32]$proc.Id, $Title, $false)
         Write-Warning "no window titled ""$Title"" found; falling back to the largest one"
     }
-    if ($hwnd -eq [IntPtr]::Zero) { throw 'the window never appeared' }
+    if ($hwnd -eq [IntPtr]::Zero) {
+        Set-Stalled 'starting the host' ([DateTime]::UtcNow - $launched)
+        throw 'the window never appeared'
+    }
     [Win32Capture]::ShowWindow($hwnd, 5) | Out-Null   # SW_SHOW
     if (-not [Win32Capture]::BringToFront($hwnd)) {
         Write-Warning 'the window would not come to the front'
     }
 
+    $left = $STEP_LIMIT_S * 1000 - [int]([DateTime]::UtcNow - $launched).TotalMilliseconds
+    try {
+        Wait-Loaded $hwnd ([Math]::Max(0, $left))
+    } catch {
+        Set-Stalled 'starting the host' ([DateTime]::UtcNow - $launched)
+        throw
+    }
     $rect = [Win32Capture]::VisibleRect($hwnd)
-    Wait-Loaded $rect
     # The screenshot is always of the window under test, whichever window the
     # steps were last clicking in.
     $hostRect = $rect
@@ -780,8 +879,17 @@ try {
     if ($Steps.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
         $restarts = 0
+        # When the step before ended, so each line can say how long passed
+        # between that and this step starting, as well as how long this step
+        # took.
+        $lastEnded = [DateTime]::UtcNow
         foreach ($step in $Steps) {
             $kind, $value = $step -split ':', 2
+            # The time goes on the line even when the step throws: the step
+            # that ran out of patience is the one whose time matters most.
+            $started = [DateTime]::UtcNow
+            $script:stepStarted = $started
+            try {
             switch ($kind) {
                 'click' {
                     $parts = $value -split ','
@@ -841,6 +949,7 @@ try {
                         $saw = (Read-Text $probe | ForEach-Object { $_.Text }) -join ' | '
                         throw "no control labelled `"$label`" is in the window; it reads: $saw; it is in $probe"
                     }
+                    $script:checks++
                     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
                     [Win32Capture]::MoveTo(
                         $rect.Left + [int]$found.X, $rect.Top + [int]$found.Y)
@@ -851,6 +960,10 @@ try {
                 }
                 'type' {
                     Send-Typing $value
+                }
+                'wait' {
+                    # `wait:MS` pauses for that many milliseconds.
+                    Start-Sleep -Milliseconds ([int]$value)
                 }
                 { $_ -in 'showing', 'hidden' } {
                     # `showing:TEXT|Y` reads the window below Y and fails
@@ -897,6 +1010,7 @@ try {
                     if ($kind -eq 'hidden' -and $found) {
                         throw "the document still shows `"$text`"; below $below the window reads: $saw"
                     }
+                    $script:checks++
                     Write-Host ("{0}: {1}" -f $kind, $text)
                 }
                 { $_ -in 'dialog', 'nodialog' } {
@@ -914,6 +1028,7 @@ try {
                             [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd) -eq [IntPtr]::Zero
                         } 3000
                         if (-not $closed) { throw "a $want dialog is still open" }
+                        $script:checks++
                         Write-Host ("nodialog: {0}" -f $want)
                         break
                     }
@@ -924,24 +1039,19 @@ try {
                     if (-not $panel) {
                         throw "no $want dialog is open, so the button did nothing"
                     }
-                    $probe = if ($outDir) {
-                        Join-Path $outDir 'capture-window-dialog.png'
-                    } else {
-                        Join-Path $env:TEMP 'capture-window-dialog.png'
-                    }
-                    # The window is looked up again on every look: the first
-                    # second window to turn up need not be the dialog itself.
+                    # What is written inside is what its accept button says.
+                    $left = ($started.AddSeconds($STEP_LIMIT_S) - [DateTime]::UtcNow).TotalMilliseconds
                     $named = Wait-Until {
                         $seen = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
-                        if ($seen -ne [IntPtr]::Zero) {
-                            Save-Shot ([Win32Capture]::VisibleRect($seen)) $probe
-                            Find-Label $probe $want
-                        }
-                    } 10000
+                        ($seen -ne [IntPtr]::Zero) -and
+                            ([Win32Capture]::AcceptButton($seen) -eq $want)
+                    } ([Math]::Max(0, [int]$left))
                     if (-not $named) {
-                        throw "a dialog is open, but nothing on it says ""$want""; see $probe"
+                        $says = [Win32Capture]::AcceptButton(
+                            [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd))
+                        throw "a dialog is open, but its button says ""$says"", not ""$want"""
                     }
-                    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+                    $script:checks++
                     Start-Sleep -Milliseconds $HAND_MS
                     Write-Host ("dialog: {0}" -f $want)
                 }
@@ -953,6 +1063,7 @@ try {
                         [Win32Capture]::FindWindow([uint32]$proc.Id, $want, $true) -eq [IntPtr]::Zero
                     } 3000
                     if (-not $gone) { throw "the window ""$want"" is still open" }
+                    $script:checks++
                     Write-Host ("nowindow: {0}" -f $want)
                 }
                 'dragtext' {
@@ -1056,6 +1167,7 @@ try {
                         $shown = [Win32Capture]::CursorNow()
                         throw "cursor at $where is $shown, expected $($want.Trim())"
                     }
+                    $script:checks++
                 }
                 'shortcut' {
                     # `shortcut:ctrl+a` is a modifier held down over one key.
@@ -1137,8 +1249,8 @@ try {
                     if (-not [Win32Capture]::BringToFront($hwnd)) {
                         Write-Warning 'the restarted window would not come to the front'
                     }
+                    Wait-Loaded $hwnd
                     $rect = [Win32Capture]::VisibleRect($hwnd)
-                    Wait-Loaded $rect
                     $hostRect = $rect
                     $currentHwnd = $hwnd
                     $currentTitle = $Title
@@ -1159,6 +1271,7 @@ try {
                     if ($index -lt 0) {
                         throw "no preset called ""$name"" in $dir; there is: $($names -join ', ')"
                     }
+                    $script:checks++
 
                     $listHeight = ($rect.Bottom - $rect.Top) - 2 * $ROW_TOP
                     $onScreen = [Math]::Floor($listHeight / $ROW_HEIGHT)
@@ -1211,6 +1324,7 @@ try {
                         Save-Shot ([Win32Capture]::VisibleRect($hwnd)) $Out
                         throw "no window titled ""$wanted"" to click in; see $Out"
                     }
+                    $script:checks++
                     if (-not [Win32Capture]::BringToFront($target)) {
                         Write-Warning "$wanted would not come to the front"
                     }
@@ -1285,7 +1399,8 @@ try {
                         ($editor.Right - $editor.Left), ($editor.Bottom - $editor.Top),
                         ($w - $editor.Right), ($h - $editor.Bottom))
                     [System.IO.File]::WriteAllText($value, $text)
-                    Write-Host "geometry: $($text -replace "`n", ' ')"
+                    Confirm-Written $value
+                    Write-Host "geometry:$($text -replace "`n", ' ')"
                 }
                 'remove' {
                     if (Test-Path -LiteralPath $value) {
@@ -1304,6 +1419,15 @@ try {
                     $gfx.Dispose()
                     $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
                     $bmp.Dispose()
+                    Confirm-Written $p
+                }
+                'copied' {
+                    # `copied:PATH` writes the text on the clipboard to PATH,
+                    # for an expectation to read.
+                    $text = [System.Windows.Forms.Clipboard]::GetText()
+                    [System.IO.File]::WriteAllText($value, $text, (New-Object System.Text.UTF8Encoding $false))
+                    Confirm-Written $value
+                    Write-Host ("copied: {0} characters to {1}" -f $text.Length, $value)
                 }
                 'clipboard' {
                     # `clipboard:PATH` puts that picture on the clipboard, as
@@ -1319,18 +1443,18 @@ try {
                     $p, $want = $value -split '\|', 2
                     $want = $want.Trim().Replace('\n', "`n")
                     # The save runs off the plugin's drawing thread, so the file
-                    # is looked for until it is there and holds what it should.
+                    # is looked for until it is there and holds what it should,
+                    # for as long as the step has.
+                    Confirm-Written $p
+                    $left = ($started.AddSeconds($STEP_LIMIT_S) - [DateTime]::UtcNow).TotalMilliseconds
                     $there = Wait-Until {
-                        (Test-Path -LiteralPath $p) -and
-                            [System.IO.File]::ReadAllText($p).Contains($want)
-                    }
-                    if (-not (Test-Path -LiteralPath $p)) {
-                        throw "$p was not written"
-                    }
+                        [System.IO.File]::ReadAllText($p).Contains($want)
+                    } ([Math]::Max(0, [int]$left))
                     $got = [System.IO.File]::ReadAllText($p)
                     if (-not $there) {
                         throw "$p holds `"$got`", expected it to contain `"$want`""
                     }
+                    $script:checks++
                 }
                 'shot' {
                     # A picture of whichever window the steps are addressing,
@@ -1432,9 +1556,19 @@ try {
                         'mpdecimate' $filmVideo
                     [System.IO.File]::WriteAllText(
                         "$filmTo.txt", "frames=$total`ndistinct_frames=$distinct`n")
+                    Confirm-Written "$filmTo.txt"
                     Write-Host "film:   $distinct distinct of $total frames; $filmVideo"
                 }
                 default { throw "unknown step: $step" }
+            }
+            } finally {
+                $ended = [DateTime]::UtcNow
+                Write-Host ("({0}) {1} - step took {2}" -f (Format-Span ($started - $lastEnded)), $step, (Format-Span ($ended - $started)))
+                $lastEnded = $ended
+                if (($ended - $started).TotalSeconds -gt $STEP_LIMIT_S) {
+                    Set-Stalled $step ($ended - $started)
+                    throw "stalled: $step took $(Format-Span ($ended - $started)), over the ${STEP_LIMIT_S}s a step gets"
+                }
             }
         }
     }
@@ -1466,4 +1600,9 @@ finally {
             Stop-Process -Id $proc.Id -Force
         }
     }
+    if ($Tally) {
+        [System.IO.File]::WriteAllText($Tally, "$($script:checks)")
+        Confirm-Written $Tally ([DateTime]::UtcNow)
+    }
+    if ($script:stalled) { exit $STALLED_EXIT }
 }

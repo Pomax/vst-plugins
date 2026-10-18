@@ -118,7 +118,8 @@ pub fn shot(portal: &Portal, area: Rect, to: &Path) -> Result<(), String> {
     picture
         .crop_imm(left, top, width, height)
         .save(to)
-        .map_err(|e| format!("writing {}: {e}", to.display()))
+        .map_err(|e| format!("writing {}: {e}", to.display()))?;
+    crate::uitest::confirm_written(to)
 }
 
 /// A recording in progress, started by `film:` and ended by `endfilm:`.

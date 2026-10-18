@@ -32,18 +32,6 @@ pub fn accept_button(lines: &[(Rect, String)], says: &[&str], below: i32) -> Opt
         .max_by_key(|line| line.y)
 }
 
-/// Whether two looks running found the button, and in one place. A dialog
-/// that is still coming up shows what is under it, and that is somewhere
-/// else or gone by the next look.
-pub fn settled(first: Option<Rect>, second: Option<Rect>) -> bool {
-    match (first, second) {
-        (Some(first), Some(second)) => {
-            (first.x - second.x).abs() <= 2 && (first.y - second.y).abs() <= 2
-        }
-        _ => false,
-    }
-}
-
 /// The name a dialog that saves shows beside its accept button: the closest
 /// thing to read on the button's row, to the left of it.
 pub fn name_beside(lines: &[Rect], accept: Rect) -> Option<Rect> {
@@ -117,20 +105,6 @@ mod tests {
             Some(select.0)
         );
         assert_eq!(accept_button(&[select], &says("Save"), STRIP_ENDS), None);
-    }
-
-    #[test]
-    fn a_button_is_settled_when_two_looks_find_it_in_one_place() {
-        let button = at(820, 576, 30);
-        let read_a_pixel_off = at(821, 575, 29);
-        let on_the_toolbar = at(478, 76, 30);
-
-        assert!(settled(Some(button), Some(button)));
-        assert!(settled(Some(button), Some(read_a_pixel_off)));
-        assert!(!settled(Some(on_the_toolbar), Some(button)));
-        assert!(!settled(None, Some(button)));
-        assert!(!settled(Some(button), None));
-        assert!(!settled(None, None));
     }
 
     #[test]

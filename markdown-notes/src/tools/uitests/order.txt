@@ -2,8 +2,8 @@
 # order is decided here and nowhere else. A test file that is not listed is an
 # error, so nothing can sit in this directory and silently never run.
 #
-# The first is the baseline: typing. Everything after it assumes that, which
-# is why it runs first and why the run stops when it fails.
+# The first is typing. Everything after it assumes that, which is why it runs
+# first. A failure in any test stops the run.
 #
 # Each of the others is one long run that covers a whole area, rather than a
 # launch of the host for every behaviour in it.
@@ -13,3 +13,4 @@ sections-and-files
 opening-a-note
 pictures-in-a-note
 placeholder-section-title
+verify-explainer

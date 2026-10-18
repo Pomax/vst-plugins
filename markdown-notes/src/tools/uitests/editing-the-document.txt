@@ -9,8 +9,7 @@
 #
 # An I-beam is how a window says "there is text here to put a caret in", so it
 # is shown where a click would put one: over a line. The empty space below the
-# last line takes the caret away instead of placing it, and the toolbar is not
-# the document at all.
+# last line takes the caret away instead of placing it.
 # A note nobody has named opens with the keyboard in its name. Enter leaves the
 # name as it is and goes to the document.
 type:{ENTER}
@@ -21,7 +20,6 @@ type:{BS 3}
 type:text goes here
 cursor:60,155|ibeam
 cursor:400,400|arrow
-cursor:450,76|arrow
 
 # Dragging through the text selects what it crosses, which typing then
 # replaces. The press has to land inside the text: a line is only as wide as

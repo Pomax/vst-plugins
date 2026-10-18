@@ -1,5 +1,9 @@
 //! Files dropped on the editor's window.
 //!
+//! THIS IS CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE: there is
+//! no drop target on Linux, and a file dropped on the editor there is not
+//! taken in.
+//!
 //! The window is baseview's, and baseview registers a drop target of its own
 //! on it, whose drops egui-baseview does not pass on. The plugin puts its own
 //! target on the same window in its place: on Windows an `IDropTarget`
@@ -22,7 +26,7 @@ pub struct DropTarget {
 
 /// Put a drop target on the editor's window, which is the child window that
 /// baseview opened inside `parent`. Nothing when there is no such window yet,
-/// or the platform has no way to.
+/// or on Linux, which has no target yet.
 pub fn accept(parent: &ParentWindow, incoming: Incoming) -> Option<DropTarget> {
     #[cfg(target_os = "windows")]
     {
@@ -32,15 +36,13 @@ pub fn accept(parent: &ParentWindow, incoming: Incoming) -> Option<DropTarget> {
     {
         macos::accept(parent, incoming)
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = (parent, incoming);
-        None
+        linux::accept(parent, incoming)
     }
 }
 
 /// Queue the markdown, PNG and JPEG files among `paths`.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn take(incoming: &Incoming, paths: impl IntoIterator<Item = std::path::PathBuf>) {
     let files: Vec<Dropped> = paths
         .into_iter()
@@ -296,5 +298,27 @@ mod macos {
         fn drop(&mut self) {
             self.overlay.removeFromSuperview();
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::path::PathBuf;
+
+    use super::DropTarget;
+    use crate::gui::{Incoming, ParentWindow};
+
+    /// THIS IS CURRENTLY BROKEN AND MUST BE FIXED AS SOON AS POSSIBLE:
+    /// nothing is registered on the window, so no drag reaches `files_in`
+    /// and a file dropped on the editor is not taken in.
+    pub fn accept(parent: &ParentWindow, incoming: Incoming) -> Option<DropTarget> {
+        let _ = parent;
+        super::take(&incoming, files_in());
+        None
+    }
+
+    /// The files a drag is carrying, as paths.
+    fn files_in() -> Vec<PathBuf> {
+        Vec::new()
     }
 }

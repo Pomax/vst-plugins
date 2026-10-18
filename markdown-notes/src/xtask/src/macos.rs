@@ -436,10 +436,10 @@ fn code_for(key: char) -> Option<u16> {
 /// Send one `type:` step, which is text with named keys written in braces.
 ///
 /// `{ENTER}`, `{ESC}`, `{HOME}`, `{END}`, `{LEFT}`, `{UP}`, `{DOWN}`, `{PGUP}`
-/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. `{(}` and
-/// `{)}` are the brackets themselves, which would otherwise be read as the
-/// start of a name. This is the notation the tests are already written in,
-/// and it is Windows `SendKeys`.
+/// and `{TAB}` are those keys. `{BS 40}` is backspace forty times. One
+/// character in braces, `{(}`, `{)}`, `{%}` or `{+}`, is that character,
+/// which written bare would be read as part of a name. This is the notation
+/// the tests are already written in, and it is Windows `SendKeys`.
 fn send_keys(step: &str) -> Result<(), String> {
     let mut literal = String::new();
     let mut rest = step;
@@ -452,7 +452,7 @@ fn send_keys(step: &str) -> Result<(), String> {
         let name = &after[..close];
         rest = &after[close + 1..];
 
-        if name == "(" || name == ")" {
+        if name.chars().count() == 1 && named(name).is_none() {
             literal.push_str(name);
             continue;
         }
@@ -679,7 +679,8 @@ fn shot(area: Rect, to: &Path) -> Result<(), String> {
         ],
         to,
         to,
-    )
+    )?;
+    crate::uitest::confirm_written(to)
 }
 
 /// Where the window photographer is, built if it is not there yet.
@@ -718,7 +719,8 @@ fn write_picture(path: &Path, width: u32, height: u32) -> Result<(), String> {
             .map_err(|e| format!("creating {}: {e}", parent.display()))?;
     }
     std::fs::write(path, crate::png::solid(width, height, PICTURE_COLOUR))
-        .map_err(|e| format!("writing {}: {e}", path.display()))
+        .map_err(|e| format!("writing {}: {e}", path.display()))?;
+    crate::uitest::confirm_written(path)
 }
 
 /// Put a picture on the clipboard, as a screenshot tool leaves one.
@@ -749,6 +751,16 @@ fn put_on_clipboard(path: &Path) -> Result<(), String> {
         board.setData_forType(Some(&tiff), NSPasteboardTypeTIFF);
     }
     Ok(())
+}
+
+/// The text on the clipboard.
+fn clipboard_text() -> Result<String, String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+
+    let board = NSPasteboard::generalPasteboard();
+    let text = unsafe { board.stringForType(NSPasteboardTypeString) }
+        .ok_or("there is no text on the clipboard")?;
+    Ok(text.to_string())
 }
 
 /// A path written in a test file, as this platform spells it.
@@ -818,62 +830,30 @@ fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, Str
 /// The box the text occupies on screen inside `area`, found by looking.
 fn find_box_on_screen(area: Rect, text: &str, probe: &Path) -> Result<Option<Rect>, String> {
     shot(area, probe)?;
-    let out = Command::new(finder()?)
-        .arg(probe)
-        .arg(text)
-        .output()
-        .map_err(|e| format!("running the text finder: {e}"))?;
-    if out.status.code() == Some(1) {
+    let said = crate::ocr::read(probe, Some(text))?;
+    // Nothing said is the text not being there. Otherwise the first line is
+    // the picture's size and the next the best place it was read at.
+    let mut lines = said.lines();
+    let Some(size) = lines.next() else {
         return Ok(None);
-    }
-    if !out.status.success() {
-        return Err(format!(
-            "the text finder failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    let numbers: Vec<f64> = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .filter_map(|part| part.parse().ok())
-        .collect();
-    if numbers.len() != 6 || numbers[4] <= 0.0 {
-        return Err(format!(
-            "the text finder said something unreadable: {}",
-            String::from_utf8_lossy(&out.stdout).trim()
-        ));
+    };
+    let numbers = |line: &str| -> Vec<f64> {
+        line.split_whitespace().filter_map(|part| part.parse().ok()).collect()
+    };
+    let size = numbers(size);
+    let place = lines.next().map(numbers).unwrap_or_default();
+    if size.len() != 2 || size[0] <= 0.0 || place.len() != 4 {
+        return Err(format!("the OCR server said something unreadable: {}", said.trim()));
     }
     // The picture is of `area`, so its pixel count over the area's width is
     // the display's scale.
-    let scale = numbers[4] / area.width as f64;
+    let scale = size[0] / area.width as f64;
     Ok(Some(Rect {
-        x: area.x + (numbers[0] / scale) as i32,
-        y: area.y + (numbers[1] / scale) as i32,
-        width: (numbers[2] / scale) as i32,
-        height: (numbers[3] / scale) as i32,
+        x: area.x + (place[0] / scale) as i32,
+        y: area.y + (place[1] / scale) as i32,
+        width: (place[2] / scale) as i32,
+        height: (place[3] / scale) as i32,
     }))
-}
-
-/// Where the text finder is, built if it is not there yet.
-fn finder() -> Result<PathBuf, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .ok_or("no directory above this project")?
-        .to_path_buf();
-    let tool = root.join("binaries").join("find-text");
-    if tool.exists() {
-        return Ok(tool);
-    }
-    let status = Command::new("sh")
-        .arg(root.join("tools").join("find-text").join("build.sh"))
-        .status()
-        .map_err(|e| format!("building the text finder: {e}"))?;
-    if !status.success() {
-        return Err("building the text finder failed".to_string());
-    }
-    tool.exists()
-        .then_some(tool)
-        .ok_or_else(|| "the text finder did not build".to_string())
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -991,8 +971,13 @@ fn launch(
     extra: &[String],
     settle: Duration,
 ) -> Result<(Child, u32, Rect), String> {
+    // Starting the host, settling included, gets the same time a step does.
+    let began = Instant::now();
+    let patience = crate::uitest::STEP_LIMIT.saturating_sub(settle);
+    // The UI tests run in the light theme, whatever the desktop's is.
     let child = Command::new(program)
         .arg(plugin)
+        .arg("--light")
         .arg("--state")
         .arg(state)
         .arg("--geometry")
@@ -1001,7 +986,12 @@ fn launch(
         .spawn()
         .map_err(|e| format!("running {}: {e}", program.display()))?;
     let pid = child.id();
-    wait_for_window(pid, "", Duration::from_secs(30)).map_err(|e| {
+    wait_for_window(pid, "", patience).map_err(|e| {
+        let e = if began.elapsed() >= patience {
+            crate::uitest::stalled("starting the host", began.elapsed())
+        } else {
+            e
+        };
         format!("{e}\n      (System Events needs Accessibility permission for this terminal)")
     })?;
     front(pid)?;
@@ -1201,6 +1191,7 @@ pub fn drive(
     steps: &Path,
     state: &Path,
     shot_to: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
     let settle = Duration::from_millis(4000);
     let text = std::fs::read_to_string(steps)
@@ -1209,7 +1200,7 @@ pub fn drive(
 
     may_post_input()?;
     let mut run = Run::start(host, plugin, state, &reported, settle)?;
-    let result = play(&mut run, &text, shot_to);
+    let result = play(&mut run, &text, shot_to, tally);
     // A test that failed halfway can leave the recorder rolling, and it keeps
     // rolling until it is told to stop.
     if let Some(film) = run.film.take() {
@@ -1223,7 +1214,13 @@ pub fn drive(
     result.and(closed)
 }
 
-fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
+fn play(run: &mut Run, text: &str, shot_to: &Path, tally: &Path) -> Result<(), String> {
+    // When the step before ended, so each line can say how long passed
+    // between that and this step starting, as well as how long this step took.
+    let mut last_ended = Instant::now();
+    // How many checks have passed, written to `tally` whichever way this ends.
+    let mut checks = 0usize;
+    let mut outcome = Ok(());
     for line in text.lines() {
         let line = line.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -1233,8 +1230,30 @@ fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
             Some((kind, value)) => (kind, value),
             None => (line, ""),
         };
-        step(run, kind, value)?;
+        // The time goes on the line even when the step fails: the step that
+        // ran out of patience is the one whose time matters most.
+        let began = Instant::now();
+        let done = step(run, kind, value, &mut checks);
+        let spent = began.elapsed();
+        println!(
+            "({}) {line} - step took {}",
+            crate::uitest::took(began - last_ended),
+            crate::uitest::took(spent)
+        );
+        last_ended = Instant::now();
+        if spent > crate::uitest::STEP_LIMIT {
+            outcome = Err(crate::uitest::stalled(line, spent));
+            break;
+        }
+        if let Err(e) = done {
+            outcome = Err(e);
+            break;
+        }
     }
+    let _ = std::fs::write(tally, checks.to_string());
+    let tallied = crate::uitest::confirm_written(tally);
+    outcome?;
+    tallied?;
 
     // Always the window under test, whichever window the steps were last
     // addressing. A killed host has no window left to photograph.
@@ -1260,7 +1279,10 @@ fn pair(value: &str, what: &str) -> Result<(i32, i32), String> {
     Ok((x, y))
 }
 
-fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
+/// Run one step. `checks` goes up by one at each confirmation that passes: a
+/// control or words found on screen, a window or dialog that is or is not
+/// there, a cursor, a file, a preset in a list.
+fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<(), String> {
     match kind {
         // A typed absolute path is dialog input: no test types a path as
         // document text, and this platform's dialogs do not take a path
@@ -1272,7 +1294,19 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .parent()
                 .map(Path::to_path_buf)
                 .ok_or("nowhere to put the dialog pictures")?;
-            dialog_path(run.rect, &work, &value.replace('\\', "/"))
+            // The panel is a window of its own, the frontmost of the host's
+            // process other than the window under test, and is looked at
+            // there: it can be larger than the window under test is made.
+            // Until it is up, the window under test is looked at.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let panel = loop {
+                let panel = window_rect(run.pid, "").ok().filter(|rect| *rect != run.host);
+                if panel.is_some() || Instant::now() > deadline {
+                    break panel.unwrap_or(run.rect);
+                }
+                sleep(Duration::from_millis(200));
+            };
+            dialog_path(panel, &work, &value.replace('\\', "/"))
         }
         "type" => send_keys(value),
         "wait" => {
@@ -1360,6 +1394,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
         "window" => {
             let wanted = value.trim();
             let rect = wait_for_window(run.pid, wanted, Duration::from_secs(5))?;
+            *checks += 1;
             front(run.pid)?;
             run.rect = rect;
             run.title = wanted.to_string();
@@ -1382,6 +1417,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
                 if window_rect(run.pid, wanted).is_err() {
+                    *checks += 1;
                     println!("nowindow: {wanted}");
                     return Ok(());
                 }
@@ -1451,6 +1487,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     "no control labelled {label:?} is near {x},{y}"
                 ));
             };
+            *checks += 1;
             click(found_x, found_y)?;
             sleep(Duration::from_millis(500));
             println!(
@@ -1508,6 +1545,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     // and a step that throws it away leaves nothing to work
                     // from.
                     let _ = std::fs::remove_file(&probe);
+                    *checks += 1;
                     println!("dialog: {want}");
                     Ok(())
                 }
@@ -1515,6 +1553,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     Err(format!("a {want} dialog is still open"))
                 }
                 _ => {
+                    *checks += 1;
                     println!("{kind}: {want}");
                     Ok(())
                 }
@@ -1564,6 +1603,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 }
                 ("hidden", true) => Err(format!("the document still shows {text:?}")),
                 _ => {
+                    *checks += 1;
                     println!("{kind}: {text}");
                     Ok(())
                 }
@@ -1581,6 +1621,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let (to_x, to_y) = pair(to, "dragtext")?;
             let window = window_rect(run.pid, &run.title)?;
             let from = text_below(run, text, below, "dragtext")?;
+            *checks += 1;
             // On the first glyph, not beside it. A press lands on the nearest
             // character boundary, and the boundary before the first letter is
             // the one its ink starts at.
@@ -1601,6 +1642,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // the word and not on its edge.
             let (text, below) = text_and_row(value, "dbltext")?;
             let found = text_below(run, text, below, "dbltext")?;
+            *checks += 1;
             double_click(found.x + found.width / 2, found.y + found.height / 2)?;
             sleep(Duration::from_millis(500));
             println!("dbltext: {text}");
@@ -1611,6 +1653,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // button.
             let (text, below) = text_and_row(value, "righttext")?;
             let found = text_below(run, text, below, "righttext")?;
+            *checks += 1;
             right_click(found.x + found.width / 2, found.y + found.height / 2)?;
             sleep(Duration::from_millis(500));
             println!("righttext: {text}");
@@ -1627,6 +1670,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .map_err(|_| format!("cannot read dragwords: {value}"))?;
             let window = window_rect(run.pid, &run.title)?;
             let found = text_below(run, text, below, "dragwords")?;
+            *checks += 1;
             let row = found.y + found.height / 2;
             double_hold(found.x + found.width / 2, row)?;
             let_go(window.x + to_x, row)?;
@@ -1711,6 +1755,17 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             write_picture(&path_of(path), width as u32, height as u32)
         }
         "clipboard" => put_on_clipboard(&path_of(value)),
+        "copied" => {
+            // `copied:PATH` writes the text on the clipboard to PATH, for an
+            // expectation to read.
+            let path = path_of(value);
+            let text = clipboard_text()?;
+            std::fs::write(&path, &text)
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            crate::uitest::confirm_written(&path)?;
+            println!("copied: {} characters to {}", text.chars().count(), path.display());
+            Ok(())
+        }
         "written" => {
             // `written:PATH|TEXT` checks a file in code, mid-test, right when
             // the step before it claims to have written it. Failing here names
@@ -1721,8 +1776,9 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let path = path_of(path);
             let want = want.trim().replace("\\n", "\n");
             // The save runs off the plugin's drawing thread, so the file is
-            // looked for until it is there and holds what it should.
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // looked for until it is there and holds what it should, for as
+            // long as a step has.
+            let deadline = Instant::now() + crate::uitest::STEP_LIMIT;
             while Instant::now() < deadline
                 && !std::fs::read_to_string(&path).is_ok_and(|got| got.contains(&want))
             {
@@ -1736,6 +1792,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     path.display()
                 ));
             }
+            *checks += 1;
             Ok(())
         }
         "shot" => {
@@ -1792,6 +1849,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     names.join(", ")
                 ));
             }
+            *checks += 1;
 
             // Look, then click: photograph the dialog, find the row in the
             // picture, and click where it is. A row further down than the
@@ -1842,7 +1900,8 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             })?;
             std::fs::write(&to, &text)
                 .map_err(|e| format!("writing {}: {e}", to.display()))?;
-            println!("geometry: {}", text.replace('\n', " ").trim_end());
+            crate::uitest::confirm_written(&to)?;
+            println!("geometry:{}", text.replace('\n', " ").trim_end());
             Ok(())
         }
         "cursor" => {
@@ -1858,6 +1917,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             if shown != want {
                 return Err(format!("cursor at {where_at} is {shown}, expected {want}"));
             }
+            *checks += 1;
             Ok(())
         }
         "film" => {
@@ -1917,7 +1977,8 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             // done file says it is on disk.
             std::fs::write(&film.stop, "")
                 .map_err(|e| format!("writing {}: {e}", film.stop.display()))?;
-            let deadline = Instant::now() + Duration::from_secs(30);
+            crate::uitest::confirm_written(&film.stop)?;
+            let deadline = Instant::now() + crate::uitest::STEP_LIMIT;
             while !film.done.exists() {
                 if Instant::now() > deadline {
                     let said = std::fs::read_to_string(film.video.with_extension("error"))
@@ -1939,8 +2000,9 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 format!("frames={total}\ndistinct_frames={distinct}\n"),
             )
             .map_err(|e| format!("writing {}: {e}", report.display()))?;
+            crate::uitest::confirm_written(&report)?;
             println!(
-                "film:   {distinct} distinct of {total} frames; {}",
+                "film:{distinct} distinct of {total} frames; {}",
                 video.display()
             );
             Ok(())

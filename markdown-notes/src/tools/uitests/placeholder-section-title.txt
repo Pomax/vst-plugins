@@ -27,7 +27,7 @@ hidden:Section Title|140
 
 # By a click: the caret clicked away into the empty space below the heading,
 # and the heading then clicked by its words.
-plugin:129,87
+press:+|129,113
 showing:Section Title|140
 click:450,400
 shot:%CACHE%\placeholder-click-away.png
@@ -40,7 +40,7 @@ hidden:Section Title|140
 
 # By Left: the body line is nine characters, and two more presses cross the
 # two line ends above it onto the end of the heading.
-plugin:239,87
+press:+|239,113
 showing:Section Title|140
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-left-body.png
@@ -54,7 +54,7 @@ hidden:Section Title|140
 
 # By Page Up: a page is more lines than the section has, so one press is the
 # heading.
-plugin:349,87
+press:+|349,113
 showing:Section Title|140
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-pageup-body.png
@@ -67,7 +67,7 @@ showing:Piano|140
 hidden:Section Title|140
 
 # By Ctrl+Home: the start of the section, which is the heading.
-plugin:459,87
+press:+|459,113
 showing:Section Title|140
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-ctrl-home-body.png
@@ -82,7 +82,7 @@ hidden:Section Title|140
 # By Ctrl+Left: a word at a time back up the section, to the start of `line`,
 # to the start of `body`, and over the blank line to the start of `Title`,
 # which is the heading.
-plugin:569,87
+press:+|569,113
 showing:Section Title|140
 type:{END}{ENTER}body line
 shot:%CACHE%\placeholder-ctrl-left-body.png

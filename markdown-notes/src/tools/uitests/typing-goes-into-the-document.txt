@@ -3,7 +3,6 @@
 # Every test types. When keystrokes do not reach the plugin, every test fails,
 # each with its own confusing symptom, so this runs first, and a failure here
 # stops the run: nothing after it can mean anything.
-baseline:
 # A note nobody has named opens with the keyboard in its name. Enter leaves the
 # name as it is and goes to the document.
 type:{ENTER}

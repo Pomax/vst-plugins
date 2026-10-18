@@ -131,8 +131,12 @@ fn launch(
     extra: &[String],
     work: &Path,
 ) -> Result<(Child, Window), String> {
+    // Starting the host gets the same time a step does.
+    let began = Instant::now();
+    // The UI tests run in the light theme, whatever the desktop's is.
     let mut child = Command::new(program)
         .arg(plugin)
+        .arg("--light")
         .arg("--state")
         .arg(state)
         .arg("--geometry")
@@ -143,10 +147,10 @@ fn launch(
 
     let ready = (|| {
         let pid = child.id();
-        let host = wait_until(Duration::from_secs(30), || desktop.window_of(pid, TITLE))
-            .ok_or("the host's window never appeared")?;
+        let host = wait_until(crate::uitest::STEP_LIMIT, || desktop.window_of(pid, TITLE))
+            .ok_or_else(|| crate::uitest::stalled("starting the host", began.elapsed()))?;
         desktop.activate(host)?;
-        wait_loaded(desktop, portal, host, work)?;
+        wait_loaded(desktop, portal, host, work, began)?;
         let rect = desktop.frame_rect(host)?;
         println!("window: {},{} {}x{}", rect.x, rect.y, rect.width, rect.height);
         Ok(host)
@@ -165,10 +169,17 @@ fn launch(
 /// Wait for the plugin inside the host's window to be up, the way a person
 /// does before touching it: until there is something to read below the
 /// host's own strip. The host draws its strip long before the plugin has
-/// loaded and drawn its first frame.
-fn wait_loaded(desktop: &Desktop, portal: &Portal, host: Window, work: &Path) -> Result<(), String> {
+/// loaded and drawn its first frame. The host was started at `began`, and all
+/// of starting it gets the time a step does.
+fn wait_loaded(
+    desktop: &Desktop,
+    portal: &Portal,
+    host: Window,
+    work: &Path,
+    began: Instant,
+) -> Result<(), String> {
     let probe = work.join("loaded.png");
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = began + crate::uitest::STEP_LIMIT;
     loop {
         let frame = desktop.frame_rect(host)?;
         let below = desktop.frame_extents(host)[2] + STRIP;
@@ -180,7 +191,8 @@ fn wait_loaded(desktop: &Desktop, portal: &Portal, host: Window, work: &Path) ->
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "the plugin never drew anything to read in the host's window; see {}",
+                "{}: the plugin never drew anything to read in the host's window; see {}",
+                crate::uitest::stalled("starting the host", began.elapsed()),
                 probe.display()
             ));
         }
@@ -215,6 +227,12 @@ struct Run {
     clipboard: Option<arboard::Clipboard>,
     /// The cursor theme's pictures of the cursors a `cursor:` step can name.
     stock: Vec<(&'static str, Picture)>,
+    /// What the last look for a file dialog's button read: every line, with
+    /// where it is in `dialog_at`. The steps that address the dialog
+    /// afterwards find their way by it rather than looking again.
+    dialog: Vec<(Rect, String)>,
+    /// The area of the desktop that look photographed.
+    dialog_at: Rect,
 }
 
 impl Run {
@@ -249,6 +267,8 @@ impl Run {
             window: host,
             film: None,
             clipboard: None,
+            dialog: Vec::new(),
+            dialog_at: Rect { x: 0, y: 0, width: 0, height: 0 },
         })
     }
 
@@ -297,38 +317,6 @@ impl Run {
         })
     }
 
-    /// Where a click sent to a point of the addressed window goes: to the
-    /// middle of a `+` that is read close to the point, and to the point
-    /// itself when there is none. Found by looking at the part of the window
-    /// around the point.
-    fn click_target(&self, x: i32, y: i32) -> Result<(i32, i32), String> {
-        const ACROSS: i32 = 120;
-        const DOWN: i32 = 40;
-        let area = self.area()?;
-        let (left, top) = ((x - ACROSS).max(0), (y - DOWN).max(0));
-        let (right, bottom) = ((x + ACROSS).min(area.width), (y + DOWN).min(area.height));
-        if right <= left || bottom <= top {
-            return Ok((x, y));
-        }
-        let around = Rect {
-            x: area.x + left,
-            y: area.y + top,
-            width: right - left,
-            height: bottom - top,
-        };
-        let probe = self.work.join("click.png");
-        let lines = look::read_in(self.portal, around, &probe)?;
-        let _ = std::fs::remove_file(&probe);
-        Ok(match look::plus_near(&lines, (x - left, y - top)) {
-            Some(plus) => {
-                let (x, y) = (left + plus.x + plus.width / 2, top + plus.y + plus.height / 2);
-                println!("click:  + at {x},{y}");
-                (x, y)
-            }
-            None => (x, y),
-        })
-    }
-
     /// What the cursor on screen is, as a `cursor:` step names it.
     fn cursor(&self) -> &'static str {
         self.desktop
@@ -365,14 +353,103 @@ impl Run {
         ))
     }
 
-    /// The button that accepts the host's file dialog, from one look at the
-    /// host's window: a line under the host's strip that says one of `says`.
-    /// The picture is left in `dialog.png`.
-    fn accept_button(&self, says: &[&str]) -> Result<Option<Rect>, String> {
+    /// The monitor, as a place on the desktop.
+    fn monitor(&self) -> Rect {
+        let (x, y, width, height) = self.portal.monitor();
+        Rect { x, y, width, height }
+    }
+
+    /// `area` grown, as far as the monitor goes, past every edge that
+    /// something read in it runs into: what is cut off by the picture's
+    /// edge goes on beyond it. Past every edge when nothing runs into one.
+    /// It grows by half its width or height. `lines` are what was read, in
+    /// `area`'s own units.
+    fn widened(&self, area: Rect, lines: &[(Rect, String)]) -> Rect {
+        const TOUCHING: i32 = 4;
+        let monitor = self.monitor();
+        let cut = |at: fn(&Rect, Rect) -> bool| lines.iter().any(|(line, _)| at(line, area));
+        let mut sides = [
+            cut(|line, _| line.x <= TOUCHING),
+            cut(|line, _| line.y <= TOUCHING),
+            cut(|line, area| line.right() >= area.width - TOUCHING),
+            cut(|line, area| line.bottom() >= area.height - TOUCHING),
+        ];
+        if !sides.contains(&true) {
+            sides = [true; 4];
+        }
+        let [left, top, right, bottom] = sides;
+        let (across, down) = (area.width / 2, area.height / 2);
+        let x = if left { (area.x - across).max(monitor.x) } else { area.x };
+        let y = if top { (area.y - down).max(monitor.y) } else { area.y };
+        let r = if right { (area.right() + across).min(monitor.right()) } else { area.right() };
+        let b = if bottom { (area.bottom() + down).min(monitor.bottom()) } else { area.bottom() };
+        Rect { x, y, width: r - x, height: b - y }
+    }
+
+    /// The row of `area` below which the host's own strip has ended, so the
+    /// strip's words are not taken for a dialog's.
+    fn below_strip(&self, area: Rect) -> Result<i32, String> {
         let frame = self.desktop.frame_rect(self.host)?;
-        let below = self.desktop.frame_extents(self.host)[2] + STRIP;
-        let lines = look::read_in(self.portal, frame, &self.work.join("dialog.png"))?;
-        Ok(dialog::accept_button(&lines, says, below))
+        Ok(frame.y - area.y + self.desktop.frame_extents(self.host)[2] + STRIP)
+    }
+
+    /// The button that accepts the host's file dialog, looked for first in
+    /// the host's window and then, on every look that does not find it, in
+    /// an area widened past the edges that what was read runs into, until it
+    /// is found or `deadline` has gone by. The dialog is the desktop's own,
+    /// and can be larger than the host's window and reach past it.
+    fn find_accept_button(&mut self, says: &[&str], deadline: Instant) -> Result<Option<Rect>, String> {
+        let mut area = self.desktop.frame_rect(self.host)?;
+        loop {
+            if let Some(button) = self.accept_button(area, says)? {
+                return Ok(Some(button));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            area = self.widened(area, &self.dialog);
+        }
+    }
+
+    /// The button that accepts the host's file dialog, from one look at
+    /// `area`: a line under the host's strip that says one of `says`. What
+    /// the look read is kept in `dialog` and where it looked in `dialog_at`,
+    /// and the picture is left in `dialog.png`. The look is written to the
+    /// log: the area photographed, the row searched below, how long it took,
+    /// every line read below that row with where it is, and the button found.
+    fn accept_button(&mut self, area: Rect, says: &[&str]) -> Result<Option<Rect>, String> {
+        let began = Instant::now();
+        let frame = area;
+        let below = self.below_strip(area)?;
+        self.dialog = look::read_in(self.portal, frame, &self.work.join("dialog.png"))?;
+        self.dialog_at = area;
+        let button = dialog::accept_button(&self.dialog, says, below);
+        let read: Vec<String> = self
+            .dialog
+            .iter()
+            .filter(|(line, _)| line.y >= below)
+            .map(|(line, text)| format!("{text:?} at {},{}", line.x, line.y))
+            .collect();
+        println!(
+            "look:   {},{} {}x{} below row {} for {says:?} took {}: {}",
+            frame.x,
+            frame.y,
+            frame.width,
+            frame.height,
+            below,
+            crate::uitest::took(began.elapsed()),
+            match button {
+                Some(found) => format!("found at {},{} {}x{}", found.x, found.y, found.width, found.height),
+                None => "not found".to_string(),
+            }
+        );
+        println!("look:   reads {}", read.join(" | "));
+        Ok(button)
+    }
+
+    /// Say in the log how long the dialog step has been running at `stage`.
+    fn report_dialog(&self, stage: &str, began: Instant) {
+        println!("dialog: {stage} after {}", crate::uitest::took(began.elapsed()));
     }
 
     /// Wait for the host's file dialog to have taken the keyboard from the
@@ -480,6 +557,7 @@ pub fn drive(
     steps: &Path,
     state: &Path,
     shot_to: &Path,
+    tally: &Path,
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(steps)
         .map_err(|e| format!("reading {}: {e}", steps.display()))?;
@@ -491,7 +569,7 @@ pub fn drive(
 
     let portal = portal(root)?;
     let mut run = Run::start(portal, host, plugin, state, &reported, &work)?;
-    let result = play(&mut run, &text, shot_to);
+    let result = play(&mut run, &text, shot_to, tally);
 
     // A test that failed halfway can leave the recorder rolling and a button
     // or a modifier down.
@@ -503,7 +581,13 @@ pub fn drive(
     result.and(closed)
 }
 
-fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
+fn play(run: &mut Run, text: &str, shot_to: &Path, tally: &Path) -> Result<(), String> {
+    // When the step before ended, so each line can say how long passed
+    // between that and this step starting, as well as how long this step took.
+    let mut last_ended = Instant::now();
+    // How many checks have passed, written to `tally` whichever way this ends.
+    let mut checks = 0usize;
+    let mut outcome = Ok(());
     for line in text.lines() {
         let line = line.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -513,8 +597,30 @@ fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
             Some((kind, value)) => (kind, value),
             None => (line, ""),
         };
-        step(run, kind, value)?;
+        // The time goes on the line even when the step fails: the step that
+        // ran out of patience is the one whose time matters most.
+        let began = Instant::now();
+        let done = step(run, kind, value, &mut checks);
+        let spent = began.elapsed();
+        println!(
+            "({}) {line} - step took {}",
+            crate::uitest::took(began - last_ended),
+            crate::uitest::took(spent)
+        );
+        last_ended = Instant::now();
+        if spent > crate::uitest::STEP_LIMIT {
+            outcome = Err(crate::uitest::stalled(line, spent));
+            break;
+        }
+        if let Err(e) = done {
+            outcome = Err(e);
+            break;
+        }
     }
+    let _ = std::fs::write(tally, checks.to_string());
+    let tallied = crate::uitest::confirm_written(tally);
+    outcome?;
+    tallied?;
 
     // Always the window under test, whichever window the steps were last
     // addressing.
@@ -536,6 +642,7 @@ fn play(run: &mut Run, text: &str, shot_to: &Path) -> Result<(), String> {
 /// saves is given the folder there, and the file's name in the name it shows
 /// beside its button, which is a field once it is clicked.
 fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
+    let began = Instant::now();
     // Numbered pictures of every stage, because none of this is visible in
     // the test's own output when it goes wrong. They are of the whole
     // monitor: nothing says where the dialog is.
@@ -544,7 +651,8 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
         static DIALOGS: AtomicUsize = AtomicUsize::new(0);
         DIALOGS.fetch_add(1, Ordering::Relaxed)
     };
-    let picture = |step: &str| run.work.join(format!("dialog-{stage}-{step}.png"));
+    let work = run.work.clone();
+    let picture = |step: &str| work.join(format!("dialog-{stage}-{step}.png"));
 
     let opened = wait_until(Duration::from_secs(6), || {
         run.portal.request_open(run.pid).ok().filter(|open| *open)
@@ -555,10 +663,16 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     run.dialog_has_the_keyboard()?;
     sleep(Duration::from_millis(500));
     let _ = screen::frame(run.portal, &picture("opened"));
+    run.report_dialog("opened", began);
 
-    let frame = run.desktop.frame_rect(run.host)?;
-    let probe = run.work.join("dialog.png");
-    let save = run.accept_button(&dialog::says("Save"))?;
+    // The `dialog:` step before this one has read the dialog already. Only
+    // a path typed without one looks for itself.
+    let says = dialog::says("Save");
+    if run.dialog.is_empty() {
+        run.find_accept_button(&says, Instant::now() + Duration::from_secs(5))?;
+    }
+    let frame = run.dialog_at;
+    let save = dialog::accept_button(&run.dialog, &says, run.below_strip(frame)?);
     let (place, name) = match (save, path.rsplit_once('/')) {
         (Some(_), Some((folder, name))) => (folder, Some(name)),
         _ => (path, None),
@@ -571,26 +685,20 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     run.input.write(place)?;
     sleep(Duration::from_millis(400));
     let _ = screen::frame(run.portal, &picture("path-typed"));
+    run.report_dialog("path typed", began);
 
     run.input.send_keys("{ENTER}")?;
     sleep(Duration::from_millis(600));
     let _ = screen::frame(run.portal, &picture("path-entered"));
+    run.report_dialog("path entered", began);
     let (Some(save), Some(name)) = (save, name) else {
-        let _ = std::fs::remove_file(&probe);
         return Ok(());
     };
 
-    let lines: Vec<Rect> = look::read_in(run.portal, frame, &probe)?
-        .into_iter()
-        .map(|(line, _)| line)
-        .collect();
+    let lines: Vec<Rect> = run.dialog.iter().map(|(line, _)| *line).collect();
     let shown = dialog::name_beside(&lines, save).ok_or_else(|| {
-        format!(
-            "the dialog shows no name beside its Save button to type a name over; see {}",
-            probe.display()
-        )
+        "the dialog shows no name beside its Save button to type a name over".to_string()
     })?;
-    let _ = std::fs::remove_file(&probe);
     let (x, y) = (frame.x + shown.x + shown.width / 2, frame.y + shown.y + shown.height / 2);
     // The dialog is not an X window, and the X server is not told where the
     // pointer is while it is over one: there is no asking whether it arrived.
@@ -603,6 +711,7 @@ fn dialog_path(run: &mut Run, path: &str) -> Result<(), String> {
     run.input.write(name)?;
     sleep(Duration::from_millis(400));
     let _ = screen::frame(run.portal, &picture("name-typed"));
+    run.report_dialog("name typed", began);
     Ok(())
 }
 
@@ -661,12 +770,24 @@ fn text_below(run: &Run, text: &str, below: i32, step: &str) -> Result<Rect, Str
     Ok(found)
 }
 
-fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
+/// Run one step. `checks` goes up by one at each confirmation that passes: a
+/// control or words found on screen, a window or dialog that is or is not
+/// there, a cursor, a file, a preset in a list.
+fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<(), String> {
     match kind {
         // A typed absolute path is dialog input: no test types a path as
         // document text. The tests spell paths with backslashes, which here
         // are ordinary characters, so they are swapped first.
         "type" if value.starts_with('/') => dialog_path(run, &value.replace('\\', "/")),
+        "wait" => {
+            // `wait:MS` pauses for that many milliseconds.
+            let ms: u64 = value
+                .trim()
+                .parse()
+                .map_err(|_| format!("not a number of milliseconds: {value}"))?;
+            sleep(Duration::from_millis(ms));
+            Ok(())
+        }
         "type" => {
             run.keys_are_ours()?;
             run.input.send_keys(value)
@@ -674,7 +795,6 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
         "click" => {
             let (x, y) = pair(value, "click")?;
             run.at_the_front()?;
-            let (x, y) = run.click_target(x, y)?;
             let (x, y) = run.at(x, y)?;
             run.input.click(x, y)?;
             run.arrived(x, y)?;
@@ -728,6 +848,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 run.desktop.window_of(run.pid, wanted)
             })
             .ok_or_else(|| format!("no window titled {wanted:?} to click in"))?;
+            *checks += 1;
             run.desktop.activate(target)?;
             run.window = target;
             // A dialog that has only just opened has drawn nothing yet, and
@@ -767,6 +888,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             if gone.is_none() {
                 return Err(format!("the window {wanted:?} is still open"));
             }
+            *checks += 1;
             println!("nowindow: {wanted}");
             Ok(())
         }
@@ -833,6 +955,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 ));
             };
             let _ = std::fs::remove_file(&probe);
+            *checks += 1;
             let (x, y) = (found.x + found.width / 2, found.y + found.height / 2);
             run.at_the_front()?;
             run.input.move_to(area.x + x, area.y + y)?;
@@ -859,37 +982,43 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     let _ = screen::frame(run.portal, &seen);
                     return Err(format!("a {want} dialog is still open; see {}", seen.display()));
                 }
+                *checks += 1;
                 println!("nodialog: {want}");
                 return Ok(());
             }
+            let began = Instant::now();
             let opened = wait_until(Duration::from_secs(10), || {
                 run.portal.request_open(run.pid).ok().filter(|open| *open)
             });
             if opened.is_none() {
                 return Err(format!("no {want} dialog is open, so the button did nothing"));
             }
+            println!("dialog: request open after {}", crate::uitest::took(began.elapsed()));
             run.dialog_has_the_keyboard()?;
-            // Which dialog it is, is read off the screen. The dialog sits
-            // over the host's window from just under the host's strip, so
-            // what the window's place shows below the strip is the dialog.
+            let active = run.desktop.active();
+            let active_frame = active.and_then(|window| run.desktop.frame_rect(window).ok());
+            let (mx, my, mw, mh) = run.portal.monitor();
+            println!(
+                "dialog: has the keyboard after {}; the host is {:?}, the active window is {:?} \
+                 with frame {:?}; the monitor is {mx},{my} {mw}x{mh}",
+                crate::uitest::took(began.elapsed()),
+                run.host,
+                active,
+                active_frame
+            );
+            // Which dialog it is, is read off the screen, below the host's
+            // strip.
             let probe = run.work.join("dialog.png");
             let says = dialog::says(want);
             let deadline = Instant::now() + Duration::from_secs(20);
-            let mut before = None;
-            loop {
-                let button = run.accept_button(&says)?;
-                if dialog::settled(before, button) {
-                    break;
-                }
-                before = button;
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "a dialog is open, but nothing on it says {want:?}; see {}",
-                        probe.display()
-                    ));
-                }
+            if run.find_accept_button(&says, deadline)?.is_none() {
+                return Err(format!(
+                    "a dialog is open, but nothing on it says {want:?}; see {}",
+                    probe.display()
+                ));
             }
             let _ = std::fs::remove_file(&probe);
+            *checks += 1;
             sleep(HAND);
             println!("dialog: {want}");
             Ok(())
@@ -907,18 +1036,21 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .trim()
                 .parse()
                 .map_err(|_| format!("not a row: {value}"))?;
-            let area = run.area()?;
+            let window = run.area()?;
+            let area = Rect {
+                x: window.x,
+                y: window.y + below,
+                width: window.width,
+                height: (window.height - below).max(1),
+            };
             let probe = run.work.join("showing.png");
-            // The whole window is photographed and the answer kept to what
-            // is below Y afterwards: a picture cut to a band is read worse.
-            // Looked at until it is as the step says: what the step before
-            // did may not have been drawn yet.
+            // Only the window below Y is photographed. Looked at until it is
+            // as the step says: what the step before did may not have been
+            // drawn yet.
             let wanted = kind == "showing";
             let deadline = Instant::now() + Duration::from_secs(5);
             let found = loop {
-                let found = look::find_in(run.portal, area, text, &probe)?
-                    .iter()
-                    .any(|found| found.y >= below);
+                let found = !look::find_in(run.portal, area, text, &probe)?.is_empty();
                 if found == wanted || Instant::now() >= deadline {
                     break found;
                 }
@@ -928,7 +1060,6 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 // to say what it holds instead.
                 let saw: Vec<String> = look::read_in(run.portal, area, &probe)?
                     .into_iter()
-                    .filter(|(found, _)| found.y >= below)
                     .map(|(_, text)| text)
                     .collect();
                 let complaint = if wanted { "does not show" } else { "still shows" };
@@ -939,6 +1070,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 ));
             }
             let _ = std::fs::remove_file(&probe);
+            *checks += 1;
             println!("{kind}: {text}");
             Ok(())
         }
@@ -951,6 +1083,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let (to_x, to_y) = pair(to, "dragtext")?;
             let area = run.area()?;
             let from = text_below(run, text, below, "dragtext")?;
+            *checks += 1;
             // On the first glyph, not beside it: a press lands on the
             // nearest character boundary, and the boundary before the first
             // letter is the one its ink starts at.
@@ -970,6 +1103,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let (text, below) = text_and_row(value, "dbltext")?;
             let area = run.area()?;
             let found = text_below(run, text, below, "dbltext")?;
+            *checks += 1;
             let (x, y) = (
                 area.x + found.x + found.width / 2,
                 area.y + found.y + found.height / 2,
@@ -987,6 +1121,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let (text, below) = text_and_row(value, "righttext")?;
             let area = run.area()?;
             let found = text_below(run, text, below, "righttext")?;
+            *checks += 1;
             let (x, y) = (
                 area.x + found.x + found.width / 2,
                 area.y + found.y + found.height / 2,
@@ -1009,6 +1144,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .map_err(|_| format!("cannot read dragwords: {value}"))?;
             let area = run.area()?;
             let found = text_below(run, text, below, "dragwords")?;
+            *checks += 1;
             let row = area.y + found.y + found.height / 2;
             let x = area.x + found.x + found.width / 2;
             run.at_the_front()?;
@@ -1042,6 +1178,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     seen.display()
                 ));
             }
+            *checks += 1;
             Ok(())
         }
         "row" => {
@@ -1066,6 +1203,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     names.join(", ")
                 ));
             }
+            *checks += 1;
 
             // Look, then click: photograph the dialog, find the row in the
             // picture, and click where it is. A row further down than the
@@ -1150,7 +1288,8 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                 .map_err(|e| format!("the host wrote nothing about its geometry: {e}"))?;
             let to = path_of(value);
             std::fs::write(&to, &text).map_err(|e| format!("writing {}: {e}", to.display()))?;
-            println!("geometry: {}", text.replace('\n', " ").trim_end());
+            crate::uitest::confirm_written(&to)?;
+            println!("geometry:{}", text.replace('\n', " ").trim_end());
             // A report that does not have the editor filling the window is
             // either true or old: the host writes it when it draws. What
             // the X server has says which.
@@ -1190,7 +1329,22 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     .map_err(|e| format!("creating {}: {e}", parent.display()))?;
             }
             std::fs::write(&path, crate::png::solid(width as u32, height as u32, PICTURE_COLOUR))
-                .map_err(|e| format!("writing {}: {e}", path.display()))
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            crate::uitest::confirm_written(&path)
+        }
+        "copied" => {
+            // `copied:PATH` writes the text on the clipboard to PATH, for an
+            // expectation to read.
+            let path = path_of(value);
+            let text = arboard::Clipboard::new()
+                .map_err(|e| format!("the clipboard is not there to read: {e}"))?
+                .get_text()
+                .map_err(|e| format!("there is no text on the clipboard: {e}"))?;
+            std::fs::write(&path, &text)
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            crate::uitest::confirm_written(&path)?;
+            println!("copied:{} characters to {}", text.chars().count(), path.display());
+            Ok(())
         }
         "clipboard" => {
             // `clipboard:PATH` puts that picture on the clipboard, as a
@@ -1221,8 +1375,9 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let path = path_of(path);
             let want = want.trim().replace("\\n", "\n");
             // The save runs off the plugin's drawing thread, so the file is
-            // looked for until it is there and holds what it should.
-            wait_until(Duration::from_secs(5), || {
+            // looked for until it is there and holds what it should, for as
+            // long as a step has.
+            wait_until(crate::uitest::STEP_LIMIT, || {
                 std::fs::read_to_string(&path)
                     .is_ok_and(|got| got.contains(&want))
                     .then_some(())
@@ -1235,6 +1390,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
                     path.display()
                 ));
             }
+            *checks += 1;
             Ok(())
         }
         "shot" => {
@@ -1313,6 +1469,7 @@ fn step(run: &mut Run, kind: &str, value: &str) -> Result<(), String> {
             let report = PathBuf::from(format!("{}.txt", to.display()));
             std::fs::write(&report, format!("frames={total}\ndistinct_frames={distinct}\n"))
                 .map_err(|e| format!("writing {}: {e}", report.display()))?;
+            crate::uitest::confirm_written(&report)?;
             println!(
                 "film:   {distinct} distinct of {total} frames; {}",
                 video.display()
