@@ -498,9 +498,8 @@ if ($ExeArgs) {
 # of it.
 $launchLine = ($launchArgs | ForEach-Object { '"{0}"' -f $_ }) -join ' '
 
-# Wait for a file just written to be there: a step that writes a file is not
-# done until that file can be found. It is looked for until it is, or until
-# the step it was written in, begun at `$since`, has run out of time.
+# Wait until a file just written is there, or until the step it was written
+# in, begun at `$since`, has run out of time.
 function Confirm-Written([string]$path, [DateTime]$since = $script:stepStarted) {
     $deadline = $since.AddSeconds($STEP_LIMIT_S)
     while (-not (Test-Path -LiteralPath $path)) {
@@ -778,14 +777,16 @@ function Wait-Drawn([Win32Capture+RECT]$area) {
 # own strip, which is the plugin's toolbar. The host draws its strip and its
 # background long before the plugin has loaded and drawn its first frame, so
 # the window having colour in it says nothing about the plugin.
-function Wait-Loaded([Win32Capture+RECT]$area, [int]$TimeoutMs = $STEP_LIMIT_S * 1000) {
+#
+# Where the window is is read again on every look.
+function Wait-Loaded([IntPtr]$window, [int]$TimeoutMs = $STEP_LIMIT_S * 1000) {
     $probe = if ($outDir) {
         Join-Path $outDir 'capture-window-loaded.png'
     } else {
         Join-Path $env:TEMP 'capture-window-loaded.png'
     }
     $loaded = Wait-Until {
-        Save-Shot $area $probe
+        Save-Shot ([Win32Capture]::VisibleRect($window)) $probe
         try {
             @(Read-Text $probe | Where-Object { $_.Top -ge 40 }).Count -gt 0
         } catch { $false }
@@ -793,6 +794,19 @@ function Wait-Loaded([Win32Capture+RECT]$area, [int]$TimeoutMs = $STEP_LIMIT_S *
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     if (-not $loaded) { throw 'the plugin never drew anything to read in the host window' }
     Start-Sleep -Milliseconds $HAND_MS
+}
+
+# `$area` grown by half its width or height past every edge, as far as
+# `$screen` goes.
+function Get-Widened([Win32Capture+RECT]$area, $screen) {
+    $w = $area.Right - $area.Left
+    $h = $area.Bottom - $area.Top
+    $grown = New-Object Win32Capture+RECT
+    $grown.Left = [Math]::Max($screen.Left, $area.Left - [int]($w / 2))
+    $grown.Top = [Math]::Max($screen.Top, $area.Top - [int]($h / 2))
+    $grown.Right = [Math]::Min($screen.Right, $area.Right + [int]($w / 2))
+    $grown.Bottom = [Math]::Min($screen.Bottom, $area.Bottom + [int]($h / 2))
+    return $grown
 }
 
 # How long a hand takes over one key, and how long it takes to go from the
@@ -844,14 +858,14 @@ try {
         Write-Warning 'the window would not come to the front'
     }
 
-    $rect = [Win32Capture]::VisibleRect($hwnd)
     $left = $STEP_LIMIT_S * 1000 - [int]([DateTime]::UtcNow - $launched).TotalMilliseconds
     try {
-        Wait-Loaded $rect ([Math]::Max(0, $left))
+        Wait-Loaded $hwnd ([Math]::Max(0, $left))
     } catch {
         Set-Stalled 'starting the host' ([DateTime]::UtcNow - $launched)
         throw
     }
+    $rect = [Win32Capture]::VisibleRect($hwnd)
     # The screenshot is always of the window under test, whichever window the
     # steps were last clicking in.
     $hostRect = $rect
@@ -1032,15 +1046,32 @@ try {
                     } else {
                         Join-Path $env:TEMP 'capture-window-dialog.png'
                     }
-                    # The window is looked up again on every look: the first
-                    # second window to turn up need not be the dialog itself.
-                    $named = Wait-Until {
-                        $seen = [Win32Capture]::OtherWindow([uint32]$proc.Id, $hwnd)
-                        if ($seen -ne [IntPtr]::Zero) {
-                            Save-Shot ([Win32Capture]::VisibleRect($seen)) $probe
-                            Find-Label $probe $want
-                        }
-                    } 10000
+                    # Read first in the dialog's window and then, on every look
+                    # that does not find WORD, in a wider area. Outside the
+                    # dialog's window, what is in the host's strip does not
+                    # count.
+                    $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+                    $hostAt = [Win32Capture]::VisibleRect($hwnd)
+                    $area = [Win32Capture]::VisibleRect($panel)
+                    $inDialog = $true
+                    $deadline = $started.AddSeconds($STEP_LIMIT_S)
+                    $named = $false
+                    while ($true) {
+                        $lookAt = [DateTime]::UtcNow
+                        Save-Shot $area $probe
+                        $below = if ($inDialog) { 0 } else { $hostAt.Top - $area.Top + 40 }
+                        $named = @(Find-All $probe $want | Where-Object {
+                            $_.Top -ge $below
+                        }).Count -gt 0
+                        Write-Host ("look:   {0},{1} {2}x{3} took {4}: {5}" -f
+                            $area.Left, $area.Top,
+                            ($area.Right - $area.Left), ($area.Bottom - $area.Top),
+                            (Format-Span ([DateTime]::UtcNow - $lookAt)),
+                            $(if ($named) { 'found' } else { 'not found' }))
+                        if ($named -or [DateTime]::UtcNow -ge $deadline) { break }
+                        $area = Get-Widened $area $screen
+                        $inDialog = $false
+                    }
                     if (-not $named) {
                         throw "a dialog is open, but nothing on it says ""$want""; see $probe"
                     }
@@ -1243,8 +1274,8 @@ try {
                     if (-not [Win32Capture]::BringToFront($hwnd)) {
                         Write-Warning 'the restarted window would not come to the front'
                     }
+                    Wait-Loaded $hwnd
                     $rect = [Win32Capture]::VisibleRect($hwnd)
-                    Wait-Loaded $rect
                     $hostRect = $rect
                     $currentHwnd = $hwnd
                     $currentTitle = $Title

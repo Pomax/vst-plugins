@@ -92,6 +92,7 @@ fn main() -> ExitCode {
                  test [--release] [--all]                every test but the UI tests\n  \
                  test --only <name>                       one test and nothing else\n  \
                  test --ui <name>                         one UI test, or one suite\n  \
+                 test --start-at <name>                   that UI test and every one after it\n  \
                  uitest [name]                            drive the real window\n  \
                  frames <film> <dir>                      two frames a second of a film, as PNGs\n  \
                  clean                                    empty the build cache\n  \
@@ -375,7 +376,19 @@ fn frames(args: &[String]) -> Result<Vec<PathBuf>, String> {
 /// `uitest [name]` runs one test; with no name it runs all of them.
 fn uitest(args: &[String]) -> Result<(), String> {
     let root = workspace_root();
-    let only = args.iter().find(|a| !a.starts_with("--")).map(String::as_str);
+    let start_at = match args.iter().position(|a| a == "--start-at") {
+        Some(at) => Some(
+            args.get(at + 1)
+                .ok_or("--start-at needs the name of a UI test")?
+                .as_str(),
+        ),
+        None => None,
+    };
+    let only = args
+        .iter()
+        .enumerate()
+        .find(|&(i, a)| !a.starts_with("--") && (i == 0 || args[i - 1] != "--start-at"))
+        .map(|(_, a)| a.as_str());
 
     // Both halves have to exist: this plugin, and the host that opens it.
     let bundle = bundle(&["--release".to_string()])?;
@@ -386,7 +399,7 @@ fn uitest(args: &[String]) -> Result<(), String> {
     println!("host:   {}", host.display());
     println!("plugin: {}\n", plugin.display());
 
-    uitest::run(&root, only, &host, &plugin)
+    uitest::run(&root, only, start_at, &host, &plugin)
 }
 
 /// The mini host's executable, built from its current source.
@@ -716,6 +729,10 @@ fn test(args: &[String]) -> Result<(), String> {
             Err(format!("{what} failed"))
         }
     };
+
+    if let Some(at) = args.iter().position(|a| a == "--start-at") {
+        return uitest(&args[at..]);
+    }
 
     // The real-window tests and nothing else: all of them, or the one test or
     // suite named after the flag.

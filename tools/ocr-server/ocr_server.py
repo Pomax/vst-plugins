@@ -26,8 +26,6 @@ import os
 import sys
 from pathlib import Path
 
-# A picture that cannot be read is answered with an error line. OpenCV would
-# also print its own warning about it to stderr, which is the caller's console.
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 
 import cv2 as cv

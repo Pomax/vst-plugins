@@ -35,9 +35,8 @@ pub(crate) fn stalled(line: &str, spent: Duration) -> String {
     format!("stalled: {line} took {}, over the {} a step gets", took(spent), took(STEP_LIMIT))
 }
 
-/// Wait for a file just written to be there: a step that writes a file is not
-/// done until that file can be found. It is looked for until it is, or until
-/// a step's time has run out.
+/// Wait until a file just written is there, or until a step's time has run
+/// out.
 pub(crate) fn confirm_written(path: &Path) -> Result<(), String> {
     let deadline = Instant::now() + STEP_LIMIT;
     while !path.exists() {
@@ -748,9 +747,16 @@ fn drive(
 /// Run every UI test, or the one named.
 /// Run the UI tests, or just the named suite or test.
 ///
-/// `only` matches either a suite — `markdown-notes`, `mini-host` — or a single
+/// `only` matches either a suite, `markdown-notes` or `mini-host`, or a single
 /// test.
-pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Result<(), String> {
+pub fn run(
+    root: &Path,
+    only: Option<&str>,
+    start_at: Option<&str>,
+    host: &Path,
+    plugin: &Path,
+) -> Result<(), String> {
+    let mut started = false;
     let mut ran = 0;
     let mut passed = 0;
     let began = Instant::now();
@@ -783,6 +789,9 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
             if only.is_some_and(|name| name != suite && name != test.name) {
                 continue;
             }
+            if !reached(&mut started, start_at, &test.name) {
+                continue;
+            }
             ran += 1;
             println!("\nstarting {} at {}", file.display(), clock());
             note(root, &format!("running: {}", test.name));
@@ -806,14 +815,22 @@ pub fn run(root: &Path, only: Option<&str>, host: &Path, plugin: &Path) -> Resul
 
     if ran == 0 {
         let known: Vec<&str> = suites.iter().map(|(name, _)| name.as_str()).collect();
-        return Err(match only {
-            Some(name) => format!("no UI test or suite called {name}; suites are {known:?}"),
-            None => "no UI tests anywhere".to_string(),
+        return Err(match (only, start_at) {
+            (_, Some(name)) => format!("no UI test called {name} to start at"),
+            (Some(name), None) => format!("no UI test or suite called {name}; suites are {known:?}"),
+            (None, None) => "no UI tests anywhere".to_string(),
         });
     }
     println!();
     println!("{passed} UI tests, all passed in {}", took(began.elapsed()));
     Ok(())
+}
+
+fn reached(started: &mut bool, start_at: Option<&str>, name: &str) -> bool {
+    if start_at == Some(name) {
+        *started = true;
+    }
+    start_at.is_none() || *started
 }
 
 #[cfg(test)]
@@ -822,6 +839,26 @@ mod tests {
 
     fn parsed(text: &str) -> Test {
         parse_test("a-test".to_string(), text).expect("the test did not parse")
+    }
+
+    #[test]
+    fn a_run_started_at_a_test_runs_that_test_and_every_one_after_it() {
+        let mut started = false;
+        let run: Vec<&str> = ["first", "second", "third"]
+            .into_iter()
+            .filter(|name| reached(&mut started, Some("second"), name))
+            .collect();
+        assert_eq!(run, ["second", "third"]);
+    }
+
+    #[test]
+    fn a_run_with_nowhere_to_start_runs_every_test() {
+        let mut started = false;
+        let run: Vec<&str> = ["first", "second"]
+            .into_iter()
+            .filter(|name| reached(&mut started, None, name))
+            .collect();
+        assert_eq!(run, ["first", "second"]);
     }
 
     #[test]
