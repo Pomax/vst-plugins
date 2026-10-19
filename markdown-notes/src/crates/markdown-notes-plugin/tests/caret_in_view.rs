@@ -33,13 +33,11 @@ fn render(text: &str, caret: usize) -> image::RgbaImage {
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 
-    #[cfg(target_os = "linux")]
     let mut fonts_installed = false;
     let mut harness = Harness::builder()
         .with_size(egui::vec2(WIDTH, HEIGHT))
         .wgpu()
         .build_ui(move |ui| {
-            #[cfg(target_os = "linux")]
             if fonts_first(ui, &mut fonts_installed) {
                 return;
             }
@@ -56,11 +54,10 @@ fn render(text: &str, caret: usize) -> image::RgbaImage {
 ///
 /// The harness draws a frame as it is built, before a test can reach its
 /// context, and egui lays that frame out in its built-in font. The document
-/// is scrolled to its caret on that frame and not again. The system's font
-/// here has taller rows than the built-in one, so when it arrives the caret
-/// is left below the window. Opening a real window installs the fonts before
+/// is scrolled to its caret on that frame and not again. The editor's fonts
+/// have taller rows than the built-in one, so when they arrive the caret is
+/// left below the window. Opening a real window installs the fonts before
 /// its first frame, and this does the same.
-#[cfg(target_os = "linux")]
 fn fonts_first(ui: &egui::Ui, installed: &mut bool) -> bool {
     if *installed {
         return false;
@@ -102,13 +99,11 @@ fn open(text: &str, caret: usize, mode: markdown_notes_core::ViewMode) -> Harnes
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 
-    #[cfg(target_os = "linux")]
     let mut fonts_installed = false;
     let mut harness = Harness::builder()
         .with_size(egui::vec2(WIDTH, HEIGHT))
         .wgpu()
         .build_ui(move |ui| {
-            #[cfg(target_os = "linux")]
             if fonts_first(ui, &mut fonts_installed) {
                 return;
             }

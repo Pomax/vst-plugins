@@ -71,8 +71,7 @@ fn load_family(name: &str) -> Option<(String, Vec<u8>)> {
 /// lives in: a collection holds several faces, and the first of them is not
 /// necessarily the one matched.
 ///
-/// Panics when the machine has no such face. The editor is drawn in nothing
-/// else, so it cannot run without it.
+/// Panics when the machine has no such face.
 fn load_face(family: &str, weight: Weight) -> (String, egui::FontData) {
     let mut properties = Properties::new();
     properties.weight = weight;

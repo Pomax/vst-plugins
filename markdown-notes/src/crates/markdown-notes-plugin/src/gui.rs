@@ -14,9 +14,8 @@
 //!
 //! egui ships no bold font family, and none is bundled. Bold is drawn in the
 //! machine's own bold face, which [`crate::fonts::install_base`] loads beside
-//! the regular one, and in the scheme's bold text colour. On a machine with no
-//! bold face it is the regular face in that colour. Italic, strikethrough and
-//! underline are real text formatting.
+//! the regular one, and in the scheme's bold text colour. Italic,
+//! strikethrough and underline are real text formatting.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -166,6 +165,8 @@ struct Gui {
     /// When the caret last moved. The blink starts from there, so a caret
     /// being driven along by typing stays solid instead of flickering.
     caret_moved_at: f64,
+    /// Whether the document scrolls with animation. Off in [`TestGui`].
+    animated: bool,
     /// The mermaid blocks currently drawn as pictures.
     gallery: crate::diagram::Gallery,
     /// Where each picture was drawn this frame, top one first.
@@ -277,6 +278,7 @@ impl Gui {
             document_focused: true,
             caret_was: None,
             caret_moved_at: 0.0,
+            animated: true,
             gallery: crate::diagram::Gallery::default(),
             pictures: Pictures::default(),
             arrived: None,
@@ -563,18 +565,14 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
             state.bg_fill = handle;
         }
 
-        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-        // A scroll to the caret takes effect in the pass that asks for it. An
-        // animated area takes the new offset up at the start of the next
-        // pass, after that pass's contents are placed, so the pass drawn again
-        // after a caret move would still show the place the caret has left.
-        #[cfg(target_os = "linux")]
-        let area = area.animated(false);
-        area.show(ui, |ui| {
-            egui::Frame::default()
-                .inner_margin(DOCUMENT_MARGIN)
-                .show(ui, |ui| document(ui, gui));
-        });
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .animated(gui.animated)
+            .show(ui, |ui| {
+                egui::Frame::default()
+                    .inner_margin(DOCUMENT_MARGIN)
+                    .show(ui, |ui| document(ui, gui));
+            });
     });
 
     settings_dialog(ui, gui);
@@ -598,6 +596,7 @@ impl TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
         gui.arrived = opened;
+        gui.animated = false;
         TestGui(gui)
     }
 
@@ -606,6 +605,7 @@ impl TestGui {
     pub fn opening(editor: Shared, system_dark: bool) -> TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.animated = false;
         TestGui(gui)
     }
 

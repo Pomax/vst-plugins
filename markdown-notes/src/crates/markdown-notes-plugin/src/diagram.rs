@@ -54,8 +54,7 @@ pub const FONT_FAMILY: &str = crate::fonts::platform::DIAGRAM;
 /// [`FONT_FAMILY`] faces and nothing else, standing in for every generic
 /// family too.
 ///
-/// Panics when the machine has no [`FONT_FAMILY`], which no diagram can be
-/// lettered without.
+/// Panics when the machine has no [`FONT_FAMILY`].
 pub fn system_fonts() -> Arc<fontdb::Database> {
     use font_kit::handle::Handle;
 

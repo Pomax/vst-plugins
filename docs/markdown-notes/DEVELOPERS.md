@@ -103,7 +103,7 @@ run.bat
 ./run.sh
 ```
 
-Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first. Neither builds anything.
+Both open `../binaries/Markdown Notes.vst3` in the mini host, which lives in `../tools/mini-host` and must be built there first. Neither builds anything. Any flags given to them are passed on to the host, where the plugin reads them off the command line: `--light` or `--dark` sets the theme the plugin starts in, and `--demo` starts it with the explainer document loaded.
 
 The test task runs the pixel tests along with everything else. They sit behind
 the `snapshots` feature because the headless renderer pulls in the whole
@@ -524,22 +524,10 @@ decision table unit-testable without an operating system in the loop. The
 system setting is polled every two seconds rather than every frame, since
 reading it hits the registry on Windows and a desktop portal on Linux.
 
-**Fonts come from the operating system; none are bundled.** egui's default set
-is four typefaces and about 1.4 MB, which is a quarter of the plugin, and every
-platform it runs on already has fonts. The editor starts with the system UI and
-monospace faces — enough for Latin, Greek, Cyrillic, Hebrew and Arabic — and
-when text arrives in a script those cannot draw, the font for it is fetched
-from the system at that moment and added as a fallback. Nothing is captured at
-build time except a list of family names; the lookup happens on the machine
-running the plugin.
+**Fonts come from the operating system; none are bundled.** egui's default set is four typefaces and about 1.4 MB, which is a quarter of the plugin, and every platform it runs on already has fonts. Each platform's fonts are named in its own file, `src/fonts/windows.rs`, `src/fonts/macos.rs` and `src/fonts/linux.rs`: a sans-serif and a monospace family, each loaded in its regular and bold face, and the family diagrams are lettered in. Those faces cover Latin, Greek, Cyrillic, Hebrew and Arabic. A named face the machine does not have is a panic that names it: the editor cannot draw without it. When text arrives in a script the base faces cannot draw, the font for it is fetched from the system at that moment, from the same per-platform file's list, and added as a fallback. Nothing is captured at build time except family names; the lookup happens on the machine running the plugin.
 
 ## Known limitations
 
-- **Bold needs a bold face on the machine.** None is bundled: bold text is
-  drawn in the system's bold sans-serif face, loaded beside the regular one
-  (`fonts::bold_family`), and in the scheme's bold text colour. On a machine
-  with no bold face it is drawn in the regular one, and only the colour
-  tells it apart.
 - **Input ownership.** When the host has attached a window, the GUI receives
   key events natively and `onKeyDown` returns `kResultFalse` — handling both
   would type every character twice. Without a window, `onKeyDown` is the only
