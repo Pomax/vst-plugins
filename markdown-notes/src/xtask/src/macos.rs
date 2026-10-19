@@ -1536,7 +1536,7 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
                 return Err(format!("cannot read press: {value}"));
             }
             let (x, y) = pair(at, "press")?;
-            let window = window_rect(run.pid, &run.title)?;
+            let window = wait_for_window(run.pid, &run.title, Duration::from_secs(5))?;
             let near = (window.x + x, window.y + y);
             // A pointer left on the control by the step before draws it
             // highlighted, so it is put on the title bar first.
