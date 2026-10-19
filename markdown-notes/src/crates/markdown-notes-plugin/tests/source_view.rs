@@ -20,14 +20,23 @@ const TOOLBARS: u32 = 90;
 const FENCE_FILL: [u8; 4] = [255, 0, 255, 255];
 
 fn render(text: &str, mode: ViewMode) -> image::RgbaImage {
+    render_with(text, mode, |_| {})
+}
+
+/// [`render`], with `adjust` given the editor last.
+fn render_with(text: &str, mode: ViewMode, adjust: impl FnOnce(&mut Editor)) -> image::RgbaImage {
     let editor = Arc::new(Mutex::new(Editor::with_text(text)));
     if let Ok(mut e) = editor.lock() {
         e.theme = Theme::Light;
         e.colours.light.code_background = Rgba::rgba(255, 0, 255, 255);
+        // Source text in the grey body text is drawn in, so `is_text` counts
+        // a letter's rows the same way in both views.
+        e.colours.light.source_text = e.colours.light.body_text;
         e.mode = mode;
         // Off the first line: the caret reveals that line's markers, which is
         // a difference between the two views this is not measuring.
         e.clear_caret();
+        adjust(&mut e);
     }
     let mut state = markdown_notes_plugin::gui::TestGui::new(editor, false);
 
@@ -183,6 +192,36 @@ fn the_source_view_is_monospaced() {
              difference of {difference}, so the source is not in a monospaced \
              face\n      rendering: {}",
             saved(&image, "source-view-monospace")
+        );
+    }
+}
+
+/// The source view's text has a colour of its own, and the formatted view's
+/// text does not use it.
+#[test]
+fn the_source_view_draws_in_the_source_text_colour() {
+    const DOCUMENT: &str = "MMMMMMMMMMMM";
+    let green = |p: &&image::Rgba<u8>| {
+        let [r, g, b, _] = p.0.map(i32::from);
+        g > r + 60 && g > b + 60
+    };
+    let source_green = |e: &mut Editor| e.colours.light.source_text = Rgba::rgb(0, 160, 0);
+
+    let source = render_with(DOCUMENT, ViewMode::Raw, source_green);
+    if source.pixels().filter(green).count() == 0 {
+        panic!(
+            "no text in the source view is drawn in the source text colour\n      rendering: {}",
+            saved(&source, "source-view-colour")
+        );
+    }
+
+    let formatted = render_with(DOCUMENT, ViewMode::Wysiwyg, source_green);
+    let stray = formatted.pixels().filter(green).count();
+    if stray > 0 {
+        panic!(
+            "{stray} pixels of the formatted view are drawn in the source text \
+             colour\n      rendering: {}",
+            saved(&formatted, "source-view-colour-formatted")
         );
     }
 }

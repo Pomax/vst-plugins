@@ -483,9 +483,6 @@ Light and dark are two complete sets, in
 [`colours.rs`](../../markdown-notes/src/crates/markdown-notes-core/src/colours.rs), stored in plugin
 state and edited under the toolbar's gear. Neither is derived from the other.
 
-The defaults reproduce what egui's own light and dark visuals produced before
-the schemes existed, so an old project looks the same after loading.
-
 Some of what the editor shows is drawn by egui rather than by this code —
 buttons, fields, checkboxes, the scrollbar, the selection — so the scheme is
 written into `egui::Visuals` in `paint_visuals` before a frame is laid out, and

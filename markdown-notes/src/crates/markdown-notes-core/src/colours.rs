@@ -7,7 +7,7 @@
 //! The defaults are the colours the editor already used, so a project written
 //! before this existed looks exactly the same after it.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// One colour, as eight-bit channels with alpha.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -64,6 +64,8 @@ pub struct Colours {
     pub error_text: Rgba,
 
     pub body_text: Rgba,
+    /// Every line of the source view.
+    pub source_text: Rgba,
     /// Every heading level.
     pub heading_text: Rgba,
     pub bold_text: Rgba,
@@ -105,6 +107,7 @@ impl Colours {
             error_text: Rgba::rgb(255, 0, 0),
 
             body_text: Rgba::grey(80),
+            source_text: Rgba::grey(98),
             heading_text: Rgba::grey(80),
             bold_text: Rgba::grey(0),
             marker_text: Rgba::rgba(80, 80, 80, 153),
@@ -142,6 +145,7 @@ impl Colours {
             error_text: Rgba::rgb(255, 0, 0),
 
             body_text: Rgba::grey(140),
+            source_text: Rgba::grey(204),
             heading_text: Rgba::grey(140),
             bold_text: Rgba::grey(255),
             marker_text: Rgba::rgba(140, 140, 140, 153),
@@ -164,10 +168,31 @@ impl Colours {
 /// Both schemes. Which one is in use follows the theme setting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ColourScheme {
-    #[serde(default = "Colours::light")]
+    #[serde(default = "Colours::light", deserialize_with = "light")]
     pub light: Colours,
-    #[serde(default = "Colours::dark")]
+    #[serde(default = "Colours::dark", deserialize_with = "dark")]
     pub dark: Colours,
+}
+
+fn light<'de, D: Deserializer<'de>>(stored: D) -> Result<Colours, D::Error> {
+    filled(stored, Colours::light())
+}
+
+fn dark<'de, D: Deserializer<'de>>(stored: D) -> Result<Colours, D::Error> {
+    filled(stored, Colours::dark())
+}
+
+/// A stored scheme. `source_text` may be absent from it, and is then taken
+/// from `defaults`.
+fn filled<'de, D: Deserializer<'de>>(stored: D, defaults: Colours) -> Result<Colours, D::Error> {
+    let mut stored = serde_json::Value::deserialize(stored)?;
+    if let Some(fields) = stored.as_object_mut() {
+        if !fields.contains_key("source_text") {
+            let colour = serde_json::to_value(defaults.source_text).map_err(serde::de::Error::custom)?;
+            fields.insert("source_text".to_string(), colour);
+        }
+    }
+    serde_json::from_value(stored).map_err(serde::de::Error::custom)
 }
 
 impl Default for ColourScheme {
@@ -239,6 +264,20 @@ mod tests {
         // A half-written scheme is not a scheme; the whole thing falls back
         // rather than leaving most of the interface unpainted.
         assert!(serde_json::from_str::<ColourScheme>(json).is_err());
+    }
+
+    #[test]
+    fn a_scheme_saved_without_source_text_takes_each_schemes_default() {
+        let mut scheme = ColourScheme::default();
+        scheme.light.link = Rgba::rgb(8, 8, 8);
+        let mut stored = serde_json::to_value(scheme).unwrap();
+        for mode in ["light", "dark"] {
+            stored[mode].as_object_mut().unwrap().remove("source_text");
+        }
+        let back: ColourScheme = serde_json::from_value(stored).unwrap();
+        assert_eq!(back.light.source_text, Colours::light().source_text);
+        assert_eq!(back.dark.source_text, Colours::dark().source_text);
+        assert_eq!(back.light.link, Rgba::rgb(8, 8, 8));
     }
 
     #[test]

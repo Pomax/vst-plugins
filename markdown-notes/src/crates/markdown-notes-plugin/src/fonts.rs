@@ -123,7 +123,7 @@ fn name_of(font: &font_kit::font::Font) -> String {
 }
 
 /// Ask the system for one of its generic families.
-fn load_generic(family: FamilyName) -> Option<(String, Vec<u8>)> {
+fn load_generic(family: FamilyName) -> Option<(String, egui::FontData)> {
     load_weighted(family, &Properties::new())
 }
 
@@ -131,36 +131,59 @@ fn load_generic(family: FamilyName) -> Option<(String, Vec<u8>)> {
 ///
 /// egui bundles no bold font, and none is bundled here either: every face
 /// comes from the machine, and machines have a bold one.
-fn load_bold(family: FamilyName) -> Option<(String, Vec<u8>)> {
+fn load_bold(family: FamilyName) -> Option<(String, egui::FontData)> {
     let mut properties = Properties::new();
     properties.weight = font_kit::properties::Weight::BOLD;
     load_weighted(family, &properties)
 }
 
-fn load_weighted(family: FamilyName, properties: &Properties) -> Option<(String, Vec<u8>)> {
+/// The face that best matches `properties`, with its index in the file the
+/// face lives in: a collection holds several faces, and the first of them is
+/// not necessarily the one matched.
+fn load_weighted(family: FamilyName, properties: &Properties) -> Option<(String, egui::FontData)> {
     let handle = SystemSource::new()
         .select_best_match(&[family], properties)
         .ok()?;
+    let index = match &handle {
+        font_kit::handle::Handle::Path { font_index, .. }
+        | font_kit::handle::Handle::Memory { font_index, .. } => *font_index,
+    };
     let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
-    Some((name_of(&font), data.as_ref().clone()))
+    let mut face = egui::FontData::from_owned(data.as_ref().clone());
+    face.index = index;
+    Some((name_of(&font), face))
 }
 
 /// The family the bold face is installed under.
 pub const BOLD: &str = "bold";
 
+/// The family the bold monospace face is installed under.
+pub const MONO_BOLD: &str = "mono-bold";
+
 /// The family to draw bold text in.
-///
-/// [`install_base`] binds [`BOLD`] to the machine's bold face, but a font
-/// change only takes effect on the pass after the one that made it, so the
-/// very first pass of a context has neither. Asking which families exist costs
-/// a lookup and means never reaching for one that does not.
 pub fn bold_family(ui: &egui::Ui) -> FontFamily {
-    let bold = FontFamily::Name(BOLD.into());
-    if ui.fonts(|fonts| fonts.families().contains(&bold)) {
-        bold
+    installed_or(ui, BOLD, FontFamily::Proportional)
+}
+
+/// The family to draw the source view in.
+pub fn mono_bold_family(ui: &egui::Ui) -> FontFamily {
+    installed_or(ui, MONO_BOLD, FontFamily::Monospace)
+}
+
+/// The family named `name`, or `fallback` while there is none.
+///
+/// [`install_base`] binds [`BOLD`] and [`MONO_BOLD`] to the machine's bold
+/// faces, but a font change only takes effect on the pass after the one that
+/// made it, so the very first pass of a context has neither. Asking which
+/// families exist costs a lookup and means never reaching for one that does
+/// not.
+fn installed_or(ui: &egui::Ui, name: &str, fallback: FontFamily) -> FontFamily {
+    let family = FontFamily::Name(name.into());
+    if ui.fonts(|fonts| fonts.families().contains(&family)) {
+        family
     } else {
-        FontFamily::Proportional
+        fallback
     }
 }
 
@@ -168,14 +191,14 @@ pub fn bold_family(ui: &egui::Ui) -> FontFamily {
 pub fn install_base(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::empty();
 
-    let mut install = |loaded: Option<(String, Vec<u8>)>, target: FontFamily| -> bool {
-        let Some((name, bytes)) = loaded else {
+    let mut install = |loaded: Option<(String, egui::FontData)>, target: FontFamily| -> bool {
+        let Some((name, face)) = loaded else {
             return false;
         };
         fonts
             .font_data
             .entry(name.clone())
-            .or_insert_with(|| Arc::new(egui::FontData::from_owned(bytes)));
+            .or_insert_with(|| Arc::new(face));
         fonts.families.entry(target).or_default().push(name);
         true
     };
@@ -185,6 +208,10 @@ pub fn install_base(ctx: &egui::Context) {
     let bold = install(
         load_bold(FamilyName::SansSerif),
         FontFamily::Name(BOLD.into()),
+    );
+    let mono_bold = install(
+        load_bold(FamilyName::Monospace),
+        FontFamily::Name(MONO_BOLD.into()),
     );
 
     // A family with no font renders nothing, so each falls back to the other.
@@ -214,6 +241,14 @@ pub fn install_base(ctx: &egui::Context) {
             .cloned()
             .unwrap_or_default();
         fonts.families.insert(FontFamily::Name(BOLD.into()), names);
+    }
+    if !mono_bold {
+        let names = fonts
+            .families
+            .get(&FontFamily::Monospace)
+            .cloned()
+            .unwrap_or_default();
+        fonts.families.insert(FontFamily::Name(MONO_BOLD.into()), names);
     }
 
     ctx.set_fonts(fonts);

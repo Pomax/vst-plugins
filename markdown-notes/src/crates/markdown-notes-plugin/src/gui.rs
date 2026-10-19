@@ -1558,6 +1558,7 @@ const CHROME_FIELDS: &[Field] = &[
 
 const DOCUMENT_FIELDS: &[Field] = &[
     ("Body text", |c| &mut c.body_text),
+    ("Source text", |c| &mut c.source_text),
     ("Headings", |c| &mut c.heading_text),
     ("Bold text", |c| &mut c.bold_text),
     ("Markdown markers", |c| &mut c.marker_text),
@@ -2439,7 +2440,11 @@ fn line_body(
     palette: &Palette,
     pad: Padding,
 ) -> DrawnLine {
-    let base = if raw { source_format(palette) } else { base_format(block, palette) };
+    let base = if raw {
+        source_format(palette, crate::fonts::mono_bold_family(ui))
+    } else {
+        base_format(block, palette)
+    };
     let bold = crate::fonts::bold_family(ui);
     // A fence and the lines inside it are one block, not text that happens to
     // be coloured. Every row of it is painted, so consecutive rows join up.
@@ -2627,10 +2632,10 @@ fn push(job: &mut LayoutJob, map: &mut Vec<usize>, text: &str, source_start: usi
 
 /// One face, one size, one colour: what every line is drawn in while the
 /// source is showing.
-fn source_format(palette: &Palette) -> TextFormat {
+fn source_format(palette: &Palette, family: FontFamily) -> TextFormat {
     TextFormat {
-        font_id: FontId::new(15.0, FontFamily::Monospace),
-        color: palette.body,
+        font_id: FontId::new(15.0, family),
+        color: palette.source,
         ..Default::default()
     }
 }
@@ -2667,6 +2672,7 @@ fn base_format(block: &Block, palette: &Palette) -> TextFormat {
 #[derive(Clone, Copy)]
 struct Palette {
     body: Color32,
+    source: Color32,
     heading: Color32,
     strong: Color32,
     dim: Color32,
@@ -2684,6 +2690,7 @@ impl Palette {
     fn from(c: &markdown_notes_core::Colours) -> Palette {
         Palette {
             body: rgba(c.body_text),
+            source: rgba(c.source_text),
             heading: rgba(c.heading_text),
             strong: rgba(c.bold_text),
             dim: rgba(c.marker_text),
