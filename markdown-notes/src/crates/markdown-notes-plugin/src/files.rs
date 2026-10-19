@@ -19,7 +19,7 @@ const EXPLAINER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default-conte
 
 /// The explainer document as text. The deflated bytes were made from a UTF-8
 /// file by the build, so inflating cannot fail on what it was given.
-fn explainer() -> String {
+pub(crate) fn explainer() -> String {
     use std::io::Read;
     let mut text = String::new();
     flate2::read::DeflateDecoder::new(EXPLAINER)

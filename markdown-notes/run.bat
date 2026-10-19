@@ -20,5 +20,5 @@ if not exist "%PLUGIN%" (
     exit /b 1
 )
 
-"%HOST%" "%PLUGIN%"
+"%HOST%" "%PLUGIN%" %*
 exit /b %ERRORLEVEL%

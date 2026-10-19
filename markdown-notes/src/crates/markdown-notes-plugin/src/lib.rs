@@ -222,8 +222,12 @@ impl MarkdownNotes {
     pub const CID: TUID = uid(0x4E4F5445, 0x50414430, 0x6D64ED17, 0x0A1B2C3D);
 
     pub fn new() -> MarkdownNotes {
+        let mut editor = Editor::new();
+        if std::env::args().any(|arg| arg == "--demo") {
+            editor.open_text(&files::explainer());
+        }
         MarkdownNotes {
-            editor: Arc::new(Mutex::new(Editor::new())),
+            editor: Arc::new(Mutex::new(editor)),
             arrangement: Mutex::new(SpeakerArr::kStereo),
         }
     }

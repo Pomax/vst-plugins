@@ -31,4 +31,4 @@ if [ -z "$plugin" ]; then
     exit 1
 fi
 
-exec "$host" "$plugin"
+exec "$host" "$plugin" "$@"

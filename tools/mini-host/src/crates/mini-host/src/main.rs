@@ -52,7 +52,11 @@ fn parse_args() -> Args {
             // For the plugin, which reads the theme to draw in off this
             // process's command line.
             "--light" | "--dark" => {}
-            _ => args.plugin = Some(PathBuf::from(arg)),
+            _ if arg.to_ascii_lowercase().trim_end_matches(['/', '\\']).ends_with(".vst3") => {
+                args.plugin = Some(PathBuf::from(arg))
+            }
+            // Any other argument is the plugin's as well.
+            _ => {}
         }
     }
     args
