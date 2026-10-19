@@ -347,16 +347,21 @@ fn a_cut_name_is_whole_again_while_it_is_being_edited() {
     assert_eq!(title_now(&editor), format!("{LONG}!"));
 }
 
-/// Where the caret is drawn in `rect`: the column inked from the top of the
-/// row to the bottom of it. No letter is, since none fills both the room above
-/// the small letters and the room below the line.
+/// Whether a pixel is the caret's. The caret is drawn in the theme's blue,
+/// and the name in a grey, whose channels are alike.
+fn is_caret(p: [u8; 4]) -> bool {
+    p[3] == 255 && i32::from(p[2]) - i32::from(p[0]) > 60
+}
+
+/// Where the caret is drawn in `rect`: the column in the caret's colour from
+/// the top of the row to the bottom of it.
 fn caret_column(image: &image::RgbaImage, rect: egui::Rect) -> Option<u32> {
     // The field's right edge can be part of the way across a pixel, and a
     // caret at the end of the field is drawn on that pixel's column, so the
     // column counts as the field's.
     let end = rect.right().ceil() as u32;
     (rect.left() as u32..end).find(|&x| {
-        (rect.top() as u32 + 4..rect.bottom() as u32 - 4).all(|y| is_ink(image.get_pixel(x, y).0))
+        (rect.top() as u32 + 4..rect.bottom() as u32 - 4).all(|y| is_caret(image.get_pixel(x, y).0))
     })
 }
 
