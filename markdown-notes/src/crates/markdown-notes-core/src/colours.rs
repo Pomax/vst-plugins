@@ -146,7 +146,7 @@ impl Colours {
 
             body_text: Rgba::grey(140),
             source_text: Rgba::grey(204),
-            heading_text: Rgba::grey(140),
+            heading_text: Rgba::grey(197),
             bold_text: Rgba::grey(255),
             marker_text: Rgba::rgba(140, 140, 140, 153),
             strikethrough: Rgba::rgba(140, 140, 140, 153),

@@ -226,6 +226,13 @@ impl MarkdownNotes {
         if std::env::args().any(|arg| arg == "--demo") {
             editor.open_text(&files::explainer());
         }
+        if let Some(dark) = gui::forced_dark() {
+            editor.theme = if dark {
+                markdown_notes_core::Theme::Dark
+            } else {
+                markdown_notes_core::Theme::Light
+            };
+        }
         MarkdownNotes {
             editor: Arc::new(Mutex::new(editor)),
             arrangement: Mutex::new(SpeakerArr::kStereo),

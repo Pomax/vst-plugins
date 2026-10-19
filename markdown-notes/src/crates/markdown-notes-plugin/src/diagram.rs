@@ -48,20 +48,35 @@ pub struct Picture {
 }
 
 /// The family every diagram is lettered in.
-pub const FONT_FAMILY: &str = "Arial";
+pub const FONT_FAMILY: &str = crate::fonts::platform::DIAGRAM;
 
-/// The fonts the text in a diagram is drawn with: the machine's Arial faces
-/// and nothing else, standing in for every generic family too.
+/// The fonts the text in a diagram is drawn with: the machine's
+/// [`FONT_FAMILY`] faces and nothing else, standing in for every generic
+/// family too.
+///
+/// Panics when the machine has no [`FONT_FAMILY`], which no diagram can be
+/// lettered without.
 pub fn system_fonts() -> Arc<fontdb::Database> {
+    use font_kit::handle::Handle;
+
+    let family = font_kit::source::SystemSource::new()
+        .select_family_by_name(FONT_FAMILY)
+        .unwrap_or_else(|_| panic!("the font {FONT_FAMILY} is not installed"));
     let mut fonts = fontdb::Database::new();
-    fonts.load_system_fonts();
-    let others: Vec<fontdb::ID> = fonts
-        .faces()
-        .filter(|face| !face.families.iter().any(|(name, _)| name == FONT_FAMILY))
-        .map(|face| face.id)
-        .collect();
-    for id in others {
-        fonts.remove_face(id);
+    let mut files = HashSet::new();
+    for handle in family.fonts() {
+        match handle {
+            // A collection file holds several faces, and loading it once
+            // loads all of them.
+            Handle::Path { path, .. } => {
+                if files.insert(path.clone()) {
+                    fonts.load_font_file(path).unwrap_or_else(|e| {
+                        panic!("the font {FONT_FAMILY} could not be read from {}: {e}", path.display())
+                    });
+                }
+            }
+            Handle::Memory { bytes, .. } => fonts.load_font_data(bytes.to_vec()),
+        }
     }
     fonts.set_serif_family(FONT_FAMILY);
     fonts.set_sans_serif_family(FONT_FAMILY);
