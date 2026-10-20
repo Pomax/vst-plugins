@@ -226,6 +226,13 @@ impl MarkdownNotes {
         if std::env::args().any(|arg| arg == "--demo") {
             editor.open_text(&files::explainer());
         }
+        if let Some(dark) = gui::forced_dark() {
+            editor.theme = if dark {
+                markdown_notes_core::Theme::Dark
+            } else {
+                markdown_notes_core::Theme::Light
+            };
+        }
         MarkdownNotes {
             editor: Arc::new(Mutex::new(editor)),
             arrangement: Mutex::new(SpeakerArr::kStereo),
@@ -731,12 +738,8 @@ impl IPlugViewTrait for MarkdownNotesView {
     /// The host has resized us: remember it so it is saved with the project,
     /// and give the window its new size.
     ///
-    /// On Windows the host resizes the editor's own window and baseview hears
-    /// of it through `WM_SIZE`. On macOS the host's view stretches the
-    /// editor's view through its autoresizing mask, which baseview never
-    /// hears of: it only reports a resize it made itself. So the size the
-    /// host announces here is handed to the window, and that is what makes
-    /// the editor lay out at the new size rather than stretch its picture.
+    /// On Windows baseview takes the new size from `WM_SIZE`. On macOS and
+    /// Linux nothing gives it this size, so it is handed to the window here.
     unsafe fn onSize(&self, new_size: *mut ViewRect) -> tresult {
         let rect = &*new_size;
         let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
@@ -746,7 +749,7 @@ impl IPlugViewTrait for MarkdownNotesView {
             };
             editor.set_size(width, height);
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Ok(slot) = self.window.try_borrow() {
             if let Some(window) = slot.as_ref() {
                 let size = baseview::dpi::Size::Logical(baseview::dpi::LogicalSize::new(

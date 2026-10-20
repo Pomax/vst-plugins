@@ -14,9 +14,8 @@
 //!
 //! egui ships no bold font family, and none is bundled. Bold is drawn in the
 //! machine's own bold face, which [`crate::fonts::install_base`] loads beside
-//! the regular one, and in the scheme's bold text colour. On a machine with no
-//! bold face it is the regular face in that colour. Italic, strikethrough and
-//! underline are real text formatting.
+//! the regular one, and in the scheme's bold text colour. Italic,
+//! strikethrough and underline are real text formatting.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -166,6 +165,8 @@ struct Gui {
     /// When the caret last moved. The blink starts from there, so a caret
     /// being driven along by typing stays solid instead of flickering.
     caret_moved_at: f64,
+    /// Whether the document scrolls with animation. Off in [`TestGui`].
+    animated: bool,
     /// The mermaid blocks currently drawn as pictures.
     gallery: crate::diagram::Gallery,
     /// Where each picture was drawn this frame, top one first.
@@ -277,6 +278,7 @@ impl Gui {
             document_focused: true,
             caret_was: None,
             caret_moved_at: 0.0,
+            animated: true,
             gallery: crate::diagram::Gallery::default(),
             pictures: Pictures::default(),
             arrived: None,
@@ -331,13 +333,13 @@ impl Gui {
 /// `Unspecified` — and any failure to ask — is treated as dark, matching the
 /// editor's default appearance rather than flipping to a jarring white.
 fn system_is_dark() -> bool {
-    forced_dark().unwrap_or_else(|| !matches!(dark_light::detect(), Ok(dark_light::Mode::Light)))
+    !matches!(dark_light::detect(), Ok(dark_light::Mode::Light))
 }
 
 /// The theme the process was started with on its command line: `--dark` or
 /// `--light`. The plugin runs inside its host, so this is the host's command
-/// line. Either one draws every theme setting in that theme.
-fn forced_dark() -> Option<bool> {
+/// line. Either one sets the theme the plugin starts in.
+pub(crate) fn forced_dark() -> Option<bool> {
     std::env::args().find_map(|arg| match arg.as_str() {
         "--dark" => Some(true),
         "--light" => Some(false),
@@ -563,18 +565,14 @@ fn draw_ui(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
             state.bg_fill = handle;
         }
 
-        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-        // A scroll to the caret takes effect in the pass that asks for it. An
-        // animated area takes the new offset up at the start of the next
-        // pass, after that pass's contents are placed, so the pass drawn again
-        // after a caret move would still show the place the caret has left.
-        #[cfg(target_os = "linux")]
-        let area = area.animated(false);
-        area.show(ui, |ui| {
-            egui::Frame::default()
-                .inner_margin(DOCUMENT_MARGIN)
-                .show(ui, |ui| document(ui, gui));
-        });
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .animated(gui.animated)
+            .show(ui, |ui| {
+                egui::Frame::default()
+                    .inner_margin(DOCUMENT_MARGIN)
+                    .show(ui, |ui| document(ui, gui));
+            });
     });
 
     settings_dialog(ui, gui);
@@ -598,6 +596,7 @@ impl TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
         gui.arrived = opened;
+        gui.animated = false;
         TestGui(gui)
     }
 
@@ -606,6 +605,7 @@ impl TestGui {
     pub fn opening(editor: Shared, system_dark: bool) -> TestGui {
         let mut gui = Gui::new(editor);
         gui.system_dark = system_dark;
+        gui.animated = false;
         TestGui(gui)
     }
 
@@ -758,7 +758,7 @@ fn apply_theme(ui: &mut egui::Ui, gui: &mut Gui) -> Color32 {
         gui.refresh_system_theme();
     }
 
-    let dark = forced_dark().unwrap_or_else(|| theme.is_dark(gui.system_dark));
+    let dark = theme.is_dark(gui.system_dark);
     let scheme = *colours.for_mode(dark);
     if gui.applied_dark != Some(dark) || gui.applied_colours != Some(scheme) {
         let mut visuals = if dark {

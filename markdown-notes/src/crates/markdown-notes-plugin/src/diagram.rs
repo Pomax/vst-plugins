@@ -48,20 +48,24 @@ pub struct Picture {
 }
 
 /// The family every diagram is lettered in.
-pub const FONT_FAMILY: &str = "Arial";
+pub const FONT_FAMILY: &str = crate::fonts::platform::DIAGRAM_FAMILY;
 
-/// The fonts the text in a diagram is drawn with: the machine's Arial faces
-/// and nothing else, standing in for every generic family too.
+/// The face every diagram is lettered in.
+pub const FONT_FACE: &str = crate::fonts::platform::DIAGRAM_REGULAR;
+
+/// The font the text in a diagram is drawn with: [`FONT_FACE`] and nothing
+/// else, standing in for every generic family too.
+///
+/// Panics when the machine has no [`FONT_FACE`].
 pub fn system_fonts() -> Arc<fontdb::Database> {
+    let (bytes, index) = crate::fonts::face_data(FONT_FAMILY, FONT_FACE);
     let mut fonts = fontdb::Database::new();
-    fonts.load_system_fonts();
-    let others: Vec<fontdb::ID> = fonts
-        .faces()
-        .filter(|face| !face.families.iter().any(|(name, _)| name == FONT_FAMILY))
-        .map(|face| face.id)
-        .collect();
-    for id in others {
-        fonts.remove_face(id);
+    // A collection file holds several faces, and loading it loads all of
+    // them, so every face but the one named is taken out again.
+    for id in fonts.load_font_source(fontdb::Source::Binary(Arc::new(bytes))) {
+        if fonts.face(id).map(|face| face.index) != Some(index) {
+            fonts.remove_face(id);
+        }
     }
     fonts.set_serif_family(FONT_FAMILY);
     fonts.set_sans_serif_family(FONT_FAMILY);

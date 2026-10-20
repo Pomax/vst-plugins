@@ -57,12 +57,7 @@ run.bat ..\..\binaries\Markdown Notes.vst3
 `run` builds nothing. It uses `../../binaries/mini-host`, falling back to
 `.cache/release/mini-host`, and fails if neither is there.
 
-Besides the plugin's path the host takes `--preset FILE`, a preset to restore
-before the editor is opened, and two things the UI tests use: `--state FILE`,
-where the plugin's state is written when the window closes, and
-`--geometry FILE`, where the host writes what its window and the plugin's
-window inside it measure. With no path at all it asks for a plugin in a file
-dialog.
+The plugin is the argument ending in `.vst3`, wherever it comes on the command line. Besides it the host takes `--preset FILE`, a preset to restore before the editor is opened, and two things the UI tests use: `--state FILE`, where the plugin's state is written when the window closes, and `--geometry FILE`, where the host writes what its window and the plugin's window inside it measure. Every other argument is left for the plugin, which can read it off the host's command line. With no plugin path at all it asks for a plugin in a file dialog.
 
 To inspect a plugin instead of opening it, use the loader, in
 `tools/vst3-loader`:

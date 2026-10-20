@@ -84,9 +84,9 @@ fn ask_for_plugin() -> Option<PathBuf> {
         .pick_file()
 }
 
-/// Elsewhere a `.vst3` is an ordinary directory, so the directory dialog
+/// On Linux a `.vst3` is an ordinary directory, so the directory dialog
 /// picks it.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
 fn ask_for_plugin() -> Option<PathBuf> {
     dialog().pick_folder()
 }

@@ -245,14 +245,18 @@ def within(key, text, allowed):
 
 
 def answer(detect, recognise, request):
-    parts = request.rstrip("\r\n").split("\t")
+    # Windows PowerShell's pipe writer puts a byte order mark in front of the
+    # first request.
+    parts = request.lstrip("﻿").rstrip("\r\n").split("\t")
     path = parts[0]
     wanted = parts[1] if len(parts) > 1 and parts[1] else None
     sized = parts[2] if len(parts) > 2 and parts[2] else None
 
+    if not os.path.isfile(path):
+        return [f"error there is no file {path!r}"]
     picture = cv.imread(path, cv.IMREAD_COLOR)
     if picture is None:
-        return [f"error could not read {path}"]
+        return [f"error {path!r} is not a picture OpenCV can read"]
     height, width = picture.shape[:2]
     read = regions(detect, recognise, picture)
 
@@ -267,7 +271,8 @@ def answer(detect, recognise, request):
 def main():
     for model in (DETECTION, RECOGNITION):
         if not model.exists():
-            print(f"error {model} is not there; run {HERE / 'setup.sh'}", flush=True)
+            setup = HERE / ("setup.bat" if os.name == "nt" else "setup.sh")
+            print(f"error {model} is not there; run {setup}", flush=True)
             print("end", flush=True)
             return
     detect = detector()

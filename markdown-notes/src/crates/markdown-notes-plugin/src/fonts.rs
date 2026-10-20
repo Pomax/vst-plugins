@@ -49,48 +49,10 @@ fn script_of(c: char) -> Option<Script> {
     }
 }
 
-/// Font families that ship with the platform, in preference order.
-fn families_for(script: Script) -> &'static [&'static str] {
-    #[cfg(target_os = "windows")]
-    {
-        match script {
-            Script::Japanese => &["Yu Gothic UI", "Yu Gothic", "Meiryo", "MS Gothic"],
-            Script::Korean => &["Malgun Gothic", "Gulim"],
-            Script::Han => &["Microsoft YaHei UI", "Microsoft YaHei", "Microsoft JhengHei UI", "SimSun"],
-            Script::Indic => &["Nirmala UI", "Mangal"],
-            Script::Thai => &["Leelawadee UI", "Tahoma"],
-            Script::Ethiopic => &["Ebrima", "Nyala"],
-            Script::Emoji => &["Segoe UI Emoji", "Segoe UI Symbol"],
-            Script::Other => &["Segoe UI Historic", "Segoe UI Symbol", "Arial Unicode MS"],
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        match script {
-            Script::Japanese => &["Hiragino Sans", "Hiragino Kaku Gothic ProN"],
-            Script::Korean => &["Apple SD Gothic Neo", "AppleGothic"],
-            Script::Han => &["PingFang SC", "PingFang TC", "Heiti SC"],
-            Script::Indic => &["Kohinoor Devanagari", "Devanagari Sangam MN"],
-            Script::Thai => &["Thonburi", "Ayuthaya"],
-            Script::Ethiopic => &["Kefa"],
-            Script::Emoji => &["Apple Color Emoji"],
-            Script::Other => &["Arial Unicode MS", "Apple Symbols"],
-        }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        match script {
-            Script::Japanese | Script::Korean | Script::Han => {
-                &["Noto Sans CJK JP", "Noto Sans CJK SC", "Source Han Sans"]
-            }
-            Script::Indic => &["Noto Sans Devanagari", "Lohit Devanagari"],
-            Script::Thai => &["Noto Sans Thai", "Garuda"],
-            Script::Ethiopic => &["Noto Sans Ethiopic"],
-            Script::Emoji => &["Noto Color Emoji", "Noto Emoji"],
-            Script::Other => &["Noto Sans", "DejaVu Sans"],
-        }
-    }
-}
+#[cfg_attr(target_os = "windows", path = "fonts/windows.rs")]
+#[cfg_attr(target_os = "macos", path = "fonts/macos.rs")]
+#[cfg_attr(target_os = "linux", path = "fonts/linux.rs")]
+pub(crate) mod platform;
 
 /// Ask the system for a font by family name and hand back its bytes.
 fn load_family(name: &str) -> Option<(String, Vec<u8>)> {
@@ -102,57 +64,48 @@ fn load_family(name: &str) -> Option<(String, Vec<u8>)> {
         .ok()?;
     let font = handle.load().ok()?;
     let data = font.copy_font_data()?;
-    Some((name_of(&font), data.as_ref().clone()))
+    Some((platform::name_of(&font), data.as_ref().clone()))
 }
 
-/// The name a face is filed under, which no other face may share.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn name_of(font: &font_kit::font::Font) -> String {
-    font.full_name()
-}
-
-/// The name a face is filed under, which no other face may share.
+/// The face of `family` whose PostScript name is `postscript_name`, ready for
+/// egui and filed under that name.
 ///
-/// The FreeType loader reads a full name only from name records most fonts do
-/// not carry, and gives the family's name in its place. The regular and the
-/// bold face of a family then have one name between them, and the second to
-/// be filed is dropped. The PostScript name is the face's own.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn name_of(font: &font_kit::font::Font) -> String {
-    font.postscript_name().unwrap_or_else(|| font.full_name())
+/// Panics when the machine has no such face.
+fn load_face(family: &str, postscript_name: &str) -> (String, egui::FontData) {
+    let (bytes, index) = face_data(family, postscript_name);
+    let mut data = egui::FontData::from_owned(bytes);
+    data.index = index;
+    (postscript_name.to_string(), data)
 }
 
-/// Ask the system for one of its generic families.
-fn load_generic(family: FamilyName) -> Option<(String, egui::FontData)> {
-    load_weighted(family, &Properties::new())
-}
-
-/// The bold face of one of the system's generic families.
+/// The face of `family` whose PostScript name is `postscript_name`: the bytes
+/// of the file it lives in, and its index in them. A collection holds several
+/// faces, and the first of them is not necessarily the one named.
 ///
-/// egui bundles no bold font, and none is bundled here either: every face
-/// comes from the machine, and machines have a bold one.
-fn load_bold(family: FamilyName) -> Option<(String, egui::FontData)> {
-    let mut properties = Properties::new();
-    properties.weight = font_kit::properties::Weight::BOLD;
-    load_weighted(family, &properties)
-}
+/// Panics when the machine has no such face.
+pub(crate) fn face_data(family: &str, postscript_name: &str) -> (Vec<u8>, u32) {
+    use font_kit::handle::Handle;
 
-/// The face that best matches `properties`, with its index in the file the
-/// face lives in: a collection holds several faces, and the first of them is
-/// not necessarily the one matched.
-fn load_weighted(family: FamilyName, properties: &Properties) -> Option<(String, egui::FontData)> {
-    let handle = SystemSource::new()
-        .select_best_match(&[family], properties)
-        .ok()?;
-    let index = match &handle {
-        font_kit::handle::Handle::Path { font_index, .. }
-        | font_kit::handle::Handle::Memory { font_index, .. } => *font_index,
-    };
-    let font = handle.load().ok()?;
-    let data = font.copy_font_data()?;
-    let mut face = egui::FontData::from_owned(data.as_ref().clone());
-    face.index = index;
-    Some((name_of(&font), face))
+    let found = SystemSource::new()
+        .select_family_by_name(family)
+        .unwrap_or_else(|_| panic!("the font {family} is not installed"));
+    let handle = found
+        .fonts()
+        .iter()
+        .find(|handle| {
+            handle.load().ok().and_then(|font| font.postscript_name()).as_deref()
+                == Some(postscript_name)
+        })
+        .unwrap_or_else(|| panic!("the font {family} has no face named {postscript_name}"));
+    match handle {
+        Handle::Path { path, font_index } => (
+            std::fs::read(path).unwrap_or_else(|e| {
+                panic!("the font {postscript_name} could not be read from {}: {e}", path.display())
+            }),
+            *font_index,
+        ),
+        Handle::Memory { bytes, font_index } => (bytes.to_vec(), *font_index),
+    }
 }
 
 /// The family the bold face is installed under.
@@ -187,70 +140,20 @@ fn installed_or(ui: &egui::Ui, name: &str, fallback: FontFamily) -> FontFamily {
     }
 }
 
-/// Install the base UI and monospace faces.
+/// Install the base UI and monospace faces, regular and bold.
 pub fn install_base(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::empty();
-
-    let mut install = |loaded: Option<(String, egui::FontData)>, target: FontFamily| -> bool {
-        let Some((name, face)) = loaded else {
-            return false;
-        };
-        fonts
-            .font_data
-            .entry(name.clone())
-            .or_insert_with(|| Arc::new(face));
-        fonts.families.entry(target).or_default().push(name);
-        true
-    };
-
-    let sans = install(load_generic(FamilyName::SansSerif), FontFamily::Proportional);
-    let mono = install(load_generic(FamilyName::Monospace), FontFamily::Monospace);
-    let bold = install(
-        load_bold(FamilyName::SansSerif),
-        FontFamily::Name(BOLD.into()),
-    );
-    let mono_bold = install(
-        load_bold(FamilyName::Monospace),
-        FontFamily::Name(MONO_BOLD.into()),
-    );
-
-    // A family with no font renders nothing, so each falls back to the other.
-    if !sans {
-        let names = fonts
-            .families
-            .get(&FontFamily::Monospace)
-            .cloned()
-            .unwrap_or_default();
-        fonts.families.insert(FontFamily::Proportional, names);
+    let faces = [
+        (platform::SANS_FAMILY, platform::SANS_REGULAR, FontFamily::Proportional),
+        (platform::MONO_FAMILY, platform::MONO_REGULAR, FontFamily::Monospace),
+        (platform::SANS_FAMILY, platform::SANS_BOLD, FontFamily::Name(BOLD.into())),
+        (platform::MONO_FAMILY, platform::MONO_BOLD, FontFamily::Name(MONO_BOLD.into())),
+    ];
+    for (family, postscript_name, target) in faces {
+        let (name, data) = load_face(family, postscript_name);
+        fonts.font_data.insert(name.clone(), Arc::new(data));
+        fonts.families.insert(target, vec![name]);
     }
-    if !mono {
-        let names = fonts
-            .families
-            .get(&FontFamily::Proportional)
-            .cloned()
-            .unwrap_or_default();
-        fonts.families.insert(FontFamily::Monospace, names);
-    }
-
-    // No bold face on the machine means bold falls back to the ordinary one,
-    // so a document still reads rather than rendering as nothing.
-    if !bold {
-        let names = fonts
-            .families
-            .get(&FontFamily::Proportional)
-            .cloned()
-            .unwrap_or_default();
-        fonts.families.insert(FontFamily::Name(BOLD.into()), names);
-    }
-    if !mono_bold {
-        let names = fonts
-            .families
-            .get(&FontFamily::Monospace)
-            .cloned()
-            .unwrap_or_default();
-        fonts.families.insert(FontFamily::Name(MONO_BOLD.into()), names);
-    }
-
     ctx.set_fonts(fonts);
 }
 
@@ -276,7 +179,8 @@ pub fn ensure_coverage(ctx: &egui::Context, text: &str, loaded: &mut HashSet<Scr
     let mut added = false;
     for script in wanted {
         loaded.insert(script);
-        let Some((name, bytes)) = families_for(script).iter().find_map(|f| load_family(f)) else {
+        let Some((name, bytes)) = platform::families_for(script).iter().find_map(|f| load_family(f))
+        else {
             continue;
         };
         ctx.add_font(FontInsert::new(

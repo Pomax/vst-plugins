@@ -767,6 +767,9 @@ pub fn run(
     // can satisfy a file-exists expectation the new run never earned.
     let _ = std::fs::remove_dir_all(root.join(".cache").join("uitests"));
 
+    #[cfg(not(target_os = "windows"))]
+    crate::ocr::ready(&root.join(".cache").join("uitests"))?;
+
     for (suite, dir) in &suites {
         if only.is_some_and(|name| name == suite) {
             // Naming the suite runs all of it.

@@ -122,15 +122,10 @@ fn a_heading_is_no_larger_than_body_text_in_the_source_view() {
     const DOCUMENT: &str = "# Heading\n\nbody text";
 
     /// How many rows taller than the body the heading may measure and still
-    /// be the same size.
-    #[cfg(not(target_os = "linux"))]
-    const SLACK: u32 = 0;
-    /// The monospaced face these tests get on Linux has thin strokes, and
-    /// which rows of a letter are dark enough to count as ink depends on
-    /// where the letter falls on the pixel grid: the tops of `H` and `d`
-    /// count in the heading and the tops of `b` and `d` in the body do not.
-    /// A heading drawn as a heading is more than ten rows taller.
-    #[cfg(target_os = "linux")]
+    /// be the same size. Which rows of a letter are dark enough to count as
+    /// ink depends on the face and on where the letter falls on the pixel
+    /// grid, so the different letters of the two lines can measure a few rows
+    /// apart. A heading drawn as a heading is more than ten rows taller.
     const SLACK: u32 = 4;
 
     let formatted = render(DOCUMENT, ViewMode::Wysiwyg);

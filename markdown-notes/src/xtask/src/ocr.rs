@@ -1,9 +1,9 @@
 //! The OCR server, `tools/ocr-server`, which the window drivers hand their
 //! pictures to for reading.
 //!
-//! It is started on the first request and kept for the whole run, so its
-//! networks are loaded once. It ends when this process does: its input
-//! closes, and it stops reading.
+//! It is started by [`ready`] before the first test of a run and kept for the
+//! whole run, so its networks are loaded once. It ends when this process
+//! does: its input closes, and it stops reading.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -70,6 +70,19 @@ fn ask(request: &str) -> Result<String, String> {
         }
         answer.push_str(&line);
     }
+}
+
+/// Start the OCR server and wait until its networks are loaded, by having it
+/// read a blank picture written into `work`, so the time that takes falls
+/// outside every step.
+pub fn ready(work: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(work).map_err(|e| format!("creating {}: {e}", work.display()))?;
+    let picture = work.join("ocr-ready.png");
+    std::fs::write(&picture, crate::png::solid(32, 32, [255, 255, 255]))
+        .map_err(|e| format!("writing {}: {e}", picture.display()))?;
+    let said = read(&picture, None);
+    let _ = std::fs::remove_file(&picture);
+    said.map(|_| ())
 }
 
 /// What the OCR server says about a picture: with `text`, every place that
