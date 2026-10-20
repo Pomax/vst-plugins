@@ -1,10 +1,15 @@
 use super::Script;
 
-pub const SANS: &str = "Helvetica";
+pub const SANS_FAMILY: &str = "Helvetica";
+pub const SANS_REGULAR: &str = "Helvetica";
+pub const SANS_BOLD: &str = "Helvetica-Bold";
 
-pub const MONO: &str = "Menlo";
+pub const MONO_FAMILY: &str = "Menlo";
+pub const MONO_REGULAR: &str = "Menlo-Regular";
+pub const MONO_BOLD: &str = "Menlo-Bold";
 
-pub const DIAGRAM: &str = "Arial";
+pub const DIAGRAM_FAMILY: &str = "Arial";
+pub const DIAGRAM_REGULAR: &str = "ArialMT";
 
 pub fn families_for(script: Script) -> &'static [&'static str] {
     match script {

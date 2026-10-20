@@ -11,7 +11,7 @@ use std::sync::Arc;
 use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
 use egui::FontFamily;
 use font_kit::family_name::FamilyName;
-use font_kit::properties::{Properties, Weight};
+use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 
 /// A group of characters served by one font.
@@ -67,34 +67,45 @@ fn load_family(name: &str) -> Option<(String, Vec<u8>)> {
     Some((platform::name_of(&font), data.as_ref().clone()))
 }
 
-/// The face of `family` at `weight`, with its index in the file the face
-/// lives in: a collection holds several faces, and the first of them is not
-/// necessarily the one matched.
+/// The face of `family` whose PostScript name is `postscript_name`, ready for
+/// egui and filed under that name.
 ///
 /// Panics when the machine has no such face.
-fn load_face(family: &str, weight: Weight) -> (String, egui::FontData) {
-    let mut properties = Properties::new();
-    properties.weight = weight;
-    let handle = SystemSource::new()
-        .select_best_match(&[FamilyName::Title(family.to_string())], &properties)
+fn load_face(family: &str, postscript_name: &str) -> (String, egui::FontData) {
+    let (bytes, index) = face_data(family, postscript_name);
+    let mut data = egui::FontData::from_owned(bytes);
+    data.index = index;
+    (postscript_name.to_string(), data)
+}
+
+/// The face of `family` whose PostScript name is `postscript_name`: the bytes
+/// of the file it lives in, and its index in them. A collection holds several
+/// faces, and the first of them is not necessarily the one named.
+///
+/// Panics when the machine has no such face.
+pub(crate) fn face_data(family: &str, postscript_name: &str) -> (Vec<u8>, u32) {
+    use font_kit::handle::Handle;
+
+    let found = SystemSource::new()
+        .select_family_by_name(family)
         .unwrap_or_else(|_| panic!("the font {family} is not installed"));
-    let index = match &handle {
-        font_kit::handle::Handle::Path { font_index, .. }
-        | font_kit::handle::Handle::Memory { font_index, .. } => *font_index,
-    };
-    let font = handle
-        .load()
-        .unwrap_or_else(|e| panic!("the font {family} could not be loaded: {e}"));
-    let found = font.properties().weight;
-    if found != weight {
-        panic!("the font {family} has no face of weight {}, only {}", weight.0, found.0);
+    let handle = found
+        .fonts()
+        .iter()
+        .find(|handle| {
+            handle.load().ok().and_then(|font| font.postscript_name()).as_deref()
+                == Some(postscript_name)
+        })
+        .unwrap_or_else(|| panic!("the font {family} has no face named {postscript_name}"));
+    match handle {
+        Handle::Path { path, font_index } => (
+            std::fs::read(path).unwrap_or_else(|e| {
+                panic!("the font {postscript_name} could not be read from {}: {e}", path.display())
+            }),
+            *font_index,
+        ),
+        Handle::Memory { bytes, font_index } => (bytes.to_vec(), *font_index),
     }
-    let data = font
-        .copy_font_data()
-        .unwrap_or_else(|| panic!("the font {family} could not be read"));
-    let mut face = egui::FontData::from_owned(data.as_ref().clone());
-    face.index = index;
-    (platform::name_of(&font), face)
 }
 
 /// The family the bold face is installed under.
@@ -133,14 +144,14 @@ fn installed_or(ui: &egui::Ui, name: &str, fallback: FontFamily) -> FontFamily {
 pub fn install_base(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::empty();
     let faces = [
-        (platform::SANS, Weight::NORMAL, FontFamily::Proportional),
-        (platform::MONO, Weight::NORMAL, FontFamily::Monospace),
-        (platform::SANS, Weight::BOLD, FontFamily::Name(BOLD.into())),
-        (platform::MONO, Weight::BOLD, FontFamily::Name(MONO_BOLD.into())),
+        (platform::SANS_FAMILY, platform::SANS_REGULAR, FontFamily::Proportional),
+        (platform::MONO_FAMILY, platform::MONO_REGULAR, FontFamily::Monospace),
+        (platform::SANS_FAMILY, platform::SANS_BOLD, FontFamily::Name(BOLD.into())),
+        (platform::MONO_FAMILY, platform::MONO_BOLD, FontFamily::Name(MONO_BOLD.into())),
     ];
-    for (family, weight, target) in faces {
-        let (name, face) = load_face(family, weight);
-        fonts.font_data.insert(name.clone(), Arc::new(face));
+    for (family, postscript_name, target) in faces {
+        let (name, data) = load_face(family, postscript_name);
+        fonts.font_data.insert(name.clone(), Arc::new(data));
         fonts.families.insert(target, vec![name]);
     }
     ctx.set_fonts(fonts);

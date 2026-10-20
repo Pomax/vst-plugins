@@ -1,10 +1,15 @@
 use super::Script;
 
-pub const SANS: &str = "Segoe UI";
+pub const SANS_FAMILY: &str = "Segoe UI";
+pub const SANS_REGULAR: &str = "SegoeUI";
+pub const SANS_BOLD: &str = "SegoeUI-Bold";
 
-pub const MONO: &str = "Consolas";
+pub const MONO_FAMILY: &str = "Consolas";
+pub const MONO_REGULAR: &str = "Consolas";
+pub const MONO_BOLD: &str = "Consolas-Bold";
 
-pub const DIAGRAM: &str = "Arial";
+pub const DIAGRAM_FAMILY: &str = "Arial";
+pub const DIAGRAM_REGULAR: &str = "ArialMT";
 
 pub fn families_for(script: Script) -> &'static [&'static str] {
     match script {
