@@ -553,13 +553,17 @@ function Ask-Ocr([string]$request) {
         $start.FileName = 'python'
         $start.Arguments = '"' + (Join-Path $tools 'ocr_server.py') + '"'
         $start.EnvironmentVariables['PYTHONPATH'] = $site
+        $start.EnvironmentVariables['PYTHONUTF8'] = '1'
         $start.UseShellExecute = $false
         $start.RedirectStandardInput = $true
         $start.RedirectStandardOutput = $true
         $script:Ocr = [System.Diagnostics.Process]::Start($start)
     }
-    $script:Ocr.StandardInput.WriteLine($request)
-    $script:Ocr.StandardInput.Flush()
+    # Written as UTF-8 bytes straight to the pipe, the encoding the server
+    # reads in, whatever the console's input encoding is.
+    $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes("$request`n")
+    $script:Ocr.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $script:Ocr.StandardInput.BaseStream.Flush()
     $answer = @()
     while ($true) {
         $line = $script:Ocr.StandardOutput.ReadLine()
@@ -568,7 +572,7 @@ function Ask-Ocr([string]$request) {
         $answer += $line
     }
     if ($answer.Count -and $answer[0].StartsWith('error ')) {
-        throw "the OCR server could not read: $($answer[0].Substring(6))"
+        throw "the OCR server failed: $($answer[0].Substring(6))"
     }
     return $answer
 }
