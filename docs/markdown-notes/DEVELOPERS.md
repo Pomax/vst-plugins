@@ -171,15 +171,7 @@ What has to be installed for the UI tests on Linux: GStreamer's
 elements, and `ffmpeg`. `./test.sh --ui NAME` runs one test or one suite
 there.
 
-On every platform, text in a picture is read by the OCR server in
-`tools/ocr-server`: a Python program that reads pictures with OpenCV's text
-detection and text recognition networks. A driver starts it on its first look
-at the screen and keeps it for the whole run, handing it one picture a line.
-It needs `python3` (`python` on Windows), and one run of its setup,
-`tools/ocr-server/setup.sh` or `setup.bat`, which puts pip, OpenCV, numpy and
-the two networks in `tools/ocr-server/.cache`. Its recognition network reads
-the letters a to z and digits, without case, spaces or punctuation, so a step
-looking for words is matched on those alone. A `+` is found by its shape.
+On every platform, text in a picture is read by the OCR server in `tools/ocr-server`: a Python program that reads pictures with OpenCV's text detection and text recognition networks. It is started before the host is launched and made to read a blank picture, so its networks are loaded before any step is timed, and it is kept for the whole run, handed one picture a line. It needs `python3` (`python` on Windows), and one run of its setup, `tools/ocr-server/setup.sh` or `setup.bat`, which puts pip, OpenCV, numpy and the two networks in `tools/ocr-server/.cache`. Its recognition network reads the letters a to z and digits, without case, spaces or punctuation, so a step looking for words is matched on those alone. A `+` is found by its shape.
 
 The UI tests are step files in `markdown-notes/src/tools/uitests/`, run in the
 order `order.txt` gives: `./test.bat --ui NAME` runs one test or one suite.

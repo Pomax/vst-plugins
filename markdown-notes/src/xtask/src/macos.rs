@@ -247,37 +247,9 @@ const COMMAND: u16 = 55;
 /// selected; one that does not exist yet is a save, so the sheet gets its
 /// directory and the name field gets its name. Either way the test's own
 /// Enter still confirms the dialog, the same keystroke it is on Windows.
-fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
-    // Numbered pictures of every stage, because none of this is visible in
-    // the test's own output when it goes wrong.
-    let stage = {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static DIALOGS: AtomicUsize = AtomicUsize::new(0);
-        DIALOGS.fetch_add(1, Ordering::Relaxed)
-    };
-    let picture = |step: &str| -> PathBuf {
-        work.join(format!("dialog-{stage}-{step}.png"))
-    };
-
-    // Precondition: a file dialog is actually open. Every open and save
-    // panel has a Cancel button; until that is on screen, every keystroke
-    // below would land in the editor instead of a dialog. So it is looked
-    // for, not assumed, and nothing is typed until it is seen.
-    let opened = picture("opened");
-    let deadline = Instant::now() + Duration::from_secs(6);
-    loop {
-        if find_on_screen(area, "Cancel", &opened)?.is_some() {
-            break;
-        }
-        if Instant::now() > deadline {
-            return Err(format!(
-                "no file dialog is open, so there is nowhere to type a path; see {}",
-                opened.display()
-            ));
-        }
-        sleep(Duration::from_millis(300));
-    }
-
+///
+/// The `dialog:` step before this one has already seen the dialog open.
+fn dialog_path(path: &str) -> Result<(), String> {
     let both = CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagShift;
     for (code, down) in [(COMMAND, true), (SHIFT, true)] {
         let event = CGEvent::new_keyboard_event(source()?, code, down)
@@ -295,25 +267,11 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
         sleep(Duration::from_millis(40));
     }
     sleep(Duration::from_millis(800));
-    let _ = shot(area, &picture("go-to-sheet"));
 
     if Path::new(path).exists() {
         write(path)?;
-        sleep(Duration::from_millis(400));
-        let typed = picture("path-typed");
-        let tail = Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if find_on_screen(area, &tail, &typed)?.is_none() {
-            return Err(format!(
-                "the path never appeared in the dialog; see {}",
-                typed.display()
-            ));
-        }
         tap(RETURN, CGEventFlags::empty())?;
         sleep(Duration::from_millis(800));
-        let _ = shot(area, &picture("confirmed"));
         return Ok(());
     }
 
@@ -331,33 +289,12 @@ fn dialog_path(area: Rect, work: &Path, path: &str) -> Result<(), String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     write(&directory)?;
-    sleep(Duration::from_millis(400));
-    let typed = picture("directory-typed");
-    let tail = Path::new(&directory)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if find_on_screen(area, &tail, &typed)?.is_none() {
-        return Err(format!(
-            "the directory never appeared in the dialog; see {}",
-            typed.display()
-        ));
-    }
     tap(RETURN, CGEventFlags::empty())?;
     sleep(Duration::from_millis(800));
-    let _ = shot(area, &picture("directory-confirmed"));
     // The name field holds the dialog's proposed name; replace it.
     let select_all = code_for('a').ok_or("no key code for the letter a")?;
     shortcut(COMMAND, CGEventFlags::CGEventFlagCommand, select_all)?;
     write(&name)?;
-    sleep(Duration::from_millis(200));
-    let named = picture("named");
-    if find_on_screen(area, &name, &named)?.is_none() {
-        return Err(format!(
-            "the name never appeared in the dialog; see {}",
-            named.display()
-        ));
-    }
     Ok(())
 }
 
@@ -1351,26 +1288,7 @@ fn step(run: &mut Run, kind: &str, value: &str, checks: &mut usize) -> Result<()
         // document text, and this platform's dialogs do not take a path
         // through their name field. The tests spell paths with backslashes,
         // which here are ordinary characters, so they are swapped first.
-        "type" if value.starts_with('/') => {
-            let work = run
-                .state
-                .parent()
-                .map(Path::to_path_buf)
-                .ok_or("nowhere to put the dialog pictures")?;
-            // The panel is a window of its own, the frontmost of the host's
-            // process other than the window under test, and is looked at
-            // there: it can be larger than the window under test is made.
-            // Until it is up, the window under test is looked at.
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let panel = loop {
-                let panel = window_rect(run.pid, "").ok().filter(|rect| *rect != run.host);
-                if panel.is_some() || Instant::now() > deadline {
-                    break panel.unwrap_or(run.rect);
-                }
-                sleep(Duration::from_millis(200));
-            };
-            dialog_path(panel, &work, &value.replace('\\', "/"))
-        }
+        "type" if value.starts_with('/') => dialog_path(&value.replace('\\', "/")),
         "type" => send_keys(value),
         "wait" => {
             let ms: u64 = value

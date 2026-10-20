@@ -535,9 +535,9 @@ function Save-Shot([Win32Capture+RECT]$area, [string]$path) {
     Confirm-Written $path
 }
 
-# The OCR server, tools\ocr-server, started on the first request and kept for
-# the whole run so that its networks are loaded once. It ends with this
-# script: its input closes, and it stops reading.
+# The OCR server, tools\ocr-server, started by Initialize-Ocr before the host
+# is launched and kept for the whole run so that its networks are loaded once.
+# It ends with this script: its input closes, and it stops reading.
 $script:Ocr = $null
 
 # Hand the OCR server one request, a picture's path and after a tab what to
@@ -571,6 +571,28 @@ function Ask-Ocr([string]$request) {
         throw "the OCR server could not read: $($answer[0].Substring(6))"
     }
     return $answer
+}
+
+# Start the OCR server and wait until its networks are loaded, by having it
+# read a blank picture, so the time that takes falls outside every step.
+function Initialize-Ocr {
+    Add-Type -AssemblyName System.Drawing
+    $picture = if ($outDir) {
+        Join-Path $outDir 'ocr-ready.png'
+    } else {
+        Join-Path $env:TEMP 'ocr-ready.png'
+    }
+    $bmp = New-Object System.Drawing.Bitmap 32, 32
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.Clear([System.Drawing.Color]::White)
+    $bmp.Save($picture, [System.Drawing.Imaging.ImageFormat]::Png)
+    $gfx.Dispose()
+    $bmp.Dispose()
+    try {
+        Ask-Ocr "$picture`t" | Out-Null
+    } finally {
+        Remove-Item -LiteralPath $picture -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Every piece of text in a picture, with where each one is.
@@ -829,6 +851,8 @@ function Send-Typing([string]$keys) {
         Start-Sleep -Milliseconds $KEY_MS
     }
 }
+
+Initialize-Ocr
 
 $launched = [DateTime]::UtcNow
 $script:stepStarted = $launched
